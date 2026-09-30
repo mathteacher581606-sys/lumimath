@@ -1,0 +1,16 @@
+{
+  "name": "lumimath",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "db:generate": "pnpm --filter @lumimath/db generate",
+    "db:migrate": "pnpm --filter @lumimath/db migrate",
+    "db:seed": "pnpm --filter @lumimath/db seed",
+    "db:studio": "pnpm --filter @lumimath/db studio"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
