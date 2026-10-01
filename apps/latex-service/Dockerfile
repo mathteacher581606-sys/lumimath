@@ -11,11 +11,9 @@ WORKDIR /app
 
 COPY server.js .
 
-# === GÓI ex_test (bước 4b) ===
-# Khi có file ex_test.sty, bỏ file vào thư mục ./texmf/tex/latex/ex_test/
-# rồi mở 2 dòng dưới đây để cài:
-# COPY texmf/ /usr/local/texlive/texmf-local/
-# RUN texhash
+# === GÓI ex_test ===
+COPY texmf/ /usr/local/texlive/texmf-local/
+RUN texhash
 
 EXPOSE 8080
 
