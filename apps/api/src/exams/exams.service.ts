@@ -175,6 +175,9 @@ export class ExamsService {
     const lines: string[] = [];
     lines.push('\\documentclass[12pt]{article}');
     lines.push('\\usepackage{ex_test}');
+    lines.push('\\usepackage{amsmath}');
+    lines.push('\\usepackage{amssymb}');
+    lines.push('\\usepackage{amsfonts}');
     lines.push('\\begin{document}');
     lines.push(
       '\\begin{center}{\\Large ' + this.escapeLatex(examTitle) + '}\\end{center}',
@@ -199,6 +202,22 @@ export class ExamsService {
           const correct = opt.id === q.answer;
           lines.push(correct ? '{\\True ' + opt.text + '}' : '{' + opt.text + '}');
         }
+      } else if (
+        q.type === QuestionType.TRUE_FALSE &&
+        Array.isArray(q.options)
+      ) {
+        lines.push('\\choiceTF');
+        for (const opt of q.options) {
+          const isTrue =
+            q.answer && typeof q.answer === 'object' && q.answer[opt.id] === true;
+          lines.push(
+            '{' + (isTrue ? '\\TrueTF ' : '\\FalseTF ') + opt.text + '}',
+          );
+        }
+      } else if (q.type === QuestionType.SHORT_ANSWER) {
+        const ans =
+          typeof q.answer === 'string' ? q.answer : JSON.stringify(q.answer);
+        lines.push('\\shortans{' + ans + '}');
       }
 
       if (q.solution) {

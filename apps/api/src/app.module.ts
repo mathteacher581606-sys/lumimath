@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { CoursesModule } from './courses/courses.module';
 import { BankModule } from './bank/bank.module';
 import { ExamsModule } from './exams/exams.module';
+import { AiModule } from './ai/ai.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ExamsModule } from './exams/exams.module';
     CoursesModule,
     BankModule,
     ExamsModule,
+    AiModule,
   ],
   controllers: [AppController],
 })
