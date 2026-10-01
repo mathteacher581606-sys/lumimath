@@ -19,6 +19,7 @@ import { CreateTopicDto } from './dto/create-topic.dto';
 import { UpdateTopicDto } from './dto/update-topic.dto';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
+import { ImportTexDto } from './dto/import-tex.dto';
 
 @Controller('bank')
 export class BankController {
@@ -97,5 +98,14 @@ export class BankController {
   @Delete('questions/:id')
   removeQuestion(@CurrentUser() user: any, @Param('id') id: string) {
     return this.bankService.removeQuestion(user.id, id);
+  }
+
+  // ============ NHẬP ĐỀ TỪ .tex ============
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post('import-tex')
+  importTex(@CurrentUser() user: any, @Body() dto: ImportTexDto) {
+    return this.bankService.importTex(user.id, dto.texSource);
   }
 }
