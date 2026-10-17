@@ -1,4 +1,5 @@
 import {
+  Allow,
   IsArray,
   IsInt,
   IsNotEmpty,
@@ -16,6 +17,10 @@ export class CreateLessonDto {
   description?: string;
 
   @IsOptional()
+  @IsString()
+  chapter?: string;
+
+  @IsOptional()
   @IsInt()
   order?: number;
 
@@ -27,6 +32,13 @@ export class CreateLessonDto {
   @IsArray()
   pdfLinks?: string[];
 
+  // Nhiều video có tiêu đề + tài liệu đặt tên riêng
+  @Allow()
+  videos?: any;
+
+  @Allow()
+  materials?: any;
+
   @IsOptional()
   @IsString()
   content?: string;
@@ -34,4 +46,20 @@ export class CreateLessonDto {
   @IsOptional()
   @IsInt()
   duration?: number;
+
+  @IsOptional()
+  @IsString()
+  examId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  deadline?: string | null;
+
+  // Khối nội dung (block editor)
+  @Allow()
+  blocks?: any;
+
+  @IsOptional()
+  @Allow()
+  isPreviewFree?: boolean;
 }

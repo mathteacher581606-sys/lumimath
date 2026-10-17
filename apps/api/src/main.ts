@@ -43,6 +43,16 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
   app.enableCors();
 
+  // Bảo mật header (chống XSS, clickjacking...)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const helmet = require('helmet');
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

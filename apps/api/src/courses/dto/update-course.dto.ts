@@ -14,6 +14,10 @@ export class UpdateCourseDto {
   coverUrl?: string;
 
   @IsOptional()
+  @IsString()
+  bannerUrl?: string;
+
+  @IsOptional()
   @IsInt()
   grade?: number;
 
@@ -24,4 +28,12 @@ export class UpdateCourseDto {
   @IsOptional()
   @IsBoolean()
   isPublished?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  sequential?: boolean;
+
+  @IsOptional()
+  @IsString()
+  password?: string | null;
 }

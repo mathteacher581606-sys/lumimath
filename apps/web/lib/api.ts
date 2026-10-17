@@ -1,4 +1,10 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+// Đường dẫn tương đối → đi qua proxy của Next.js (next.config.js rewrites)
+// nên hoạt động với mọi người dùng dù truy cập từ đâu (LAN, internet, tunnel).
+// Có thể override bằng NEXT_PUBLIC_API_URL nếu API ở domain riêng.
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'http://localhost:4000'
+    ? process.env.NEXT_PUBLIC_API_URL
+    : '/api';
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
   const token =
@@ -13,6 +19,15 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   }
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+
+  // Token hết hạn → tự động đăng xuất và về trang đăng nhập
+  if (res.status === 401 && typeof window !== 'undefined') {
+    logout();
+    if (!window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login';
+    }
+    throw new Error('Phiên đăng nhập hết hạn. Vui lòng đăng nhập lại.');
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: 'Lỗi không xác định' }));

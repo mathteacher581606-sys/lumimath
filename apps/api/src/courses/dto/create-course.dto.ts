@@ -20,6 +20,10 @@ export class CreateCourseDto {
   coverUrl?: string;
 
   @IsOptional()
+  @IsString()
+  bannerUrl?: string;
+
+  @IsOptional()
   @IsInt()
   grade?: number;
 
@@ -30,4 +34,8 @@ export class CreateCourseDto {
   @IsOptional()
   @IsBoolean()
   isPublished?: boolean;
+
+  @IsOptional()
+  @IsString()
+  password?: string;
 }

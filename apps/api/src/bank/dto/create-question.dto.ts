@@ -37,6 +37,18 @@ export class CreateQuestionDto {
   topicId?: string;
 
   @IsOptional()
+  @IsString()
+  topicName?: string;
+
+  @IsOptional()
+  @IsString()
+  form?: string;
+
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
   @IsEnum(Difficulty, { message: 'Độ khó không hợp lệ' })
   difficulty?: Difficulty;
 

@@ -7,3 +7,9 @@ dist/
 .DS_Store
 coverage/
 prisma/*.db
+# ===== runtime & local only (không đưa lên GitHub) =====
+apps/api/storage/
+deploy/
+kaspersky-ca.pem
+start_servers_*.bat
+*.zip

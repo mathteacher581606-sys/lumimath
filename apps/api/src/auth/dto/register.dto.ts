@@ -34,4 +34,9 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   workplace?: string;
+
+  // Mã OTP xác thực email (bắt buộc với HỌC SINH khi REQUIRE_STUDENT_OTP bật)
+  @IsOptional()
+  @IsString()
+  otp?: string;
 }

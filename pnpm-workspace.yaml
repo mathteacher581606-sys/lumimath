@@ -7,3 +7,5 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   prisma: true
+  sharp: true
+  '@img/sharp-win32-x64': true

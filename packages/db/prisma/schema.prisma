@@ -11,6 +11,33 @@ datasource db {
 // NGƯỜI DÙNG
 // =========================================================
 
+// Mã OTP xác thực email (đăng ký học sinh)
+model OtpCode {
+  id        String   @id @default(cuid())
+  email     String
+  codeHash  String
+  purpose   String   @default("REGISTER")
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([email, purpose])
+}
+
+// Ngân hàng nhận xét dùng lại của giáo viên (gợi ý khi chấm bài)
+model CommentTemplate {
+  id        String   @id @default(cuid())
+  teacherId String
+  teacher   User     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  text      String   @db.Text
+  category  String?
+  createdAt DateTime @default(now())
+
+  @@index([teacherId])
+}
+
 enum Role {
   TEACHER
   STUDENT
@@ -34,17 +61,27 @@ model User {
   streakDays    Int      @default(0)
   lastActiveAt  DateTime @default(now())
   isActive      Boolean  @default(true)
+  emailNotify   Boolean  @default(true)
+  resetToken    String?
+  resetExpires  DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   taughtCourses   Course[]        @relation("TeacherCourses")
   enrollments     Enrollment[]
-  submissions     Submission[]
+  assignmentSubmissions AssignmentSubmission[]
   questionBank    QuestionBank?
   exams           Exam[]
+  examFolders     ExamFolder[]
+  matrices        ExamMatrix[]
   attempts        ExamAttempt[]
   achievements    Achievement[]
   notifications   Notification[]
+  comments        LessonComment[]
+  reviews         CourseReview[]
+  reminders       DeadlineReminder[]
+  dailyQuests     DailyQuest[]
+  commentTemplates CommentTemplate[]
 
   @@index([role])
   @@index([studentCode])
@@ -61,15 +98,21 @@ model Course {
   teacher     User     @relation("TeacherCourses", fields: [teacherId], references: [id], onDelete: Cascade)
   title       String
   description String?  @db.Text
-  coverUrl    String?
+  coverUrl    String?  // Ảnh đại diện (hiện trên thẻ khóa học bên ngoài)
+  bannerUrl   String?  // Banner khóa học (hiện bên trong trang khóa học)
   grade       Int?
   subject     String   @default("Toán")
   isPublished Boolean  @default(false)
+  sequential  Boolean  @default(false)
+  password    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   lessons     Lesson[]
   enrollments Enrollment[]
+  reviews     CourseReview[]
+  announcements Announcement[]
+  assignments Assignment[]
 
   @@index([teacherId])
 }
@@ -80,20 +123,30 @@ model Lesson {
   course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   title       String
   description String?  @db.Text
+  chapter     String?
   order       Int      @default(0)
   youtubeUrl  String?
   pdfLinks    String[] @default([])
+  videos      Json?    @default("[]") // [{title, url}] — nhiều video có tiêu đề
+  materials   Json?    @default("[]") // [{title, url}] — tài liệu đặt tên riêng
   content     String?  @db.Text
   duration    Int?
+  examId      String?
+  exam        Exam?    @relation(fields: [examId], references: [id], onDelete: SetNull)
+  deadline    DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  exercises   Exercise[]
   progresses  LessonProgress[]
+  comments    LessonComment[]
+  reminders   DeadlineReminder[]
+  quiz        LessonQuiz?
+  blocks      Json?
+  notes       LessonNote[]
+  isPreviewFree Boolean @default(false)
 
   @@index([courseId])
 }
-
 model LessonProgress {
   id          String   @id @default(cuid())
   lessonId    String
@@ -102,6 +155,55 @@ model LessonProgress {
   completed   Boolean  @default(false)
   watchedSec  Int      @default(0)
   updatedAt   DateTime @updatedAt
+
+  @@unique([lessonId, studentId])
+}
+
+// =========================================================
+// QUIZ CỦNG CỐ TRONG BÀI GIẢNG
+// =========================================================
+
+model LessonQuiz {
+  id              String   @id @default(cuid())
+  lessonId        String
+  lesson          Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  examId          String
+  questionCount   Int      @default(5)
+  passingPercent  Float    @default(50)
+  negativeMarking Boolean  @default(false)
+  negativeWeight  Float    @default(0)
+  maxAttempts     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  attempts LessonQuizAttempt[]
+
+  @@unique([lessonId])
+  @@index([examId])
+}
+
+model LessonQuizAttempt {
+  id        String   @id @default(cuid())
+  quizId    String
+  quiz      LessonQuiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  studentId String
+  score     Float
+  passed    Boolean
+  answers   Json?
+  createdAt DateTime @default(now())
+
+  @@index([quizId, studentId])
+}
+
+// Ghi chú cá nhân của học sinh trong từng bài giảng
+model LessonNote {
+  id        String   @id @default(cuid())
+  lessonId  String
+  lesson    Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  studentId String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([lessonId, studentId])
 }
@@ -119,40 +221,162 @@ model Enrollment {
 }
 
 // =========================================================
-// BÀI TẬP TỰ LUẬN
+// THẢO LUẬN BÀI GIẢNG + ĐÁNH GIÁ KHÓA HỌC
 // =========================================================
 
-model Exercise {
-  id          String   @id @default(cuid())
-  lessonId    String
-  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
-  prompt      String   @db.Text
-  rubric      String?  @db.Text
-  maxScore    Float    @default(10)
-  createdAt   DateTime @default(now())
+model LessonComment {
+  id        String   @id @default(cuid())
+  lessonId  String
+  lesson    Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  content   String   @db.Text
+  createdAt DateTime @default(now())
 
-  submissions Submission[]
+  @@index([lessonId])
 }
 
-model Submission {
-  id           String   @id @default(cuid())
-  exerciseId   String
-  exercise     Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
-  studentId    String
-  student      User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  content      String   @db.Text
-  imageUrls    String[] @default([])
-  aiScore      Float?
-  aiFeedback   String?  @db.Text
-  aiRawJson    Json?
-  teacherScore Float?
-  teacherNote  String?  @db.Text
-  status       String   @default("PENDING")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+model CourseReview {
+  id        String   @id @default(cuid())
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  studentId String
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  rating    Int
+  comment   String?  @db.Text
+  createdAt DateTime @default(now())
 
+  @@unique([courseId, studentId])
+  @@index([courseId])
+}
+
+// =========================================================
+// BẢNG TIN KHÓA HỌC
+// =========================================================
+
+model Announcement {
+  id         String   @id @default(cuid())
+  courseId   String
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  teacherId  String
+  content    String   @db.Text
+  images     String[] @default([])
+  pinned     Boolean  @default(false)
+  allowVote  Boolean  @default(false)
+  voteOptions String[] @default([])
+  voteDeadline DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  comments   AnnouncementComment[]
+  reactions  AnnouncementReaction[]
+  votes      AnnouncementVote[]
+
+  @@index([courseId])
+}
+
+model AnnouncementComment {
+  id             String   @id @default(cuid())
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  authorId       String
+  content        String   @db.Text
+  createdAt      DateTime @default(now())
+
+  @@index([announcementId])
+}
+
+model AnnouncementReaction {
+  id             String   @id @default(cuid())
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  userId         String
+  emoji          String
+  createdAt      DateTime @default(now())
+
+  @@unique([announcementId, userId])
+}
+
+model AnnouncementVote {
+  id             String   @id @default(cuid())
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  userId         String
+  optionIndex    Int
+  createdAt      DateTime @default(now())
+
+  @@unique([announcementId, userId])
+}
+
+// =========================================================
+// GIAO BÀI TẬP TRONG KHÓA HỌC
+// =========================================================
+
+model Assignment {
+  id            String   @id @default(cuid())
+  courseId      String
+  course        Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  teacherId     String
+  title         String
+  description   String?  @db.Text
+  kind          String   @default("CUSTOM") // EXAM | TULUAN | CUSTOM
+  examId        String?
+  exam          Exam?    @relation(fields: [examId], references: [id], onDelete: SetNull)
+  questionIds   String[] @default([]) // tự luận lấy từ ngân hàng
+  customContent String?  @db.Text // tự gõ đề
+  customQuestions String[] @default([]) // tự gõ NHIỀU câu tự luận
+  pdfUrl        String?  // đính kèm PDF đề (tùy chọn)
+  assignDate    DateTime?
+  dueDate       DateTime?
+  minScoreForAnswers Float? // điểm tối thiểu đạt để xem đáp án
+  hideAnswers   Boolean  @default(false)
+  revealAnswersAt DateTime? // ẩn đáp án đến thời điểm này
+  showLeaderboard Boolean @default(false)
+  allowResubmit Boolean  @default(false)
+  // ===== Chính sách nộp muộn (Canvas late_policy) =====
+  lateDeductionPercent Float? // trừ % điểm mỗi khoảng thời gian trễ
+  lateIntervalHours    Int    @default(24) // khoảng trễ tính phạt (giờ)
+  lateMinPercent       Float?  // sàn tối thiểu % điểm còn lại sau phạt
+  missingDeductionPercent Float? // trừ % khi quá hạn mà không nộp
+  // ===== Post Policy (công bố điểm đồng loạt — Canvas) =====
+  postManually Boolean   @default(false) // chấm ẩn điểm: HS chỉ thấy khi GV bấm "Công bố"
+  gradesPosted Boolean   @default(false) // đã công bố điểm chưa
+  postAt       DateTime? // hẹn giờ tự công bố
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  submissions AssignmentSubmission[]
+
+  @@index([courseId])
+  @@index([examId])
+}
+
+model AssignmentSubmission {
+  id             String   @id @default(cuid())
+  assignmentId   String
+  assignment     Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId      String
+  student        User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  content        String?  @db.Text
+  imageUrls      String[] @default([])
+  pdfUrl         String?
+  answers        Json?    // đáp án trắc nghiệm khi bài giao là đề thi
+  score          Float?
+  assessment     String? // Đ | CĐ | HT | CHT | HTT
+  teacherComment String?  @db.Text
+  essayScores    Json?    // điểm thủ công từng phần tự luận: {questionId: [diemY a, diemY b, ...]}
+  penaltyPoints  Float    @default(0) // điểm phạt nộp muộn
+  aiScore        Float?
+  aiFeedback     String?  @db.Text
+  annotations    Json?
+  status         String   @default("SUBMITTED") // SUBMITTED | GRADED | RETURNED
+  published      Boolean  @default(false) // GV chốt mới công bố cho HS
+  submittedAt    DateTime @default(now())
+  gradedAt       DateTime?
+
+  @@unique([assignmentId, studentId])
+  @@index([assignmentId])
   @@index([studentId])
-  @@index([exerciseId])
 }
 
 // =========================================================
@@ -182,6 +406,29 @@ model QuestionBank {
 
   questions  Question[]
   topics     Topic[]
+  forms      BankForm[]
+  sources    BankSource[]
+}
+
+model BankForm {
+  id        String       @id @default(cuid())
+  bankId    String
+  bank      QuestionBank @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime     @default(now())
+
+  @@unique([bankId, name])
+}
+
+// Nguồn đề (Trường / Sở / Đề HKI / Đề HSG...)
+model BankSource {
+  id        String       @id @default(cuid())
+  bankId    String
+  bank      QuestionBank @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime     @default(now())
+
+  @@unique([bankId, name])
 }
 
 model Topic {
@@ -196,6 +443,7 @@ model Topic {
   createdAt DateTime @default(now())
 
   questions Question[]
+  exams     Exam[]
 
   @@unique([bankId, name, grade])
 }
@@ -213,6 +461,8 @@ model Question {
   grade         Int?
   topicId       String?
   topic         Topic?       @relation(fields: [topicId], references: [id])
+  form          String?
+  source        String?
   difficulty    Difficulty?
   aiClassified  Boolean      @default(false)
   aiMetadata    Json?
@@ -227,6 +477,8 @@ model Question {
   @@index([type])
   @@index([difficulty])
   @@index([grade])
+  @@index([form])
+  @@index([source])
 }
 
 // =========================================================
@@ -240,20 +492,54 @@ model Exam {
   title       String
   description String?  @db.Text
   grade       Int?
+  topicId     String?
+  topic       Topic?   @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  folderId    String?
+  folder      ExamFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  difficulty  String?
   duration    Int      @default(45)
   totalScore  Float    @default(10)
   matrix      Json?
+  source      String?
   texSource   String?  @db.Text
   pdfUrl      String?
   status      String   @default("DRAFT")
   isTemplate  Boolean  @default(false)
+  maxAttempts Int      @default(3)
+  published   Boolean  @default(false)
+  // ===== Thiết lập thi (Canvas-style) =====
+  passMark       Float?   // điểm chuẩn đậu (0-10); null = không xét đậu
+  practiceMode   Boolean  @default(false) // chế độ luyện tập: hiện đáp án từng câu ngay
+  answersAtEnd   Boolean  @default(true)  // ẩn đáp án đến hết bài (false = xem ngay từng câu)
+  oneTimeResults Boolean  @default(false) // kết quả/đáp án chỉ xem đúng 1 lần
+  hideAnswersAt  DateTime? // khóa đáp án sau mốc giờ này
+  extraTime      Int      @default(0)     // cộng thêm phút (HS cần hỗ trợ)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   items       ExamItem[]
   attempts    ExamAttempt[]
+  lessons     Lesson[]
+  assignments Assignment[]
 
   @@index([teacherId])
+  @@index([folderId])
+}
+
+// Thư mục đề thi (cây mục lục Kho đề thi)
+model ExamFolder {
+  id        String   @id @default(cuid())
+  teacherId String
+  teacher   User     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  name      String
+  parentId  String?
+  parent    ExamFolder? @relation("FolderTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  ExamFolder[] @relation("FolderTree")
+  exams     Exam[]
+  createdAt DateTime @default(now())
+
+  @@index([teacherId])
+  @@index([parentId])
 }
 
 model ExamItem {
@@ -269,6 +555,20 @@ model ExamItem {
   @@unique([examId, order])
 }
 
+// Ma trận đề lưu trong kho (Trang "Quản lý ma trận đề")
+model ExamMatrix {
+  id        String   @id @default(cuid())
+  teacherId String
+  teacher   User     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  name      String
+  // Cấu trúc: { parts: [{ type, count }], slots: [{ part, type, form, difficulty, questionId }] }
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teacherId])
+}
+
 model ExamAttempt {
   id           String   @id @default(cuid())
   examId       String
@@ -277,11 +577,17 @@ model ExamAttempt {
   student      User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
   answers      Json
   score        Float?
+  rawScore     Float?   // điểm gốc (chấm tự động) trước fudge/phạt
+  fudgePoints  Float    @default(0) // điểm nới tay của GV
+  penaltyPoints Float   @default(0) // điểm phạt nộp muộn
   perPart      Json?
   antiCheat    Json?
+  late         Boolean  @default(false)
   startedAt    DateTime @default(now())
   submittedAt  DateTime?
   timeSpent    Int?
+  resultsViewedAt DateTime? // lần cuối HS xem kết quả (cho one_time_results)
+  regradedAt   DateTime? // lần chấm lại gần nhất
 
   @@index([studentId])
   @@index([examId])
@@ -314,4 +620,31 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([userId, isRead])
+}
+
+// =========================================================
+// NHẮC NỘP BÀI + NHIỆM VỤ HẰNG NGÀY
+// =========================================================
+
+model DeadlineReminder {
+  id        String   @id @default(cuid())
+  lessonId  String
+  lesson    Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  studentId String
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([lessonId, studentId])
+  @@index([lessonId])
+}
+
+model DailyQuest {
+  id        String   @id @default(cuid())
+  studentId String
+  student   User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  questKey  String
+  date      String
+  createdAt DateTime @default(now())
+
+  @@unique([studentId, questKey, date])
 }

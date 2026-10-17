@@ -34,6 +34,18 @@ export class UpdateQuestionDto {
   @IsString()
   topicId?: string;
 
+  // Tên chủ đề (text) — form sửa gửi tên: tự tìm/tạo chủ đề rồi chuyển câu hỏi vào
+  @Allow()
+  topicName?: string;
+
+  @IsOptional()
+  @IsString()
+  form?: string;
+
+  @IsOptional()
+  @IsString()
+  source?: string;
+
   @IsOptional()
   @IsEnum(Difficulty)
   difficulty?: Difficulty;

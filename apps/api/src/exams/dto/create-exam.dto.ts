@@ -24,4 +24,29 @@ export class CreateExamDto {
   // Ma trận đề: { parts: [{ type, count, score }] }
   @Allow()
   matrix: any;
+
+  // Công khai cho học sinh thi thử
+  @IsOptional()
+  @Allow()
+  published?: boolean;
+
+  // Phân loại: chủ đề + độ khó
+  @IsOptional()
+  @IsString()
+  topicId?: string;
+
+  @IsOptional()
+  @IsString()
+  difficulty?: string;
+
+  // Thư mục chứa đề thi (cây mục lục Kho đề thi)
+  @IsOptional()
+  @IsString()
+  folderId?: string;
+
+  // Danh sách id câu hỏi GV đã DUYỆT (theo đúng thứ tự các ô trong ma trận).
+  // Nếu có → lưu đúng các câu này, không chọn ngẫu nhiên nữa.
+  @IsOptional()
+  @Allow()
+  questionIds?: string[];
 }

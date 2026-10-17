@@ -6,11 +6,19 @@ const path = require('path');
 
 const PORT = process.env.PORT || 8080;
 
-function runLatex(texSource) {
+function runLatex(texSource, images) {
   return new Promise((resolve, reject) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'latex-'));
     const texFile = path.join(dir, 'main.tex');
     fs.writeFileSync(texFile, texSource, 'utf8');
+
+    // Ghi các ảnh base64 kèm theo vào thư mục biên dịch
+    for (const img of images || []) {
+      const name = path.basename(String(img && img.name ? img.name : ''));
+      if (name && img && img.data) {
+        fs.writeFileSync(path.join(dir, name), Buffer.from(img.data, 'base64'));
+      }
+    }
 
     const cmd =
       'cd ' +
@@ -61,13 +69,13 @@ const server = http.createServer((req, res) => {
     req.on('data', (chunk) => (body += chunk));
     req.on('end', async () => {
       try {
-        const { source } = JSON.parse(body);
+        const { source, images } = JSON.parse(body);
         if (!source) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Thiếu trường "source"' }));
           return;
         }
-        const pdf = await runLatex(source);
+        const pdf = await runLatex(source, images);
         res.writeHead(200, {
           'Content-Type': 'application/pdf',
           'Content-Length': pdf.length,
