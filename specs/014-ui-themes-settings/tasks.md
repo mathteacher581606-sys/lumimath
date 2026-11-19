@@ -19,4 +19,8 @@
       tự lưu cả chữ tự luận; luyện tập không bị cảnh báo chuyển tab; Đúng/Sai chấm đúng lựa chọn mới;
       cảnh báo trong trang thay `alert`; hộp xác nhận nộp bài (liệt kê câu chưa làm); bảng câu dạng cột phải / ngăn kéo trên điện thoại
 - [x] `student/exams` — nội quy trước khi thi, "Làm tiếp bài dở", đếm lượt theo bài đã nộp (`listAvailableForStudent`)
+- [x] Chỉ câu trắc nghiệm 1 đáp án được chấm ngay; `/exams/:id/check` từ chối dạng khác; không gửi đáp án dạng khác xuống trình duyệt
+- [x] `components/AttemptReview.tsx` — xem lại bài làm dùng chung (kết quả sau khi nộp + Lịch sử): tóm tắt đúng/sai, danh sách câu sai bấm để nhảy tới, lọc Tất cả/Câu sai/Câu đúng, bài làm cạnh đáp án
+- [x] Lịch sử làm bài: nút "Tải đáp án PDF" ngay trên từng dòng
+- [x] Bảo mật đáp án: khóa đáp án thì máy chủ KHÔNG gửi `correctAnswer/solution` (submit + lịch sử); áp "điểm tối thiểu xem đáp án" cả ở lịch sử và PDF; PDF bài làm chỉ cho chủ bài / GV có quyền với đề / admin; tải PDF không tính là "đã xem 1 lần"
 - [ ] Build + smoke test trên VPS

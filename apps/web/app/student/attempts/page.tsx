@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
-import LatexRenderer from '@/components/LatexRenderer';
-import { formatAnswer } from '@/lib/answer';
+import AttemptReview from '@/components/AttemptReview';
 import BackButton from '@/components/BackButton';
 import { SkeletonRows } from '@/components/Skeleton';
 
@@ -12,36 +11,36 @@ export default function AttemptHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<any>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [pdfBusyId, setPdfBusyId] = useState<string | null>(null);
+  const [pdfMsg, setPdfMsg] = useState<{ id: string; text: string } | null>(null);
 
-  // Tải PDF "ĐÁP ÁN & LỜI GIẢI" của bài làm đang mở (server tự sửa lỗi LaTeX khi biên dịch)
-  async function downloadAnswersPdf() {
-    if (!detail?.examId || !detail?.attemptId) return;
-    setDownloadingPdf(true);
+  // Tải PDF "ĐÁP ÁN & LỜI GIẢI" của 1 bài làm (server tự sửa lỗi LaTeX khi biên dịch)
+  async function downloadAnswersPdf(examId: string, attemptId: string, title: string) {
+    setPdfBusyId(attemptId);
+    setPdfMsg(null);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(
-        `/api/exams/${detail.examId}/attempts/${detail.attemptId}/answers-pdf`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
+      const res = await fetch(`/api/exams/${examId}/attempts/${attemptId}/answers-pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(String(err.message || 'Không tạo được PDF đáp án').slice(-400));
+        setPdfMsg({ id: attemptId, text: String(err.message || 'Không tạo được PDF đáp án').slice(-300) });
         return;
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `dap-an-${String(detail.title || 'de-thi').slice(0, 40)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const el = document.createElement('a');
+      el.href = url;
+      el.download = `dap-an-${String(title || 'de-thi').slice(0, 40)}.pdf`;
+      document.body.appendChild(el);
+      el.click();
+      el.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e: any) {
-      alert(e?.message || 'Lỗi tải PDF');
+      setPdfMsg({ id: attemptId, text: e?.message || 'Lỗi tải PDF' });
     } finally {
-      setDownloadingPdf(false);
+      setPdfBusyId(null);
     }
   }
 
@@ -106,21 +105,38 @@ export default function AttemptHistoryPage() {
                     {a.timeSpent ? ` · ${Math.floor(a.timeSpent / 60)} phút` : ''}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <span
                     className={a.passed ? 'badge badge-success' : 'badge badge-danger'}
                   >
                     {a.score}/{a.totalScore}
                   </span>
                   <button
+                    type="button"
                     className="btn btn-outline"
-                    style={{ width: 'auto', padding: '6px 12px', fontSize: 12 }}
+                    style={{ width: 'auto', minHeight: 40, padding: '0 14px', fontSize: 13 }}
+                    disabled={pdfBusyId === a.id}
+                    onClick={() => downloadAnswersPdf(a.examId, a.id, a.examTitle)}
+                    title="Tải PDF đáp án & lời giải của bài làm này"
+                  >
+                    {pdfBusyId === a.id ? 'Đang tạo PDF…' : 'Tải đáp án PDF'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn sh-btn-accent"
+                    style={{ width: 'auto', minHeight: 40, padding: '0 14px', fontSize: 13 }}
+                    aria-expanded={detail?.attemptId === a.id}
                     onClick={() => openDetail(a)}
                   >
-                    {detail?.attemptId === a.id ? 'Đóng' : 'Xem chi tiết'}
+                    {detail?.attemptId === a.id ? 'Đóng' : 'Xem lại bài làm'}
                   </button>
                 </div>
               </div>
+              {pdfMsg?.id === a.id && (
+                <p className="sh-error" role="alert" style={{ marginTop: 8 }}>
+                  {pdfMsg.text}
+                </p>
+              )}
 
               {detail?.attemptId === a.id && (
                 loadingDetail ? (
@@ -132,16 +148,6 @@ export default function AttemptHistoryPage() {
                       <span className={detail.score >= detail.totalScore * 0.5 ? 'badge badge-success' : 'badge badge-danger'}>
                         {detail.score >= detail.totalScore * 0.5 ? 'Đạt' : 'Chưa đạt'}
                       </span>
-                      <button
-                        type="button"
-                        className="btn-lm ghost"
-                        style={{ width: 'auto', padding: '6px 14px', fontSize: 12.5, textDecoration: 'none' }}
-                        disabled={downloadingPdf}
-                        onClick={downloadAnswersPdf}
-                        title="Tải PDF đáp án & lời giải của bài làm này"
-                      >
-                        {downloadingPdf ? '⏳ Đang tạo PDF…' : '📄 Tải đáp án PDF'}
-                      </button>
                     </div>
 
                     {/* Phân tích điểm mạnh/yếu */}
@@ -176,279 +182,7 @@ export default function AttemptHistoryPage() {
                       </div>
                     )}
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {detail.results.map((r: any) => (
-                        <div
-                          key={r.itemId}
-                          style={{
-                            padding: 12,
-                            border: '1px solid var(--color-rule)',
-                            borderRadius: 8,
-                            background: 'var(--color-paper)',
-                          }}
-                        >
-                          <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-                            {r.pending ? (
-                              <span className="badge badge-warning">⏳ Tự luận — đang chờ chấm</span>
-                            ) : r.finalScore !== null && r.finalScore !== undefined ? (
-                              <span className="badge badge-success">Đã chốt điểm</span>
-                            ) : (
-                              <span className={r.correct ? 'badge badge-success' : 'badge badge-danger'}>
-                                {r.correct ? 'Đúng' : 'Sai'}
-                              </span>
-                            )}
-                            {r.pending ? (
-                              <span className="badge">chưa có điểm</span>
-                            ) : (
-                              <span className="badge">+{r.earned} điểm</span>
-                            )}
-                            {r.tfDetail && (
-                              <span
-                                className={
-                                  r.tfDetail.fraction === 1
-                                    ? 'badge badge-success'
-                                    : 'badge badge-warning'
-                                }
-                              >
-                                Đúng {r.tfDetail.correctCount}/{r.tfDetail.total} ý
-                              </span>
-                            )}
-                            <span className="mono" style={{ fontSize: 11, color: 'var(--color-muted)' }}>
-                              Câu {r.order}
-                            </span>
-                            {r.code && (
-                              <span
-                                className="mono"
-                                style={{ fontSize: 11, color: 'var(--color-muted)' }}
-                                title="Mã câu hỏi"
-                              >
-                                #{r.code}
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ fontSize: 14, marginBottom: 6 }}>
-                            <LatexRenderer content={r.content} />
-                          </div>
-                          {r.pending ? (
-                            r.aiFeedback ? (
-                              <div style={{ fontSize: 13, padding: 8, background: 'color-mix(in oklch, var(--color-accent) 8%, var(--color-paper))', borderRadius: 6 }}>
-                                <strong style={{ color: 'var(--color-accent)' }}>
-                                  📝 Thầy cô nhận xét (sơ bộ — chờ chốt điểm):
-                                </strong>
-                                <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{r.aiFeedback}</div>
-                                {r.images?.length > 0 && (
-                                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                                    {r.images.map((url: string, i: number) => (
-                                      <img key={i} src={url} alt={`Ảnh ${i + 1}`} style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 6 }} />
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            ) : null
-                          ) : r.finalScore !== null && r.finalScore !== undefined ? (
-                            <div style={{ fontSize: 13, padding: 8, background: 'color-mix(in oklch, var(--color-success) 8%, var(--color-paper))', borderRadius: 6 }}>
-                              <strong style={{ color: 'var(--color-success)' }}>
-                                ✅ Đã chốt: {r.finalScore} điểm — 📝 Thầy cô nhận xét:
-                              </strong>
-                              <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>
-                                {r.finalComment || 'Không có nhận xét thêm.'}
-                              </div>
-                              {r.images?.length > 0 && (
-                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                                  {r.images.map((url: string, i: number) => (
-                                    <img key={i} src={url} alt={`Ảnh ${i + 1}`} style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 6 }} />
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: 12.5 }}>
-                              {/* MCQ — hiện toàn bộ phương án, tô màu lựa chọn của mình */}
-                              {r.type === 'MCQ' && Array.isArray(r.options) && r.options.length > 0 && (
-                                <div style={{ margin: '4px 0 8px' }}>
-                                  <div
-                                    style={{
-                                      marginBottom: 6,
-                                      fontWeight: 800,
-                                      fontSize: 12.5,
-                                      color: r.correct ? 'var(--color-success)' : 'var(--color-danger)',
-                                    }}
-                                  >
-                                    {r.correct ? '✅ Bạn chọn đúng' : '❌ Bạn chọn sai'}
-                                    {' — '}
-                                    <span style={{ fontWeight: 700 }}>
-                                      Bạn chọn:{' '}
-                                      <span className="mono">{formatAnswer(r.studentAnswer) || 'bỏ trống'}</span>
-                                    </span>
-                                  </div>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                    {r.options.map((opt: any) => {
-                                      const norm = (v: any) =>
-                                        String(v ?? '')
-                                          .replace(/[^a-zA-Z0-9]/g, '')
-                                          .toLowerCase();
-                                      const chosen = norm(r.studentAnswer) !== '' && norm(r.studentAnswer) === norm(opt.id);
-                                      const isCorrect = norm(r.correctAnswer) !== '' && norm(r.correctAnswer) === norm(opt.id);
-                                      const good = chosen && isCorrect;
-                                      const bad = chosen && !isCorrect;
-                                      return (
-                                        <div
-                                          key={opt.id}
-                                          style={{
-                                            display: 'flex',
-                                            gap: 8,
-                                            alignItems: 'flex-start',
-                                            padding: '6px 10px',
-                                            borderRadius: 8,
-                                            background: good
-                                              ? 'color-mix(in oklch, var(--color-success) 16%, var(--color-paper))'
-                                              : bad
-                                                ? 'color-mix(in oklch, var(--color-danger) 14%, var(--color-paper))'
-                                                : isCorrect
-                                                  ? 'color-mix(in oklch, var(--color-success) 8%, var(--color-paper))'
-                                                  : 'transparent',
-                                            border: `1.5px solid ${
-                                              good || isCorrect
-                                                ? 'var(--color-success)'
-                                                : bad
-                                                  ? 'var(--color-danger)'
-                                                  : 'transparent'
-                                            }`,
-                                          }}
-                                        >
-                                          <span
-                                            className="stt-badge"
-                                            style={{
-                                              background:
-                                                good || isCorrect
-                                                  ? 'var(--color-success)'
-                                                  : bad
-                                                    ? 'var(--color-danger)'
-                                                    : undefined,
-                                              color: good || isCorrect || bad ? '#fff' : undefined,
-                                              borderColor:
-                                                good || isCorrect
-                                                  ? 'var(--color-success)'
-                                                  : bad
-                                                    ? 'var(--color-danger)'
-                                                    : undefined,
-                                            }}
-                                          >
-                                            {String(opt.id).toLowerCase()}
-                                          </span>
-                                          <span style={{ flex: 1, minWidth: 0, fontWeight: good || isCorrect ? 700 : undefined }}>
-                                            <LatexRenderer content={opt.text} />
-                                          </span>
-                                          {chosen && isCorrect && (
-                                            <span style={{ color: 'var(--color-success)', fontWeight: 800, whiteSpace: 'nowrap' }}>
-                                              ✓ Bạn chọn
-                                            </span>
-                                          )}
-                                          {chosen && !isCorrect && (
-                                            <span style={{ color: 'var(--color-danger)', fontWeight: 800, whiteSpace: 'nowrap' }}>
-                                              ✗ Bạn chọn
-                                            </span>
-                                          )}
-                                          {!chosen && isCorrect && (
-                                            <span style={{ color: 'var(--color-success)', fontWeight: 700, fontSize: 11.5, whiteSpace: 'nowrap' }}>
-                                              Đáp án đúng
-                                            </span>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* TRUE_FALSE — bảng từng mệnh đề */}
-                              {r.type === 'TRUE_FALSE' && Array.isArray(r.options) && r.options.length > 0 && (
-                                <table style={{ width: '100%', borderCollapse: 'collapse', margin: '4px 0 8px', fontSize: 12.5 }}>
-                                  <thead>
-                                    <tr style={{ background: 'var(--color-track)' }}>
-                                      <th style={{ padding: '6px 8px', textAlign: 'left' }}>Mệnh đề</th>
-                                      <th style={{ padding: '6px 8px', width: 72 }}>Bạn chọn</th>
-                                      <th style={{ padding: '6px 8px', width: 72 }}>Đáp án</th>
-                                      <th style={{ padding: '6px 8px', width: 52 }}>KQ</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {r.options.map((opt: any) => {
-                                      const picked = r.studentAnswer?.[opt.id];
-                                      const right = r.correctAnswer?.[opt.id] === true;
-                                      const ok = picked !== undefined && picked === right;
-                                      return (
-                                        <tr
-                                          key={opt.id}
-                                          style={{
-                                            borderTop: '1px solid var(--color-rule-2)',
-                                            background: ok
-                                              ? 'color-mix(in oklch, var(--color-success) 8%, transparent)'
-                                              : picked !== undefined
-                                                ? 'color-mix(in oklch, var(--color-danger) 8%, transparent)'
-                                                : undefined,
-                                          }}
-                                        >
-                                          <td style={{ padding: '6px 8px' }}>
-                                            <strong>{String(opt.id).toUpperCase()}.</strong>{' '}
-                                            <LatexRenderer content={opt.text} />
-                                          </td>
-                                          <td
-                                            style={{
-                                              padding: '6px 8px',
-                                              textAlign: 'center',
-                                              fontWeight: 800,
-                                              color:
-                                                picked === undefined
-                                                  ? 'var(--color-muted)'
-                                                  : ok
-                                                    ? 'var(--color-success)'
-                                                    : 'var(--color-danger)',
-                                            }}
-                                          >
-                                            {picked === undefined ? '—' : picked ? 'Đ' : 'S'}
-                                          </td>
-                                          <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}>
-                                            {right ? 'Đ' : 'S'}
-                                          </td>
-                                          <td style={{ padding: '6px 8px', textAlign: 'center' }}>{ok ? '✅' : '❌'}</td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
-                              )}
-
-                              {/* Trả lời ngắn */}
-                              {r.type === 'SHORT_ANSWER' && (
-                                <div style={{ marginBottom: 6 }}>
-                                  <span>
-                                    {r.correct ? '✅ Đúng' : '❌ Sai'} · Bạn trả lời:{' '}
-                                    <b className="mono">{formatAnswer(r.studentAnswer) || '—'}</b>
-                                  </span>
-                                  <span style={{ color: 'var(--color-muted)', marginLeft: 8 }}>
-                                    · Đáp án: <b className="mono">{formatAnswer(r.correctAnswer) || '—'}</b>
-                                  </span>
-                                </div>
-                              )}
-
-                              {r.tfDetail && (
-                                <div style={{ color: 'var(--color-muted)', marginBottom: 4 }}>
-                                  Đúng {r.tfDetail.correctCount}/{r.tfDetail.total} ý
-                                </div>
-                              )}
-
-                              {r.solution && (
-                                <div style={{ color: 'var(--color-muted)', marginTop: 4 }}>
-                                  <strong style={{ color: 'var(--color-success)' }}>Lời giải:</strong>{' '}
-                                  <LatexRenderer content={r.solution} />
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    <AttemptReview results={detail.results || []} answersVisible={detail.answersVisible !== false} />
                   </div>
                 )
               )}

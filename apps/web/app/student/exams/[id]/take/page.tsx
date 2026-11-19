@@ -6,6 +6,7 @@ import { apiFetch } from '@/lib/api';
 import { formatAnswer } from '@/lib/answer';
 import LatexRenderer from '@/components/LatexRenderer';
 import ImageUploader, { UpImage } from '@/components/ImageUploader';
+import AttemptReview from '@/components/AttemptReview';
 
 const PART_LABEL: Record<number, string> = {
   1: 'Trắc nghiệm',
@@ -363,6 +364,7 @@ export default function TakeExam() {
             score: detail.score,
             passed: detail.score >= detail.totalScore * 0.5,
             results: detail.results,
+            answersVisible: detail.answersVisible,
             aiAnalysis: detail.aiAnalysis,
           }));
         }
@@ -375,26 +377,36 @@ export default function TakeExam() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result?.pending, result?.attemptId]);
 
-  // Tải đáp án PDF (chỉ sau khi nộp bài)
-  async function downloadAnswersPdf(id: string) {
+  // Tải PDF đáp án & lời giải của chính bài vừa nộp (server tự sửa lỗi LaTeX khi biên dịch)
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfMsg, setPdfMsg] = useState('');
+  async function downloadAnswersPdf() {
+    if (!result?.attemptId) return;
+    setPdfBusy(true);
+    setPdfMsg('');
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/exams/${id}/answers-pdf`, {
+      const res = await fetch(`/api/exams/${examId}/attempts/${result.attemptId}/answers-pdf`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(String(err.message || '').slice(-400));
+        setPdfMsg(String(err.message || 'Không tạo được PDF đáp án').slice(-300));
         return;
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'dap_an.pdf';
+      a.download = `dap-an-${String(exam?.title || 'de-thi').slice(0, 40)}.pdf`;
+      document.body.appendChild(a);
       a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e: any) {
-      alert(e.message);
+      setPdfMsg(e?.message || 'Lỗi tải PDF');
+    } finally {
+      setPdfBusy(false);
     }
   }
 
@@ -490,13 +502,21 @@ export default function TakeExam() {
           >
             Về danh sách đề thi
           </button>
-          <button
-            className="btn btn-outline"
-            style={{ width: 'auto', marginTop: 16, marginLeft: 10 }}
-            onClick={() => downloadAnswersPdf(examId)}
-          >
-            Tải đáp án PDF
-          </button>
+          {result.answersVisible !== false && (
+            <button
+              className="btn btn-outline"
+              style={{ width: 'auto', marginTop: 16, marginLeft: 10 }}
+              disabled={pdfBusy}
+              onClick={downloadAnswersPdf}
+            >
+              {pdfBusy ? 'Đang tạo PDF…' : 'Tải đáp án PDF'}
+            </button>
+          )}
+          {pdfMsg && (
+            <p className="sh-error" role="alert" style={{ marginTop: 10 }}>
+              {pdfMsg}
+            </p>
+          )}
         </div>
 
         {/* Đang chấm AI tự luận + phân tích */}
@@ -551,113 +571,14 @@ export default function TakeExam() {
           </div>
         )}
 
-        <h2 style={{ fontSize: 18, marginBottom: 16 }}>Xem lại bài làm</h2>
-        {result.answersVisible === false ? (
-          <div className="card" style={{ padding: 20, textAlign: 'center', color: 'var(--color-muted)' }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>🔒</div>
-            <p>
-              {exam?.oneTimeResults
-                ? 'Đáp án của đề này chỉ được xem đúng 1 lần — bạn đã xem rồi.'
-                : 'Đáp án đang bị khóa: chưa đạt điểm tối thiểu để xem đáp án, hoặc giáo viên đặt thời hạn công bố.'}
-            </p>
-          </div>
+        {result.answersVisible === false && exam?.oneTimeResults ? (
+          <AttemptReview
+            results={result.results || []}
+            answersVisible={false}
+            lockedMessage="Đáp án của đề này chỉ được xem đúng 1 lần — em đã xem rồi. Em vẫn xem được câu nào đúng, câu nào sai."
+          />
         ) : (
-        <div>
-        {result.results.map((r: any) => (
-          <div key={r.itemId} className="card" style={{ marginBottom: 12, padding: 18 }}>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
-              {r.pending ? (
-                <span className="badge badge-warning">⏳ Tự luận — đang chờ chấm</span>
-              ) : r.finalScore !== null && r.finalScore !== undefined ? (
-                <span className="badge badge-success">Đã chốt điểm</span>
-              ) : (
-                <span
-                  className={r.correct ? 'badge badge-success' : 'badge badge-danger'}
-                >
-                  {r.correct ? 'Đúng' : 'Sai'}
-                </span>
-              )}
-              {r.pending ? (
-                <span className="badge">chưa có điểm</span>
-              ) : (
-                <span className="badge">+{r.earned} điểm</span>
-              )}
-              {r.tfDetail && (
-                <span
-                  className={
-                    r.tfDetail.fraction === 1
-                      ? 'badge badge-success'
-                      : 'badge badge-warning'
-                  }
-                >
-                  Đúng {r.tfDetail.correctCount}/{r.tfDetail.total} ý
-                </span>
-              )}
-              <span className="mono" style={{ fontSize: 12, color: 'var(--color-muted)' }}>
-                Câu {r.order}
-              </span>
-            </div>
-            <div style={{ marginBottom: 8 }}>
-              <LatexRenderer content={r.content} />
-            </div>
-            {r.options && Array.isArray(r.options) && (
-              <div style={{ fontSize: 14, marginBottom: 8, paddingLeft: 16 }}>
-                {r.options.map((opt: any) => (
-                  <div key={opt.id} style={{ marginBottom: 4 }}>
-                    <strong>{opt.id}.</strong> <LatexRenderer content={opt.text} />
-                  </div>
-                ))}
-              </div>
-            )}
-            {r.pending ? (
-              r.aiFeedback ? (
-                <div style={{ fontSize: 13, background: 'var(--color-paper)', padding: 10, borderRadius: 6, border: '1px solid var(--color-rule)' }}>
-                  <strong style={{ color: 'var(--color-success)' }}>
-                    📝 Thầy cô nhận xét (sơ bộ — chờ chốt điểm):
-                  </strong>
-                  <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>
-                    {r.aiFeedback}
-                  </div>
-                  {r.images?.length > 0 && (
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                      {r.images.map((url: string, i: number) => (
-                        <img key={i} src={url} alt={`Ảnh ${i + 1}`} style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 6 }} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : null
-            ) : r.finalScore !== null && r.finalScore !== undefined ? (
-              <div style={{ fontSize: 13, background: 'color-mix(in oklch, var(--color-success) 8%, var(--color-paper))', padding: 10, borderRadius: 6, border: '1px solid var(--color-rule)' }}>
-                <strong style={{ color: 'var(--color-success)' }}>
-                  ✅ Đã chốt điểm: {r.finalScore} — 📝 Thầy cô nhận xét:
-                </strong>
-                <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>
-                  {r.finalComment || 'Không có nhận xét thêm.'}
-                </div>
-                {r.images?.length > 0 && (
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                    {r.images.map((url: string, i: number) => (
-                      <img key={i} src={url} alt={`Ảnh ${i + 1}`} style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 6 }} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, background: 'var(--color-paper)', padding: 10, borderRadius: 6, border: '1px solid var(--color-rule)' }}>
-                <span style={{ color: 'var(--color-muted)' }}>Đáp án đúng: </span>
-                <LatexRenderer content={formatAnswer(r.correctAnswer)} />
-                {r.solution && (
-                  <div style={{ marginTop: 6 }}>
-                    <strong style={{ color: 'var(--color-success)' }}>Lời giải:</strong>{' '}
-                    <LatexRenderer content={r.solution} />
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-        </div>
+          <AttemptReview results={result.results || []} answersVisible={result.answersVisible !== false} />
         )}
       </div>
     );

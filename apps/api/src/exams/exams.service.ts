@@ -1188,7 +1188,11 @@ export class ExamsService {
         where: { id: userId },
         select: { role: true },
       });
-      if (u?.role !== Role.TEACHER && u?.role !== Role.ADMIN) {
+      // Giáo viên chỉ tải được bài của đề mình hoặc khóa mình trợ giảng; admin tải được hết
+      const allowed =
+        u?.role === Role.ADMIN ||
+        (u?.role === Role.TEACHER && (await this.hasExamAccess(examId, userId)));
+      if (!allowed) {
         throw new ForbiddenException('Không có quyền tải đáp án bài làm này');
       }
     }
@@ -1197,7 +1201,14 @@ export class ExamsService {
       attempt.studentId,
       examId,
       attemptId,
+      // tải PDF không tính là "đã xem 1 lần"; giáo viên luôn thấy đáp án
+      { noMarkViewed: true, asTeacher: attempt.studentId !== userId },
     );
+    if (attempt.studentId === userId && !detail.answersVisible) {
+      throw new ForbiddenException(
+        'Đáp án của đề này đang bị khóa (chưa tới thời gian công bố, chưa đủ điểm tối thiểu, hoặc chỉ được xem 1 lần).',
+      );
+    }
     const stu = await this.prisma.user.findUnique({
       where: { id: attempt.studentId },
       select: { fullName: true, className: true },
@@ -2880,7 +2891,12 @@ export class ExamsService {
   }
 
   // Chi tiết một lần làm bài (học sinh xem lại)
-  async getAttemptDetail(studentId: string, examId: string, attemptId: string) {
+  async getAttemptDetail(
+    studentId: string,
+    examId: string,
+    attemptId: string,
+    opts?: { noMarkViewed?: boolean; asTeacher?: boolean },
+  ) {
     const exam = await this.prisma.exam.findUnique({
       where: { id: examId },
       include: {
@@ -2945,6 +2961,7 @@ export class ExamsService {
         const earned = Math.round(item.score * tf.fraction * 100) / 100;
         score += earned;
         results.push({
+          maxScore: item.score,
           itemId: item.id,
           order: item.order,
           type: q.type,
@@ -2965,6 +2982,7 @@ export class ExamsService {
       const earned = correct ? item.score : 0;
       score += earned;
       results.push({
+        maxScore: item.score,
         itemId: item.id,
         order: item.order,
         type: q.type,
@@ -2984,13 +3002,13 @@ export class ExamsService {
     const aiAnalysis = perPart.aiAnalysis || null;
 
     // ===== CỔNG HIỂN THỊ ĐÁP ÁN (Canvas show_correct_answers) =====
-    const viewable = this.canViewAnswers(exam, attempt, false);
+    let viewable = opts?.asTeacher ? true : this.canViewAnswers(exam, attempt, false);
+    if (viewable && !opts?.asTeacher && (await this.lockedByMinScore(examId, studentId, score))) {
+      viewable = false;
+    }
     if (!viewable) {
-      for (const r of results) {
-        r.correctAnswer = null;
-        r.solution = null;
-      }
-    } else if (exam.oneTimeResults && !attempt.resultsViewedAt) {
+      this.stripAnswers(results);
+    } else if (exam.oneTimeResults && !attempt.resultsViewedAt && !opts?.noMarkViewed) {
       // Đánh dấu đã xem 1 lần — lần sau sẽ bị khóa
       this.prisma.examAttempt
         .update({
@@ -3747,6 +3765,28 @@ export class ExamsService {
 
   // Cổng hiển thị đáp án (Canvas show_correct_answers): GV luôn xem;
   // HS: khóa sau hideAnswersAt; oneTimeResults chỉ xem 1 lần
+  // Bài giao có "điểm tối thiểu để xem đáp án": chưa đủ điểm → khóa đáp án
+  private async lockedByMinScore(examId: string, studentId: string, score: number) {
+    const minAsg = await this.prisma.assignment.findFirst({
+      where: {
+        examId,
+        minScoreForAnswers: { not: null },
+        course: { enrollments: { some: { studentId } } },
+      },
+      orderBy: { minScoreForAnswers: 'desc' },
+      select: { minScoreForAnswers: true },
+    });
+    return !!(minAsg && minAsg.minScoreForAnswers != null && score < minAsg.minScoreForAnswers);
+  }
+
+  // Đáp án bị khóa thì KHÔNG gửi đáp án/lời giải xuống trình duyệt (vẫn cho biết câu đúng/sai)
+  private stripAnswers(results: any[]) {
+    for (const r of results) {
+      r.correctAnswer = null;
+      r.solution = null;
+    }
+  }
+
   canViewAnswers(exam: any, attempt: any, isTeacher: boolean): boolean {
     if (isTeacher) return true;
     if (!exam) return false;
@@ -3794,6 +3834,7 @@ export class ExamsService {
         // Tự luận: chấm AI bất đồng bộ sau khi nộp
         essayCount++;
         results.push({
+          maxScore: item.score,
           itemId: item.id,
           order: item.order,
           type: q.type,
@@ -3827,6 +3868,7 @@ export class ExamsService {
             : 0;
       score += earned;
       results.push({
+        maxScore: item.score,
         itemId: item.id,
         order: item.order,
         type: q.type,
@@ -3893,24 +3935,10 @@ export class ExamsService {
     // ===== Bài tập giao có yêu cầu ĐIỂM TỐI THIỂU để xem đáp án =====
     // Nếu đề nằm trong bài giao có minScoreForAnswers và học sinh chưa đủ điểm → khóa đáp án
     let answersVisible = this.canViewAnswers(exam, { resultsViewedAt: null }, false);
-    if (answersVisible) {
-      const minAsg = await this.prisma.assignment.findFirst({
-        where: {
-          examId,
-          minScoreForAnswers: { not: null },
-          course: { enrollments: { some: { studentId } } },
-        },
-        orderBy: { minScoreForAnswers: 'desc' },
-        select: { minScoreForAnswers: true },
-      });
-      if (
-        minAsg &&
-        minAsg.minScoreForAnswers != null &&
-        score < minAsg.minScoreForAnswers
-      ) {
-        answersVisible = false;
-      }
+    if (answersVisible && (await this.lockedByMinScore(examId, studentId, score))) {
+      answersVisible = false;
     }
+    if (!answersVisible) this.stripAnswers(results);
 
     return {
       attemptId,
