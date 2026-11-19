@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpException,
   Param,
   Patch,
   Post,
@@ -23,6 +24,18 @@ import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 import { CreateLessonDto } from './dto/create-lesson.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
+
+// Giới hạn số lần thử mật khẩu ghi danh: 10 lần / 15 phút / học sinh
+const enrollTries = new Map<string, { n: number; at: number }>();
+function checkEnrollRate(userId: string) {
+  const now = Date.now();
+  const r = enrollTries.get(userId);
+  if (!r || now - r.at > 15 * 60_000) {
+    enrollTries.set(userId, { n: 1, at: now });
+    return;
+  }
+  if (++r.n > 10) throw new HttpException('Thử quá nhiều lần — chờ 15 phút rồi thử lại', 429);
+}
 
 @Controller('courses')
 export class CoursesController {
@@ -173,6 +186,7 @@ export class CoursesController {
     @CurrentUser() user: any,
     @Body() body: any,
   ) {
+    checkEnrollRate(user.id);
     return this.coursesService.enroll(id, user.id, body?.password);
   }
 
@@ -198,7 +212,7 @@ export class CoursesController {
     @CurrentUser() user: any,
   ) {
     return user.role === Role.TEACHER
-      ? this.coursesService.getLessonQuiz(courseId, lessonId)
+      ? this.coursesService.getLessonQuiz(courseId, lessonId, user.id)
       : this.coursesService.getLessonQuizForStudent(courseId, lessonId, user.id);
   }
 
@@ -220,21 +234,61 @@ export class CoursesController {
   @Roles(Role.STUDENT)
   @Get(':courseId/lessons/:lessonId/note')
   getLessonNote(
+    @Param('courseId') courseId: string,
     @Param('lessonId') lessonId: string,
     @CurrentUser() user: any,
   ) {
-    return this.coursesService.getLessonNote(lessonId, user.id);
+    return this.coursesService.getLessonNote(courseId, lessonId, user.id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.STUDENT)
   @Put(':courseId/lessons/:lessonId/note')
   saveLessonNote(
+    @Param('courseId') courseId: string,
     @Param('lessonId') lessonId: string,
     @CurrentUser() user: any,
     @Body() body: { content?: string },
   ) {
-    return this.coursesService.saveLessonNote(lessonId, user.id, body?.content || '');
+    return this.coursesService.saveLessonNote(courseId, lessonId, user.id, String(body?.content || ''));
+  }
+
+  // ============ LƯỢT MỞ BÀI ============
+
+  // HS mở bài → ghi nhận "đã xem"
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.STUDENT)
+  @Post(':courseId/lessons/:lessonId/view')
+  markLessonViewed(
+    @Param('courseId') courseId: string,
+    @Param('lessonId') lessonId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.coursesService.markLessonViewed(courseId, lessonId, user.id);
+  }
+
+  // GV: danh sách đã xem / hoàn thành / chưa xem
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get(':courseId/lessons/:lessonId/viewers')
+  lessonViewers(
+    @Param('courseId') courseId: string,
+    @Param('lessonId') lessonId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.coursesService.lessonViewers(courseId, lessonId, user.id);
+  }
+
+  // GV: gửi thông báo nhắc HS chưa mở bài
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post(':courseId/lessons/:lessonId/remind')
+  remindLesson(
+    @Param('courseId') courseId: string,
+    @Param('lessonId') lessonId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.coursesService.remindLessonNotViewed(courseId, lessonId, user.id);
   }
 
   // ============ SỐ LIỆU TỪNG BÀI (GIÁO VIÊN) ============

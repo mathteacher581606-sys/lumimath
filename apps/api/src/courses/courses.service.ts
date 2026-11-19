@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { createHash } from 'crypto';
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import * as XLSX from 'xlsx';
@@ -80,7 +80,7 @@ export class CoursesService {
         isAssistant: c.teacherId !== user.id,
       }));
     }
-    return this.prisma.course.findMany({
+    const list = await this.prisma.course.findMany({
       where: { isPublished: true },
       include: {
         teacher: { select: { id: true, fullName: true, school: true } },
@@ -88,6 +88,13 @@ export class CoursesService {
       },
       orderBy: { createdAt: 'desc' },
     });
+    // KHÔNG gửi mật khẩu ghi danh cho học sinh — chỉ báo khóa có mật khẩu hay không
+    return list.map((c) => this.publicCourse(c));
+  }
+
+  private publicCourse<T extends { password?: string | null }>(c: T) {
+    const { password, ...rest } = c as any;
+    return { ...rest, hasPassword: !!password };
   }
 
   async findOne(id: string, user?: any) {
@@ -116,34 +123,89 @@ export class CoursesService {
     });
     if (!course) throw new NotFoundException('Không tìm thấy khóa học');
 
-    const isOwner = user?.role === 'TEACHER' && (course as any).teacherId === user.id;
-    let enrolled = true;
-    if (user?.role === 'STUDENT' && !isOwner) {
+    // Ai đang xem: người quản lý (chủ khóa / trợ giảng / admin) thấy toàn bộ;
+    // học sinh đã ghi danh thấy bài đã mở; còn lại chỉ thấy tên bài + bài xem thử.
+    const manager = await this.isManager(course as any, user);
+    if (manager) return { ...course, hasPassword: !!(course as any).password, enrolled: true, canManage: true };
+
+    const c = this.publicCourse(course as any) as any;
+    if (!c.isPublished) throw new NotFoundException('Không tìm thấy khóa học');
+    let enrolled = false;
+    if (user?.role === 'STUDENT') {
       const en = await this.prisma.enrollment.findUnique({
         where: { courseId_studentId: { courseId: id, studentId: user.id } },
       });
       enrolled = !!en;
     }
 
-    if (!isOwner && !enrolled) {
-      // Chưa đăng ký: chỉ xem được bài "xem thử miễn phí", còn lại khóa nội dung
-      const lessons = (course as any).lessons.map((l: any) => {
-        if (l.isPreviewFree) return l;
-        return {
-          id: l.id,
-          title: l.title,
-          order: l.order,
-          chapter: l.chapter,
-          isPreviewFree: false,
-          locked: true,
-          exam: null,
-          _count: null,
-        };
-      });
-      return { ...course, lessons, enrolled: false };
-    }
+    const now = Date.now();
+    const visible = (course as any).lessons.filter((l: any) => !l.hidden);
+    const done = enrolled
+      ? new Set(
+          (
+            await this.prisma.lessonProgress.findMany({
+              where: { studentId: user.id, completed: true, lesson: { courseId: id } },
+              select: { lessonId: true },
+            })
+          ).map((p) => p.lessonId),
+        )
+      : new Set<string>();
 
-    return { ...course, enrolled };
+    let blockedBySequence = false;
+    const lessons = visible.map((l: any) => {
+      const scheduled = l.publishAt && new Date(l.publishAt).getTime() > now;
+      let lockReason: string | null = null;
+      if (scheduled) lockReason = 'scheduled';
+      else if (!enrolled && !l.isPreviewFree) lockReason = 'enroll';
+      else if (enrolled && (course as any).sequential && blockedBySequence) lockReason = 'sequential';
+      // Học tuần tự: bài sau chỉ mở khi bài trước (đã mở) được đánh dấu hoàn thành
+      if (enrolled && !scheduled && !done.has(l.id)) blockedBySequence = true;
+      const { hidden, ...rest } = l;
+      if (!lockReason) return { ...rest, locked: false, lockReason: null };
+      return {
+        id: l.id,
+        title: l.title,
+        order: l.order,
+        chapter: l.chapter,
+        isPreviewFree: !!l.isPreviewFree,
+        publishAt: l.publishAt,
+        deadline: l.deadline,
+        locked: true,
+        lockReason,
+        exam: null,
+        _count: null,
+      };
+    });
+    return { ...c, lessons, enrolled, canManage: false };
+  }
+
+  // Chủ khóa, trợ giảng của khóa, hoặc quản trị viên
+  private async isManager(course: { id: string; teacherId: string }, user?: any) {
+    if (!user) return false;
+    if (user.role === 'ADMIN') return true;
+    if (user.role !== 'TEACHER') return false;
+    if (course.teacherId === user.id) return true;
+    const a = await this.prisma.courseAssistant.findUnique({
+      where: { courseId_userId: { courseId: course.id, userId: user.id } },
+    });
+    return !!a;
+  }
+
+  // Học sinh chỉ thao tác được trên bài giảng thuộc khóa đã ghi danh, không ẩn, đã tới giờ mở
+  private async assertStudentLesson(courseId: string, lessonId: string, studentId: string) {
+    const lesson = await this.prisma.lesson.findFirst({
+      where: { id: lessonId, courseId },
+      select: { id: true, hidden: true, publishAt: true },
+    });
+    if (!lesson || lesson.hidden) throw new NotFoundException('Không tìm thấy bài giảng');
+    const en = await this.prisma.enrollment.findUnique({
+      where: { courseId_studentId: { courseId, studentId } },
+    });
+    if (!en) throw new ForbiddenException('Chưa đăng ký khóa học');
+    if (lesson.publishAt && lesson.publishAt.getTime() > Date.now()) {
+      throw new ForbiddenException('Bài giảng chưa đến giờ mở');
+    }
+    return lesson;
   }
 
   async update(id: string, teacherId: string, dto: UpdateCourseDto) {
@@ -180,6 +242,8 @@ export class CoursesService {
     body: any,
   ) {
     await this.getOwnedCourse(courseId, teacherId);
+    const owns = await this.prisma.lesson.count({ where: { id: lessonId, courseId } });
+    if (!owns) throw new NotFoundException('Không tìm thấy bài giảng');
     const exam = await this.prisma.exam.findFirst({
       where: { id: String(body?.examId || ''), teacherId },
     });
@@ -200,7 +264,10 @@ export class CoursesService {
   }
 
   // GV xem cấu hình + thống kê lượt làm quiz của bài
-  async getLessonQuiz(courseId: string, lessonId: string) {
+  async getLessonQuiz(courseId: string, lessonId: string, teacherId: string) {
+    await this.getOwnedCourse(courseId, teacherId);
+    const owns = await this.prisma.lesson.count({ where: { id: lessonId, courseId } });
+    if (!owns) throw new NotFoundException('Không tìm thấy bài giảng');
     const quiz = await this.prisma.lessonQuiz.findUnique({
       where: { lessonId },
       include: {
@@ -238,6 +305,7 @@ export class CoursesService {
 
   // HS lấy đề quiz (trộn câu, KHÔNG kèm đáp án)
   async getLessonQuizForStudent(courseId: string, lessonId: string, studentId: string) {
+    await this.assertStudentLesson(courseId, lessonId, studentId);
     const quiz = await this.prisma.lessonQuiz.findUnique({ where: { lessonId } });
     if (!quiz) return null;
     const items = await this.prisma.examItem.findMany({
@@ -269,6 +337,8 @@ export class CoursesService {
       remaining,
       bestScore: best?.score ?? null,
       history: attempts,
+      // Phiếu ký số: máy chủ chỉ chấm đúng bộ câu đã phát cho học sinh này
+      token: this.signQuiz(quiz.id, studentId, picked.map((q: any) => q.id)),
       questions: picked.map((q: any) => ({
         id: q.id,
         content: q.content,
@@ -284,8 +354,14 @@ export class CoursesService {
     studentId: string,
     body: any,
   ) {
+    await this.assertStudentLesson(courseId, lessonId, studentId);
     const quiz = await this.prisma.lessonQuiz.findUnique({ where: { lessonId } });
     if (!quiz) throw new NotFoundException('Bài giảng không có quiz');
+    // Chỉ chấm đúng bộ câu đã phát (chống gửi mã câu bất kỳ để dò đáp án / chọn câu dễ)
+    const servedIds = this.verifyQuiz(String(body?.token || ''), quiz.id, studentId);
+    if (!servedIds) {
+      throw new BadRequestException('Phiên làm quiz không hợp lệ hoặc đã hết hạn — hãy tải lại bài.');
+    }
     // Giới hạn số lần làm
     if (quiz.maxAttempts > 0) {
       const used = await this.prisma.lessonQuizAttempt.count({
@@ -297,8 +373,14 @@ export class CoursesService {
         );
       }
     }
-    const answers: Record<string, string> = body?.answers || {};
-    const ids = Object.keys(answers).slice(0, 50);
+    const raw = body?.answers && typeof body.answers === 'object' ? body.answers : {};
+    const answers: Record<string, string> = {};
+    for (const id of servedIds) if (typeof raw[id] === 'string') answers[id] = raw[id];
+    const inExam = await this.prisma.examItem.findMany({
+      where: { examId: quiz.examId, questionId: { in: servedIds } },
+      select: { questionId: true },
+    });
+    const ids = inExam.map((i) => i.questionId);
     const questions = await this.prisma.question.findMany({
       where: { id: { in: ids } },
     });
@@ -347,6 +429,34 @@ export class CoursesService {
     };
   }
 
+  private quizSecret() {
+    return (process.env.JWT_ACCESS_SECRET || 'lumimath-access-secret-change-this-in-production') + ':lesson-quiz';
+  }
+
+  // token = base64url(json{q,s,ids,exp}).hmac — hạn 6 giờ
+  private signQuiz(quizId: string, studentId: string, ids: string[]) {
+    const body = Buffer.from(
+      JSON.stringify({ q: quizId, s: studentId, ids, exp: Date.now() + 6 * 3600_000 }),
+    ).toString('base64url');
+    const mac = createHmac('sha256', this.quizSecret()).update(body).digest('base64url');
+    return `${body}.${mac}`;
+  }
+
+  private verifyQuiz(token: string, quizId: string, studentId: string): string[] | null {
+    const [body, mac] = token.split('.');
+    if (!body || !mac) return null;
+    const want = createHmac('sha256', this.quizSecret()).update(body).digest();
+    const got = Buffer.from(mac, 'base64url');
+    if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
+    try {
+      const d = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+      if (d.q !== quizId || d.s !== studentId || !(d.exp > Date.now())) return null;
+      return Array.isArray(d.ids) ? d.ids.map(String).slice(0, 50) : null;
+    } catch {
+      return null;
+    }
+  }
+
   // ============ THỐNG KÊ HOẠT ĐỘNG HỌC SINH ============
 
   async courseActivity(courseId: string, teacherId: string) {
@@ -356,7 +466,7 @@ export class CoursesService {
       include: { student: { select: { id: true, fullName: true, studentCode: true } } },
     });
     const lessons = await this.prisma.lesson.findMany({
-      where: { courseId },
+      where: { courseId, hidden: false },
       select: { id: true, title: true },
     });
     const titleOf = new Map(lessons.map((l) => [l.id, l.title]));
@@ -392,13 +502,16 @@ export class CoursesService {
 
   // ============ GHI CHÚ CÁ NHÂN TRONG BÀI GIẢNG ============
 
-  async getLessonNote(lessonId: string, studentId: string) {
+  async getLessonNote(courseId: string, lessonId: string, studentId: string) {
+    await this.assertStudentLesson(courseId, lessonId, studentId);
     return this.prisma.lessonNote.findUnique({
       where: { lessonId_studentId: { lessonId, studentId } },
     });
   }
 
-  async saveLessonNote(lessonId: string, studentId: string, content: string) {
+  async saveLessonNote(courseId: string, lessonId: string, studentId: string, content: string) {
+    await this.assertStudentLesson(courseId, lessonId, studentId);
+    if (content.length > 20000) throw new BadRequestException('Ghi chú tối đa 20.000 ký tự');
     return this.prisma.lessonNote.upsert({
       where: { lessonId_studentId: { lessonId, studentId } },
       update: { content },
@@ -415,6 +528,10 @@ export class CoursesService {
         course: {
           include: {
             lessons: {
+              where: {
+                hidden: false,
+                OR: [{ publishAt: null }, { publishAt: { lte: new Date() } }],
+              },
               orderBy: { order: 'asc' },
               include: { exam: { select: { id: true, title: true } } },
             },
@@ -494,10 +611,14 @@ export class CoursesService {
       where: { id: courseId },
       include: {
         teacher: { select: { fullName: true } },
-        lessons: { select: { id: true } },
+        lessons: { where: { hidden: false }, select: { id: true } },
       },
     });
     if (!course) throw new NotFoundException('Không tìm thấy khóa học');
+    const en = await this.prisma.enrollment.findUnique({
+      where: { courseId_studentId: { courseId, studentId } },
+    });
+    if (!en) throw new ForbiddenException('Chưa đăng ký khóa học');
     if (!course.lessons.length) {
       throw new ForbiddenException('Khóa học chưa có bài giảng');
     }
@@ -606,6 +727,7 @@ export class CoursesService {
 
   async createLesson(courseId: string, teacherId: string, dto: CreateLessonDto) {
     await this.getOwnedCourse(courseId, teacherId);
+    await this.assertLessonExam(dto.examId, courseId, teacherId);
     const chapter = ((dto as any).chapter || null) as string | null;
 
     // Tự chèn bài mới vào CUỐI CHƯƠNG của nó (giữ các chương liền mạch)
@@ -654,8 +776,29 @@ export class CoursesService {
         deadline: dto.deadline ? new Date(dto.deadline) : null,
         blocks: (dto as any).blocks ?? undefined,
         isPreviewFree: (dto as any).isPreviewFree ?? false,
+        hidden: !!(dto as any).hidden,
+        publishAt: this.parseOptDate((dto as any).publishAt) ?? null,
       },
     });
+  }
+
+  // '' | null → null; chuỗi ngày hợp lệ → Date; undefined → undefined (không đổi)
+  private parseOptDate(v: any): Date | null | undefined {
+    if (v === undefined) return undefined;
+    if (v === null || v === '') return null;
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) throw new BadRequestException('Thời điểm mở bài không hợp lệ');
+    return d;
+  }
+
+  // Đề gắn vào bài giảng phải là đề của chính giáo viên (hoặc chủ khóa)
+  private async assertLessonExam(examId: any, courseId: string, userId: string) {
+    if (!examId) return;
+    const course = await this.prisma.course.findUnique({ where: { id: courseId }, select: { teacherId: true } });
+    const ok = await this.prisma.exam.count({
+      where: { id: String(examId), teacherId: { in: [userId, course?.teacherId || userId] } },
+    });
+    if (!ok) throw new BadRequestException('Đề thi không tồn tại hoặc không thuộc về bạn');
   }
 
   async updateLesson(
@@ -670,6 +813,7 @@ export class CoursesService {
     if (!lesson) throw new NotFoundException('Không tìm thấy bài giảng');
     // Chủ khóa học hoặc trợ giảng đều được sửa bài giảng
     await this.getOwnedCourse(lesson.courseId, teacherId);
+    await this.assertLessonExam(dto.examId, lesson.courseId, teacherId);
     return this.prisma.lesson.update({
       where: { id: lessonId },
       data: {
@@ -701,6 +845,8 @@ export class CoursesService {
           (dto as any).isPreviewFree === undefined
             ? undefined
             : (dto as any).isPreviewFree,
+        hidden: (dto as any).hidden === undefined ? undefined : !!(dto as any).hidden,
+        publishAt: this.parseOptDate((dto as any).publishAt),
       },
     });
   }
@@ -840,9 +986,9 @@ export class CoursesService {
     const course = await this.prisma.course.findUnique({
       where: { id: courseId },
     });
-    if (!course) throw new NotFoundException('Không tìm thấy khóa học');
+    if (!course || !course.isPublished) throw new NotFoundException('Không tìm thấy khóa học');
 
-    if (course.password && course.password !== password) {
+    if (course.password && course.password !== String(password ?? '')) {
       throw new ForbiddenException('Mật khẩu khóa học không đúng');
     }
 
@@ -1273,10 +1419,8 @@ export class CoursesService {
     });
     if (!enrollment) throw new ForbiddenException('Chưa đăng ký khóa học');
 
-    const lesson = await this.prisma.lesson.findFirst({
-      where: { id: lessonId, courseId },
-    });
-    if (!lesson) throw new NotFoundException('Không tìm thấy bài giảng');
+    await this.assertStudentLesson(courseId, lessonId, studentId);
+    if (completed) await this.assertSequentialOpen(courseId, lessonId, studentId);
 
     await this.prisma.lessonProgress.upsert({
       where: { lessonId_studentId: { lessonId, studentId } },
@@ -1284,10 +1428,10 @@ export class CoursesService {
       create: { lessonId, studentId, completed },
     });
 
-    // Cập nhật % hoàn thành của Enrollment
-    const total = await this.prisma.lesson.count({ where: { courseId } });
+    // Cập nhật % hoàn thành của Enrollment (không tính bài nháp)
+    const total = await this.prisma.lesson.count({ where: { courseId, hidden: false } });
     const done = await this.prisma.lessonProgress.count({
-      where: { lesson: { courseId }, studentId, completed: true },
+      where: { lesson: { courseId, hidden: false }, studentId, completed: true },
     });
     const progress = total ? Math.round((done / total) * 100) / 100 : 0;
     await this.prisma.enrollment.update({
@@ -1305,9 +1449,10 @@ export class CoursesService {
     if (!enrollment) throw new ForbiddenException('Chưa đăng ký khóa học');
 
     const progresses = await this.prisma.lessonProgress.findMany({
-      where: { studentId, lesson: { courseId } },
+      where: { studentId, lesson: { courseId, hidden: false } },
+      orderBy: { updatedAt: 'desc' },
     });
-    const total = await this.prisma.lesson.count({ where: { courseId } });
+    const total = await this.prisma.lesson.count({ where: { courseId, hidden: false } });
     const done = progresses.filter((p) => p.completed).length;
 
     return {
@@ -1317,7 +1462,117 @@ export class CoursesService {
       completedLessonIds: progresses
         .filter((p) => p.completed)
         .map((p) => p.lessonId),
+      viewedLessonIds: progresses.map((p) => p.lessonId),
+      // Bài mở gần nhất → nút "Học tiếp"
+      lastLessonId: progresses[0]?.lessonId ?? null,
     };
+  }
+
+  // Học tuần tự: mọi bài (đã mở, không ẩn) đứng trước phải hoàn thành rồi
+  private async assertSequentialOpen(courseId: string, lessonId: string, studentId: string) {
+    const course = await this.prisma.course.findUnique({
+      where: { id: courseId },
+      select: { sequential: true },
+    });
+    if (!course?.sequential) return;
+    const lessons = await this.prisma.lesson.findMany({
+      where: { courseId, hidden: false },
+      orderBy: { order: 'asc' },
+      select: { id: true, publishAt: true },
+    });
+    const done = new Set(
+      (
+        await this.prisma.lessonProgress.findMany({
+          where: { studentId, completed: true, lesson: { courseId } },
+          select: { lessonId: true },
+        })
+      ).map((p) => p.lessonId),
+    );
+    const now = Date.now();
+    for (const l of lessons) {
+      if (l.id === lessonId) return;
+      if (l.publishAt && l.publishAt.getTime() > now) continue;
+      if (!done.has(l.id)) {
+        throw new ForbiddenException('Khóa học tuần tự: hãy hoàn thành bài trước đã');
+      }
+    }
+  }
+
+  // Ghi nhận học sinh MỞ bài (tạo dòng tiến độ chưa hoàn thành) → GV thấy "đã xem / chưa xem"
+  async markLessonViewed(courseId: string, lessonId: string, studentId: string) {
+    await this.assertStudentLesson(courseId, lessonId, studentId);
+    await this.prisma.lessonProgress.upsert({
+      where: { lessonId_studentId: { lessonId, studentId } },
+      // tăng 0 để cập nhật updatedAt → "Học tiếp" mở đúng bài xem gần nhất
+      update: { watchedSec: { increment: 0 } },
+      create: { lessonId, studentId, completed: false },
+    });
+    return { ok: true };
+  }
+
+  // GV: ai đã xem / hoàn thành / chưa xem một bài giảng
+  async lessonViewers(courseId: string, lessonId: string, teacherId: string) {
+    await this.getOwnedCourse(courseId, teacherId);
+    const owns = await this.prisma.lesson.count({ where: { id: lessonId, courseId } });
+    if (!owns) throw new NotFoundException('Không tìm thấy bài giảng');
+    const [enrollments, progresses] = await Promise.all([
+      this.prisma.enrollment.findMany({
+        where: { courseId },
+        include: {
+          student: { select: { id: true, fullName: true, studentCode: true, className: true } },
+        },
+      }),
+      this.prisma.lessonProgress.findMany({ where: { lessonId } }),
+    ]);
+    const byStudent = new Map(progresses.map((p) => [p.studentId, p]));
+    const rows = enrollments.map((e: any) => {
+      const p = byStudent.get(e.studentId);
+      return {
+        student: e.student,
+        status: !p ? 'NOT_VIEWED' : p.completed ? 'COMPLETED' : 'VIEWED',
+        at: p?.updatedAt ?? null,
+      };
+    });
+    const order = { NOT_VIEWED: 0, VIEWED: 1, COMPLETED: 2 } as any;
+    rows.sort(
+      (a, b) =>
+        order[a.status] - order[b.status] ||
+        String(a.student?.fullName || '').localeCompare(String(b.student?.fullName || ''), 'vi'),
+    );
+    return {
+      total: rows.length,
+      notViewed: rows.filter((r) => r.status === 'NOT_VIEWED').length,
+      viewed: rows.filter((r) => r.status !== 'NOT_VIEWED').length,
+      completed: rows.filter((r) => r.status === 'COMPLETED').length,
+      rows,
+    };
+  }
+
+  // GV: gửi thông báo nhắc những học sinh CHƯA mở bài (giới hạn 1 lần / 30 phút / bài)
+  private remindAt = new Map<string, number>();
+  async remindLessonNotViewed(courseId: string, lessonId: string, teacherId: string) {
+    const v = await this.lessonViewers(courseId, lessonId, teacherId);
+    const last = this.remindAt.get(lessonId) || 0;
+    if (Date.now() - last < 30 * 60_000) {
+      throw new HttpException('Vừa nhắc bài này rồi — thử lại sau 30 phút', 429);
+    }
+    const lesson = await this.prisma.lesson.findUnique({
+      where: { id: lessonId },
+      select: { title: true, course: { select: { title: true } } },
+    });
+    const targets = v.rows.filter((r) => r.status === 'NOT_VIEWED').map((r) => r.student.id);
+    if (targets.length) {
+      await this.prisma.notification.createMany({
+        data: targets.map((userId) => ({
+          userId,
+          title: 'Nhắc học bài',
+          body: `Em chưa mở bài "${lesson?.title}" trong khóa ${lesson?.course?.title}.`,
+          link: `/student/courses/${courseId}?lesson=${lessonId}`,
+        })),
+      });
+    }
+    this.remindAt.set(lessonId, Date.now());
+    return { sent: targets.length };
   }
 
   // ============ THẢO LUẬN BÀI GIẢNG ============
@@ -1334,12 +1589,9 @@ export class CoursesService {
     });
     if (!lesson) throw new NotFoundException('Không tìm thấy bài giảng');
     if (role === Role.STUDENT) {
-      const enrollment = await this.prisma.enrollment.findUnique({
-        where: { courseId_studentId: { courseId, studentId: userId } },
-      });
-      if (!enrollment) throw new ForbiddenException('Chưa đăng ký khóa học');
-    } else if (lesson.course.teacherId !== userId) {
-      throw new ForbiddenException('Bạn không sở hữu khóa học này');
+      await this.assertStudentLesson(courseId, lessonId, userId);
+    } else if (!(await this.isManager(lesson.course, { id: userId, role }))) {
+      throw new ForbiddenException('Bạn không quản lý khóa học này');
     }
     return lesson;
   }
@@ -1369,7 +1621,8 @@ export class CoursesService {
   ) {
     await this.checkLessonAccess(courseId, lessonId, userId, role);
     const text = (content || '').trim();
-    if (!text) throw new ForbiddenException('Nội dung bình luận trống');
+    if (!text) throw new BadRequestException('Nội dung bình luận trống');
+    if (text.length > 2000) throw new BadRequestException('Bình luận tối đa 2.000 ký tự');
     return this.prisma.lessonComment.create({
       data: { lessonId, authorId: userId, content: text },
       include: {
@@ -1385,7 +1638,7 @@ export class CoursesService {
     });
     if (!comment) throw new NotFoundException('Không tìm thấy bình luận');
     const isOwner = comment.authorId === userId;
-    const isTeacher = comment.lesson.course.teacherId === userId;
+    const isTeacher = await this.isManager(comment.lesson.course, { id: userId, role });
     if (!isOwner && !isTeacher) {
       throw new ForbiddenException('Không thể xóa bình luận này');
     }

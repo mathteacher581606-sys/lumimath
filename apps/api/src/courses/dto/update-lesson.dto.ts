@@ -54,4 +54,14 @@ export class UpdateLessonDto {
   @IsOptional()
   @Allow()
   isPreviewFree?: boolean;
+
+  // Bài nháp (học sinh không thấy)
+  @IsOptional()
+  @Allow()
+  hidden?: boolean;
+
+  // Hẹn giờ mở bài (ISO) — null/'' = mở ngay
+  @IsOptional()
+  @Allow()
+  publishAt?: string | null;
 }

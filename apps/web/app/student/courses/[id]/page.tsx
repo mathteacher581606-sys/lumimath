@@ -278,7 +278,7 @@ export default function CourseDetailPage() {
     try {
       const data = await apiFetch(
         `/courses/${courseId}/lessons/${lessonId}/quiz/submit`,
-        { method: 'POST', body: JSON.stringify({ answers: quizAnswers }) },
+        { method: 'POST', body: JSON.stringify({ answers: quizAnswers, token: quizData.token }) },
       );
       setQuizResult(data);
     } catch (e: any) {

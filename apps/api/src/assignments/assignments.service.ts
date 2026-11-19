@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -53,6 +54,52 @@ export class AssignmentsService {
     });
     if (assistant) return course;
     throw new ForbiddenException('Bạn không có quyền quản lý khóa học này');
+  }
+
+  // Bài giao (và bài nộp, nếu có) phải thuộc đúng khóa học trong URL — chặn sửa/chấm chéo khóa
+  private async assertScope(courseId: string, assignmentId: string, submissionId?: string) {
+    const a = await this.prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      select: { courseId: true },
+    });
+    if (!a || a.courseId !== courseId) throw new NotFoundException('Không tìm thấy bài giao');
+    if (submissionId) {
+      const sub = await this.prisma.assignmentSubmission.findUnique({
+        where: { id: submissionId },
+        select: { assignmentId: true },
+      });
+      if (!sub || sub.assignmentId !== assignmentId) throw new NotFoundException('Không tìm thấy bài nộp');
+    }
+  }
+
+  // Đề thi / câu ngân hàng / bài giảng gắn vào bài giao phải thuộc GV (hoặc chủ khóa) và đúng khóa
+  private async assertRefs(courseId: string, userId: string, body: any) {
+    const course = await this.prisma.course.findUnique({
+      where: { id: courseId },
+      select: { teacherId: true },
+    });
+    const owners = Array.from(new Set([userId, course?.teacherId].filter(Boolean))) as string[];
+    if (body?.examId) {
+      const ok = await this.prisma.exam.count({
+        where: { id: String(body.examId), teacherId: { in: owners } },
+      });
+      if (!ok) throw new BadRequestException('Đề thi không tồn tại hoặc không thuộc về bạn');
+    }
+    if (Array.isArray(body?.questionIds) && body.questionIds.length) {
+      const ids = body.questionIds.map(String);
+      const n = await this.prisma.question.count({
+        where: { id: { in: ids }, bank: { teacherId: { in: owners } } },
+      });
+      if (n !== new Set(ids).size) {
+        throw new BadRequestException('Có câu hỏi không thuộc ngân hàng của bạn');
+      }
+    }
+    if (body?.lessonId) {
+      const ok = await this.prisma.lesson.count({
+        where: { id: String(body.lessonId), courseId },
+      });
+      if (!ok) throw new BadRequestException('Bài giảng không thuộc khóa học này');
+    }
   }
 
   // Hạn nộp hiệu dụng cho 1 học sinh: ưu tiên hạn riêng theo lớp, nếu không có thì dùng hạn chung
@@ -197,10 +244,12 @@ export class AssignmentsService {
 
   async create(courseId: string, teacherId: string, body: any) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertRefs(courseId, teacherId, body);
     const assignment = await this.prisma.assignment.create({
       data: {
         courseId,
         teacherId,
+        lessonId: body?.lessonId ? String(body.lessonId) : null,
         title: String(body?.title || '').trim(),
         description: body?.description || null,
         kind: String(body?.kind || 'CUSTOM'),
@@ -282,7 +331,10 @@ export class AssignmentsService {
     body: any,
   ) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId);
+    await this.assertRefs(courseId, teacherId, body);
     const data: any = {};
+    if (body.lessonId !== undefined) data.lessonId = body.lessonId ? String(body.lessonId) : null;
     for (const k of [
       'title',
       'description',
@@ -348,6 +400,7 @@ export class AssignmentsService {
 
   async remove(courseId: string, assignmentId: string, teacherId: string) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId);
     await this.prisma.assignment.delete({ where: { id: assignmentId } });
     return { deleted: true };
   }
@@ -670,6 +723,7 @@ export class AssignmentsService {
     teacherId: string,
   ) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId, submissionId);
     return this.runAiGrade(submissionId);
   }
 
@@ -970,6 +1024,7 @@ export class AssignmentsService {
     teacherId: string,
   ) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId, submissionId);
     const submission = await this.prisma.assignmentSubmission.findUnique({
       where: { id: submissionId },
     });
@@ -1009,6 +1064,7 @@ export class AssignmentsService {
     body: any,
   ) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId, submissionId);
     const submission = await this.prisma.assignmentSubmission.findUnique({
       where: { id: submissionId },
     });
@@ -1133,6 +1189,7 @@ export class AssignmentsService {
     body: any,
   ) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId);
     const data: any = {};
     if (body?.posted !== undefined) data.gradesPosted = !!body.posted;
     if (body?.postAt !== undefined) {
@@ -1168,6 +1225,7 @@ export class AssignmentsService {
   // Chấm lại toàn bộ bài làm CỦA BÀI TẬP NÀY (đề thi được gán vào khóa học)
   async regradeAssignment(courseId: string, assignmentId: string, teacherId: string) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId);
     const assignment = await this.prisma.assignment.findUnique({
       where: { id: assignmentId },
     });
@@ -1215,6 +1273,7 @@ export class AssignmentsService {
     className?: string,
   ) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId);
     const assignment = await this.prisma.assignment.findUnique({
       where: { id: assignmentId },
     });
@@ -1566,6 +1625,7 @@ export class AssignmentsService {
     note?: string,
   ) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId, submissionId);
     const updated = await this.prisma.assignmentSubmission.update({
       where: { id: submissionId },
       data: { status: 'RETURNED', published: false },
@@ -1590,6 +1650,7 @@ export class AssignmentsService {
     annotations: any,
   ) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId, submissionId);
     return this.prisma.assignmentSubmission.update({
       where: { id: submissionId },
       data: { annotations: annotations || null },
@@ -1634,6 +1695,7 @@ export class AssignmentsService {
     body: any,
   ) {
     await this.ensureTeacher(courseId, teacherId);
+    await this.assertScope(courseId, assignmentId);
     const assignment = await this.prisma.assignment.findUnique({
       where: { id: assignmentId },
       select: { title: true },

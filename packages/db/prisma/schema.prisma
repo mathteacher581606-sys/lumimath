@@ -164,6 +164,9 @@ model Lesson {
   blocks      Json?
   notes       LessonNote[]
   isPreviewFree Boolean @default(false)
+  hidden      Boolean  @default(false) // bài nháp: học sinh không thấy
+  publishAt   DateTime? // hẹn giờ mở bài; trước thời điểm này học sinh chỉ thấy tên bài
+  assignments Assignment[]
 
   @@index([courseId])
 }
@@ -342,6 +345,8 @@ model Assignment {
   kind          String   @default("CUSTOM") // EXAM | TULUAN | CUSTOM
   examId        String?
   exam          Exam?    @relation(fields: [examId], references: [id], onDelete: SetNull)
+  lessonId      String?  // bài tập giao ngay trong một bài giảng
+  lesson        Lesson?  @relation(fields: [lessonId], references: [id], onDelete: SetNull)
   questionIds   String[] @default([]) // tự luận lấy từ ngân hàng
   customContent String?  @db.Text // tự gõ đề
   customQuestions String[] @default([]) // tự gõ NHIỀU câu tự luận
@@ -374,6 +379,7 @@ model Assignment {
 
   @@index([courseId])
   @@index([examId])
+  @@index([lessonId])
 }
 
 model AssignmentSubmission {

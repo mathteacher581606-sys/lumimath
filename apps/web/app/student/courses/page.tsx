@@ -36,7 +36,7 @@ export default function BrowseCourses() {
   }
 
   function handleEnroll(course: any) {
-    if (course.password) {
+    if (course.hasPassword) {
       setPasswordModal(course);
       setPassword('');
     } else {
@@ -94,7 +94,7 @@ export default function BrowseCourses() {
                   ) : (
                     <span style={{ marginLeft: 10 }}>THPT</span>
                   )}
-                  {c.password && <span style={{ marginLeft: 10 }}>· KHÓA</span>}
+                  {c.hasPassword && <span style={{ marginLeft: 10 }}>· KHÓA</span>}
                 </div>
               </div>
               <div className="course-title">{c.title}</div>
@@ -110,7 +110,7 @@ export default function BrowseCourses() {
                 onClick={() => handleEnroll(c)}
                 disabled={enrolling === c.id}
               >
-                {c.password ? 'Nhập mã để đăng ký' : enrolling === c.id ? 'Đang đăng ký…' : 'Đăng ký khóa học'}
+                {c.hasPassword ? 'Nhập mã để đăng ký' : enrolling === c.id ? 'Đang đăng ký…' : 'Đăng ký khóa học'}
               </button>
             </div>
           ))}
