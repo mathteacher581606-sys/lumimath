@@ -115,6 +115,7 @@ export default function CourseAssignments() {
   const [form, setForm] = useState<any>({
     title: '',
     description: '',
+    lessonId: '',
     examId: '',
     questionIds: [] as string[],
     customContent: '',
@@ -183,8 +184,33 @@ export default function CourseAssignments() {
 
   useEffect(() => {
     load();
+    // Đến từ trang bài giảng: ?new=1&lessonId=… → mở sẵn form giao bài, gắn vào bài giảng đó
+    const q = new URLSearchParams(window.location.search);
+    if (q.get('new') === '1') {
+      setForm((f: any) => ({ ...f, lessonId: q.get('lessonId') || '' }));
+      openCreate();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId]);
+
+  // Ô chọn "Thuộc bài giảng" (dùng cho cả giao mới và sửa)
+  function LessonSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+    const lessons: any[] = course?.lessons || [];
+    return (
+      <div className="form-group">
+        <label>Thuộc bài giảng (học sinh thấy bài tập ngay trong bài học)</label>
+        <select value={value || ''} onChange={(e) => onChange(e.target.value)}>
+          <option value="">— Không gắn với bài giảng nào —</option>
+          {lessons.map((l: any, i: number) => (
+            <option key={l.id} value={l.id}>
+              {i + 1}. {l.title}
+              {l.chapter ? ` (${l.chapter})` : ''}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
 
   async function loadExams() {
     try {
@@ -254,6 +280,7 @@ export default function CourseAssignments() {
         method: 'POST',
         body: JSON.stringify({
           ...form,
+          lessonId: form.lessonId || null,
           kind,
           examId: kind === 'EXAM' ? form.examId || null : null,
           questionIds: kind === 'TULUAN' ? form.questionIds : [],
@@ -272,7 +299,7 @@ export default function CourseAssignments() {
       setShowForm(false);
       setCustomQuestions([]);
       setTuluanMode('bank');
-      setForm({ ...form, title: '', description: '', examId: '', questionIds: [], customContent: '', pdfUrl: '', assignDate: '', dueDate: '', classDeadlines: [], minScoreForAnswers: '', hideAnswers: true, revealAnswersAt: '', showLeaderboard: false, allowResubmit: false, lateDeductionPercent: '', lateIntervalHours: 24, lateMinPercent: '', postManually: false });
+      setForm({ ...form, title: '', description: '', lessonId: '', examId: '', questionIds: [], customContent: '', pdfUrl: '', assignDate: '', dueDate: '', classDeadlines: [], minScoreForAnswers: '', hideAnswers: true, revealAnswersAt: '', showLeaderboard: false, allowResubmit: false, lateDeductionPercent: '', lateIntervalHours: 24, lateMinPercent: '', postManually: false });
       showToast('✅ Đã giao bài tập (học sinh đã nhận thông báo)');
       load();
     } catch (e: any) {
@@ -287,6 +314,7 @@ export default function CourseAssignments() {
   const [editForm, setEditForm] = useState<any>({
     title: '',
     description: '',
+    lessonId: '',
     assignDate: '',
     dueDate: '',
     classDeadlines: [] as { className: string; dueDate: string }[],
@@ -328,6 +356,7 @@ export default function CourseAssignments() {
     setEditForm({
       title: a.title || '',
       description: a.description || '',
+      lessonId: a.lessonId || '',
       assignDate: toLocalInput(a.assignDate),
       dueDate: toLocalInput(a.dueDate),
       classDeadlines: (Array.isArray(a.classDeadlines) ? a.classDeadlines : []).map(
@@ -382,6 +411,7 @@ export default function CourseAssignments() {
         body: JSON.stringify({
           title: editForm.title,
           description: editForm.description,
+          lessonId: editForm.lessonId || null,
           assignDate: toIso(editForm.assignDate),
           dueDate: toIso(editForm.dueDate),
           classDeadlines: (editForm.classDeadlines || [])
@@ -668,6 +698,7 @@ export default function CourseAssignments() {
                   <label>Tiêu đề bài giao *</label>
                   <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="VD: Buổi 16: Ôn tập ước và bội" required />
                 </div>
+                {LessonSelect({ value: form.lessonId, onChange: (v) => setForm({ ...form, lessonId: v }) })}
 
                 {/* Chọn loại */}
                 <div className="form-group">
@@ -1189,6 +1220,9 @@ export default function CourseAssignments() {
                 <div className="form-group" style={{ gridColumn: '1 / -1', marginBottom: 0 }}>
                   <label>Tiêu đề</label>
                   <input value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} required />
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  {LessonSelect({ value: editForm.lessonId, onChange: (v) => setEditForm({ ...editForm, lessonId: v }) })}
                 </div>
                 <div className="form-group" style={{ gridColumn: '1 / -1', marginBottom: 0 }}>
                   <label>Mô tả / Ghi chú</label>

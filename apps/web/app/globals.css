@@ -5081,3 +5081,62 @@ span.bk-stats-h { cursor: default; }
   .cl-prog-bar i, .cl-syl-bar i, .cl-done-btn { transition: none; }
   .cl-toast { animation: none; }
 }
+
+/* Trang khóa học — phần riêng của giáo viên (tl-*) */
+.tl-tabs {
+  display: flex; gap: 4px; margin: -4px 0 14px; padding: 4px;
+  border-radius: var(--radius-card);
+  background: var(--color-paper-2);
+  overflow-x: auto;
+}
+.tl-tabs button {
+  font: inherit; font-size: 14px; font-weight: 600; white-space: nowrap;
+  padding: 8px 16px; border: 0; border-radius: var(--radius-ctrl);
+  background: transparent; color: var(--color-muted); cursor: pointer;
+}
+.tl-tabs button:hover { color: var(--color-ink); }
+.tl-tabs button.is-on { background: var(--color-surface); color: var(--color-ink); box-shadow: 0 1px 2px color-mix(in srgb, var(--color-ink) 12%, transparent); }
+.tl-syl-tools { display: inline-flex; gap: 4px; }
+.tl-syl-tools button {
+  font: inherit; font-family: var(--font-body); font-size: 12px; font-weight: 600;
+  padding: 3px 8px; border-radius: var(--radius-ctrl);
+  border: 1px solid var(--color-rule); background: transparent; color: var(--color-muted); cursor: pointer;
+}
+.tl-syl-tools button:hover { color: var(--color-ink); border-color: var(--color-rule-2); }
+.tl-actions { display: flex; gap: 6px; align-items: center; }
+.tl-menu { position: relative; }
+.tl-menu-list {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 230px;
+  padding: 6px; display: grid;
+  background: var(--color-surface); border: 1px solid var(--color-card-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-ink) 18%, transparent);
+  animation: bk-rise 150ms var(--ease-out, ease-out);
+}
+.tl-menu-list button, .tl-menu-list a {
+  font: inherit; font-size: 13.5px; text-align: left; text-decoration: none;
+  padding: 8px 10px; border: 0; border-radius: var(--radius-ctrl);
+  background: transparent; color: var(--color-ink); cursor: pointer;
+}
+.tl-menu-list button:hover:not(:disabled), .tl-menu-list a:hover { background: var(--color-paper-2); }
+.tl-menu-list button:disabled { color: var(--color-muted); cursor: default; }
+.tl-menu-list .is-danger { color: var(--color-danger); }
+.tl-menu-list hr { border: 0; border-top: 1px solid var(--color-rule); margin: 4px 0; }
+.tl-reach { margin: -6px 0 18px; }
+.tl-reach-btn {
+  font: inherit; font-size: 13.5px; text-align: left; cursor: pointer;
+  padding: 8px 12px; width: 100%;
+  border: 1px solid var(--color-rule); border-radius: var(--radius-ctrl);
+  background: var(--color-paper-2); color: var(--color-ink);
+}
+.tl-reach-btn b { font-variant-numeric: tabular-nums; }
+.tl-viewers { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--color-rule); border-radius: var(--radius-ctrl); }
+.tl-viewers-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--color-muted); margin-bottom: 8px; }
+.tl-viewers ul { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; display: grid; }
+.tl-viewers li { display: flex; align-items: center; gap: 10px; padding: 6px 2px; border-top: 1px solid var(--color-rule); font-size: 13.5px; }
+.tl-v-name { flex: 1; min-width: 0; }
+.tl-v-st { font-size: 12.5px; color: var(--color-muted); }
+.tl-viewers li.is-NOT_VIEWED .tl-v-st { color: var(--color-danger); font-weight: 600; }
+.tl-viewers li.is-VIEWED > .cl-dot { border-color: var(--color-accent); background: linear-gradient(90deg, var(--color-accent) 50%, transparent 50%); }
+.tl-viewers li.is-COMPLETED > .cl-dot { border-color: var(--color-success); background: var(--color-success); }
+@media (prefers-reduced-motion: reduce) { .tl-menu-list { animation: none; } }

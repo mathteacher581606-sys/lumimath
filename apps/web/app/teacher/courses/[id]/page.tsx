@@ -5,9 +5,16 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { apiFetch, getUser } from '@/lib/api';
 import LatexRenderer from '@/components/LatexRenderer';
-import BackButton from '@/components/BackButton';
-import LessonComments from '@/components/LessonComments';
-import ImageAnnotator from '@/components/ImageAnnotator';
+import CourseSyllabus, { LessonStatus } from '@/components/course/CourseSyllabus';
+import TeacherLessonPanel from '@/components/course/TeacherLessonPanel';
+
+type Tab = 'lessons' | 'students' | 'results' | 'settings';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'lessons', label: 'Bài giảng' },
+  { id: 'students', label: 'Học sinh' },
+  { id: 'results', label: 'Điểm & hoạt động' },
+  { id: 'settings', label: 'Cài đặt khóa' },
+];
 
 export default function TeacherCourseDetail() {
   const params = useParams();
@@ -42,8 +49,12 @@ export default function TeacherCourseDetail() {
     quizNegW: '0',
     quizMax: '0',
     preview: false,
+    hidden: false,
+    publishAt: '',
   });
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState<Tab>('lessons');
+  const [courseAssignments, setCourseAssignments] = useState<any[]>([]);
   const [openLesson, setOpenLesson] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [myExams, setMyExams] = useState<any[]>([]);
@@ -138,7 +149,7 @@ export default function TeacherCourseDetail() {
     setShowCopy(!showCopy);
     if (!showCopy && myCourses.length === 0) {
       try {
-        const list = await apiFetch('/courses/my');
+        const list = await apiFetch('/courses');
         setMyCourses((list || []).filter((c: any) => c.id !== courseId));
       } catch (e: any) {
         showToast('❌ ' + e.message);
@@ -414,7 +425,6 @@ export default function TeacherCourseDetail() {
         method: 'PATCH',
         body: JSON.stringify(body),
       });
-      setShowEditCourse(false);
       showToast('Đã cập nhật khóa học');
       loadCourse();
     } catch (e: any) {
@@ -435,106 +445,6 @@ export default function TeacherCourseDetail() {
     }
   }
 
-  // Bài tập tự luận
-  const [exercisesByLesson, setExercisesByLesson] = useState<Record<string, any[]>>({});
-  const [showExForm, setShowExForm] = useState<string | null>(null);
-  const [exForm, setExForm] = useState({ prompt: '', rubric: '', maxScore: '10' });
-  const [exSaving, setExSaving] = useState(false);
-  const [openSubmissions, setOpenSubmissions] = useState<string | null>(null);
-
-  // Chốt điểm bài nộp
-  const [reviewSub, setReviewSub] = useState<any>(null);
-  const [reviewScore, setReviewScore] = useState('');
-  const [reviewNote, setReviewNote] = useState('');
-  const [reviewSaving, setReviewSaving] = useState(false);
-  const [annotatingSrc, setAnnotatingSrc] = useState<string | null>(null);
-  const [annotatingBusy, setAnnotatingBusy] = useState(false);
-
-  function openReviewSubmission(ex: any, s: any) {
-    setReviewSub({ exercise: ex, submission: s });
-    setReviewScore(
-      s.teacherScore !== null && s.teacherScore !== undefined
-        ? String(s.teacherScore)
-        : s.aiScore !== null && s.aiScore !== undefined
-          ? String(s.aiScore)
-          : '',
-    );
-    setReviewNote(s.teacherNote || '');
-  }
-
-  // Nhận ảnh đã sửa từ ImageAnnotator → upload → lưu vào bài nộp
-  async function handleAnnotatedBlob(blob: Blob) {
-    if (!reviewSub) return;
-    setAnnotatingBusy(true);
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/uploads/image', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'image/png',
-          Authorization: `Bearer ${token}`,
-        },
-        body: blob,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: 'Không lưu được ảnh' }));
-        throw new Error(err.message || 'Không lưu được ảnh');
-      }
-      const data = await res.json();
-      await apiFetch(
-        `/exercises/${reviewSub.exercise.id}/submissions/${reviewSub.submission.id}/annotations`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ urls: [data.url] }),
-        },
-      );
-      setReviewSub({
-        ...reviewSub,
-        submission: {
-          ...reviewSub.submission,
-          annotatedUrls: [...(reviewSub.submission.annotatedUrls || []), data.url],
-        },
-      });
-      setAnnotatingSrc(null);
-      showToast('Đã lưu ảnh sửa bài');
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setAnnotatingBusy(false);
-    }
-  }
-
-  async function saveReview() {
-    if (!reviewSub) return;
-    const { exercise, submission } = reviewSub;
-    const score = Number(reviewScore);
-    if (isNaN(score) || score < 0 || score > exercise.maxScore) {
-      alert(`Điểm phải từ 0 đến ${exercise.maxScore}`);
-      return;
-    }
-    setReviewSaving(true);
-    try {
-      await apiFetch(
-        `/exercises/${exercise.id}/submissions/${submission.id}/review`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            teacherScore: score,
-            teacherNote: reviewNote,
-          }),
-        },
-      );
-      showToast('Đã chốt điểm và gửi nhận xét cho học sinh');
-      setReviewSub(null);
-      const lessonId = exercise.lessonId;
-      loadExercises(lessonId);
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setReviewSaving(false);
-    }
-  }
-
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
@@ -545,12 +455,17 @@ export default function TeacherCourseDetail() {
     try {
       const data = await apiFetch(`/courses/${courseId}`);
       setCourse(data);
-      // Tự mở bài giảng đầu tiên (bố cục sidebar kiểu Udemy)
-      const first = data.lessons?.[0];
-      if (first && !openLesson) {
-        setOpenLesson(first.id);
-        loadExercises(first.id);
-      }
+      // Mở bài: ?lesson= → bài đang mở → bài đầu
+      const want = new URLSearchParams(window.location.search).get('lesson');
+      setOpenLesson((cur) => {
+        const ids = (data.lessons || []).map((l: any) => l.id);
+        if (cur && ids.includes(cur)) return cur;
+        if (want && ids.includes(want)) return want;
+        return ids[0] || null;
+      });
+      apiFetch(`/courses/${courseId}/assignments`)
+        .then((d) => setCourseAssignments(Array.isArray(d?.assignments) ? d.assignments : []))
+        .catch(() => {});
       apiFetch(`/courses/${courseId}/lesson-stats`)
         .then(setLessonStats)
         .catch(() => {});
@@ -569,115 +484,36 @@ export default function TeacherCourseDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId]);
 
-  async function loadExercises(lessonId: string) {
-    try {
-      const data = await apiFetch(`/courses/${courseId}/lessons/${lessonId}/exercises`);
-      setExercisesByLesson((prev) => ({ ...prev, [lessonId]: data }));
-    } catch (e: any) {
-      console.error(e);
+  function selectLesson(l: any) {
+    setOpenLesson(l.id);
+    const url = new URL(window.location.href);
+    url.searchParams.set('lesson', l.id);
+    window.history.replaceState(null, '', url.toString());
+  }
+
+  function switchTab(t: Tab) {
+    setTab(t);
+    if (t === 'students' && students === null) loadStudents();
+    if (t === 'results') {
+      if (courseResults === null) loadCourseResults();
+      if (activity === null) loadActivity();
+    }
+    if (t === 'settings') {
+      openEditCourse();
+      if (isOwner && assistants.length === 0) loadAssistants();
     }
   }
 
-  function toggleLesson(lessonId: string) {
-    const opening = openLesson !== lessonId;
-    setOpenLesson(opening ? lessonId : null);
-    if (opening) loadExercises(lessonId);
-  }
-
-  async function createExercise(lessonId: string, e: React.FormEvent) {
-    e.preventDefault();
-    setExSaving(true);
+  async function toggleHidden(lesson: any) {
     try {
-      await apiFetch(`/courses/${courseId}/lessons/${lessonId}/exercises`, {
-        method: 'POST',
-        body: JSON.stringify({
-          prompt: exForm.prompt,
-          rubric: exForm.rubric || undefined,
-          maxScore: Number(exForm.maxScore) || 10,
-        }),
+      await apiFetch(`/courses/${courseId}/lessons/${lesson.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ hidden: !lesson.hidden }),
       });
-      setExForm({ prompt: '', rubric: '', maxScore: '10' });
-      setShowExForm(null);
-      showToast('Đã thêm bài tập tự luận');
-      loadExercises(lessonId);
-    } catch (err: any) {
-      showToast(err.message);
-    } finally {
-      setExSaving(false);
-    }
-  }
-
-  async function deleteExercise(lessonId: string, exerciseId: string) {
-    if (!confirm('Xóa bài tập này?')) return;
-    try {
-      await apiFetch(`/courses/${courseId}/lessons/${lessonId}/exercises/${exerciseId}`, {
-        method: 'DELETE',
-      });
-      showToast('Đã xóa bài tập');
-      loadExercises(lessonId);
-    } catch (err: any) {
-      showToast(err.message);
-    }
-  }
-
-  // ===== Chọn câu tự luận từ ngân hàng đề =====
-  const [bankPicker, setBankPicker] = useState<string | null>(null); // lessonId
-  const [bankQuestions, setBankQuestions] = useState<any[]>([]);
-  const [bankSearch, setBankSearch] = useState('');
-  const [bankSelected, setBankSelected] = useState<string[]>([]);
-  const [bankMaxScore, setBankMaxScore] = useState('10');
-  const [bankLoading, setBankLoading] = useState(false);
-
-  async function openBankPicker(lessonId: string) {
-    setBankPicker(lessonId);
-    setBankSelected([]);
-    setBankSearch('');
-    setBankMaxScore('10');
-    await searchBank('');
-  }
-
-  async function searchBank(q: string) {
-    setBankLoading(true);
-    try {
-      const data = await apiFetch(
-        `/bank/questions?type=ESSAY&limit=100&q=${encodeURIComponent(q)}`,
-      );
-      setBankQuestions(data);
+      showToast(lesson.hidden ? 'Đã hiện bài cho học sinh' : 'Đã chuyển thành bài nháp');
+      loadCourse();
     } catch (e: any) {
       showToast(e.message);
-    } finally {
-      setBankLoading(false);
-    }
-  }
-
-  function toggleBankSelect(id: string) {
-    setBankSelected((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
-  }
-
-  async function assignFromBank() {
-    if (!bankPicker) return;
-    if (!bankSelected.length) {
-      showToast('Chọn ít nhất 1 câu hỏi');
-      return;
-    }
-    setExSaving(true);
-    try {
-      await apiFetch(`/courses/${courseId}/lessons/${bankPicker}/exercises/from-bank`, {
-        method: 'POST',
-        body: JSON.stringify({
-          questionIds: bankSelected,
-          maxScore: Number(bankMaxScore) || 10,
-        }),
-      });
-      showToast(`Đã gán ${bankSelected.length} câu tự luận làm BTVN`);
-      setBankPicker(null);
-      loadExercises(bankPicker);
-    } catch (err: any) {
-      showToast(err.message);
-    } finally {
-      setExSaving(false);
     }
   }
 
@@ -723,7 +559,7 @@ export default function TeacherCourseDetail() {
   }
 
   function resetForm() {
-    setForm({ title: '', chapter: '', newChapter: '', order: '', youtubeUrl: '', content: '', duration: '', pdfLinks: [], videos: [], materials: [], examId: '', deadline: '', quizOn: false, quizExamId: '', quizCount: '5', quizPass: '50', quizNeg: false, quizNegW: '0', quizMax: '0', preview: false });
+    setForm({ title: '', chapter: '', newChapter: '', order: '', youtubeUrl: '', content: '', duration: '', pdfLinks: [], videos: [], materials: [], examId: '', deadline: '', quizOn: false, quizExamId: '', quizCount: '5', quizPass: '50', quizNeg: false, quizNegW: '0', quizMax: '0', preview: false, hidden: false, publishAt: '' });
     setEditingId(null);
   }
 
@@ -764,9 +600,35 @@ export default function TeacherCourseDetail() {
       quizNeg: false,
       quizNegW: '0',
       quizMax: '0',
-      preview: false,
+      preview: !!lesson.isPreviewFree,
+      hidden: !!lesson.hidden,
+      publishAt: lesson.publishAt ? toLocalInput(lesson.publishAt) : '',
     });
     setShowForm(true);
+    window.scrollTo({ top: 0 });
+    // Nạp cấu hình quiz củng cố đã có để sửa tiếp
+    apiFetch(`/courses/${courseId}/lessons/${lesson.id}/quiz`)
+      .then((q) => {
+        if (!q) return;
+        setForm((f) => ({
+          ...f,
+          quizOn: true,
+          quizExamId: q.examId || '',
+          quizCount: String(q.questionCount ?? 5),
+          quizPass: String(q.passingPercent ?? 50),
+          quizNeg: !!q.negativeMarking,
+          quizNegW: String(q.negativeWeight ?? 0),
+          quizMax: String(q.maxAttempts ?? 0),
+        }));
+      })
+      .catch(() => {});
+  }
+
+  function toLocalInput(v: any) {
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   async function saveLesson(e: React.FormEvent) {
@@ -801,6 +663,8 @@ export default function TeacherCourseDetail() {
       body.examId = form.examId || null;
       body.deadline = form.deadline ? new Date(form.deadline).toISOString() : null;
       body.isPreviewFree = form.preview;
+      body.hidden = form.hidden;
+      body.publishAt = form.publishAt ? new Date(form.publishAt).toISOString() : null;
 
       let lessonId = editingId;
       if (editingId) {
@@ -973,84 +837,64 @@ export default function TeacherCourseDetail() {
   }
 
   return (
-    <div className="page-container" style={{ maxWidth: 1600 }}>
-      {/* Header khóa học — phong cách đỏ đô */}
-      <div className="lm-band">
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <h2>
-            <BackButton to="/teacher" label="Về trang chủ" />
-            📚 {course.title}
-          </h2>
-          {course.description && (
-            <p className="lm-band-sub">{course.description}</p>
-          )}
-          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-            {course.password ? (
-              <span className="badge badge-warning" style={{ background: 'rgba(240,179,85,0.3)', color: '#fff' }}>Mã: {course.password}</span>
-            ) : (
-              <span className="badge badge-success">Khóa học mở</span>
-            )}
-            {course.isPublished ? (
-              <span className="badge" style={{ background: 'rgba(255,255,255,0.16)', color: '#fff' }}>Công khai</span>
-            ) : (
-              <span className="badge badge-warning">Bản nháp</span>
-            )}
-            <span className="badge" style={{ background: 'rgba(255,255,255,0.16)', color: '#fff' }}>{course.lessons?.length ?? 0} bài giảng</span>
-            <span className="badge" style={{ background: 'rgba(255,255,255,0.16)', color: '#fff' }}>{students !== null ? students.length : (course._count?.enrollments ?? 0)} học sinh</span>
-            {course.sequential && (
-              <span className="badge" style={{ background: 'rgba(240,179,85,0.3)', color: '#fff' }}>🔒 Học tuần tự</span>
-            )}
-          </div>
+    <div className="page-container cl-page">
+      {/* ===== ĐẦU TRANG GỌN + TAB ===== */}
+      <header className="cl-head">
+        <Link href="/teacher" className="cl-back" aria-label="Về trang chủ">
+          ←
+        </Link>
+        {(course.coverUrl || course.bannerUrl) && (
+          <img src={course.coverUrl || course.bannerUrl} alt="" className="cl-cover" />
+        )}
+        <div className="cl-head-text">
+          <h1>{course.title}</h1>
+          <p>
+            {course.lessons?.length ?? 0} bài giảng ·{' '}
+            {students !== null ? students.length : course._count?.enrollments ?? 0} học sinh ·{' '}
+            {course.isPublished ? 'Đang công khai' : 'Bản nháp'}
+            {course.hasPassword || course.password ? ` · Mã ghi danh: ${course.password || '••••'}` : ' · Ghi danh tự do'}
+            {course.sequential ? ' · Học tuần tự' : ''}
+          </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
-          <Link href={`/teacher/courses/${courseId}/announcements`} className="btn-lm ghost" style={{ textDecoration: 'none' }}>
-            📣 Bảng tin
+        <div className="cl-head-actions">
+          <Link href={`/teacher/courses/${courseId}/announcements`} className="btn btn-outline cl-btn">
+            Bảng tin
           </Link>
-          <Link href={`/teacher/courses/${courseId}/assignments`} className="btn-lm ghost" style={{ textDecoration: 'none' }}>
-            📚 Giao bài tập
+          <Link href={`/teacher/courses/${courseId}/assignments`} className="btn btn-outline cl-btn">
+            Bài tập & chấm bài
           </Link>
-          {isOwner && (
-            <button className="btn-lm ghost" onClick={openEditCourse}>
-              ✏️ Sửa khóa học
-            </button>
-          )}
-          <button className="btn-lm amber" onClick={startAdd}>
+          <button
+            type="button"
+            className="btn sh-btn-accent cl-btn"
+            onClick={() => {
+              setTab('lessons');
+              startAdd();
+            }}
+          >
             + Thêm bài giảng
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Banner khóa học (bannerUrl) — fallback ảnh đại diện */}
-      {(course.bannerUrl || course.coverUrl) && (
-        <div
-          style={{
-            borderRadius: 18,
-            overflow: 'hidden',
-            position: 'relative',
-            height: 160,
-            marginBottom: 20,
-            background: '#000',
-            boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
-          }}
-        >
-          <img
-            src={course.bannerUrl || course.coverUrl}
-            alt={course.title}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-          />
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.5), transparent 55%)' }} />
-          <div style={{ position: 'absolute', left: 20, bottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ color: '#fff', fontWeight: 800, fontSize: 15, textShadow: '0 1px 6px rgba(0,0,0,0.5)' }}>
-              🎨 Banner khóa học
-            </span>
-          </div>
-        </div>
-      )}
+      <nav className="tl-tabs" role="tablist" aria-label="Quản lý khóa học">
+        {TABS.filter((t) => t.id !== 'settings' || isOwner).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            className={tab === t.id ? 'is-on' : ''}
+            onClick={() => switchTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
       {/* Form sửa khóa học */}
-      {showEditCourse && (
+      {tab === 'settings' && showEditCourse && (
         <form onSubmit={saveCourse} className="card" style={{ marginBottom: 24 }}>
-          <h3 style={{ marginBottom: 16 }}>✏️ Sửa khóa học</h3>
+          <h3 style={{ marginBottom: 16 }}>Thông tin khóa học</h3>
           <div className="form-group">
             <label>Tên khóa học *</label>
             <input
@@ -1105,11 +949,11 @@ export default function TeacherCourseDetail() {
               style={{ width: 'auto' }}
             />
             <label style={{ margin: 0 }}>
-              🔒 Học tuần tự — học sinh phải hoàn thành bài trước mới mở được bài sau
+              Học tuần tự — học sinh xem trước được bài sau, nhưng phải hoàn thành lần lượt từng bài
             </label>
           </div>
           <div className="form-group">
-            <label>🖼 Ảnh đại diện khóa học (hiện trên thẻ khóa học ở trang đăng ký + trang chủ học sinh)</label>
+            <label>Ảnh đại diện khóa học (hiện trên thẻ khóa học ở trang đăng ký + trang chủ học sinh)</label>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
               {courseForm.coverUrl && (
                 <img
@@ -1149,14 +993,14 @@ export default function TeacherCourseDetail() {
                   style={{ fontSize: 12 }}
                   onClick={() => setCourseForm({ ...courseForm, coverUrl: '' })}
                 >
-                  🗑 Xóa ảnh đại diện
+                  Xoá ảnh đại diện
                 </button>
               )}
             </div>
           </div>
 
           <div className="form-group">
-            <label>🎨 Banner khóa học (dải ảnh lớn hiện BÊN TRONG trang khóa học)</label>
+            <label>Ảnh bìa phụ (dùng khi chưa có ảnh đại diện)</label>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
               {courseForm.bannerUrl && (
                 <img
@@ -1196,7 +1040,7 @@ export default function TeacherCourseDetail() {
                   style={{ fontSize: 12 }}
                   onClick={() => setCourseForm({ ...courseForm, bannerUrl: '' })}
                 >
-                  🗑 Xóa banner
+                  Xoá ảnh
                 </button>
               )}
             </div>
@@ -1205,14 +1049,6 @@ export default function TeacherCourseDetail() {
             <button className="btn" disabled={savingCourse} style={{ flex: 1 }}>
               {savingCourse ? 'Đang lưu…' : 'Lưu thay đổi'}
             </button>
-            <button
-              type="button"
-              className="btn btn-outline"
-              style={{ width: 'auto' }}
-              onClick={() => setShowEditCourse(false)}
-            >
-              Hủy
-            </button>
             {isOwner && (
               <button
                 type="button"
@@ -1220,7 +1056,7 @@ export default function TeacherCourseDetail() {
                 style={{ width: 'auto' }}
                 onClick={() => setDeleteCourseConfirm(true)}
               >
-                🗑️ Xóa khóa học
+                Xoá khóa học
               </button>
             )}
           </div>
@@ -1228,10 +1064,10 @@ export default function TeacherCourseDetail() {
       )}
 
       {/* Form thêm/sửa bài giảng */}
-      {showForm && (
+      {tab === 'lessons' && showForm && (
         <form onSubmit={saveLesson} className="card" style={{ marginBottom: 24 }}>
           <h3 style={{ marginBottom: 16 }}>
-            {editingId ? '✏️ Sửa bài giảng' : '📝 Thêm bài giảng mới'}
+            {editingId ? 'Sửa bài giảng' : 'Thêm bài giảng mới'}
           </h3>
 
           <div className="form-group">
@@ -1305,12 +1141,39 @@ export default function TeacherCourseDetail() {
                   style={{ width: 'auto' }}
                 />
                 <span style={{ fontSize: 13, fontWeight: 700 }}>
-                  👁️ Xem thử miễn phí
+                  Xem thử miễn phí
                   <span style={{ display: 'block', fontSize: 11.5, fontWeight: 500, color: 'var(--color-muted)' }}>
                     HS chưa đăng ký vẫn xem được bài này
                   </span>
                 </span>
               </label>
+            </div>
+            <div className="form-group" style={{ flex: 1, display: 'flex', alignItems: 'flex-end', paddingBottom: 4 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={form.hidden}
+                  onChange={(e) => setForm({ ...form, hidden: e.target.checked })}
+                  style={{ width: 'auto' }}
+                />
+                <span style={{ fontSize: 13, fontWeight: 700 }}>
+                  Lưu dạng bài nháp
+                  <span style={{ display: 'block', fontSize: 11.5, fontWeight: 500, color: 'var(--color-muted)' }}>
+                    Học sinh chưa thấy bài này
+                  </span>
+                </span>
+              </label>
+            </div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label>Hẹn giờ mở bài (tùy chọn)</label>
+              <input
+                type="datetime-local"
+                value={form.publishAt}
+                onChange={(e) => setForm({ ...form, publishAt: e.target.value })}
+              />
+              <p style={{ fontSize: 11.5, color: 'var(--color-muted)', marginTop: 4 }}>
+                Trước giờ này học sinh chỉ thấy tên bài
+              </p>
             </div>
             <div className="form-group" style={{ flex: 1 }}>
               <label>Thời lượng (phút, tùy chọn)</label>
@@ -1338,7 +1201,7 @@ export default function TeacherCourseDetail() {
           {/* ===== NHIỀU VIDEO CÓ TIÊU ĐỀ ===== */}
           <div className="form-group">
             <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>🎬 Video bài giảng (nhiều video, mỗi video có tiêu đề)</span>
+              <span>Video bài giảng (nhiều video, mỗi video có tiêu đề)</span>
               <button
                 type="button"
                 className="lm-filter-btn"
@@ -1393,7 +1256,7 @@ export default function TeacherCourseDetail() {
           {/* ===== TÀI LIỆU ĐẶT TÊN RIÊNG ===== */}
           <div className="form-group">
             <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>📎 Tài liệu bài giảng (đặt tên riêng từng file)</span>
+              <span>Tài liệu bài giảng (đặt tên riêng từng file)</span>
               <button
                 type="button"
                 className="lm-filter-btn"
@@ -1476,7 +1339,7 @@ export default function TeacherCourseDetail() {
                 style={{ padding: '3px 10px', fontSize: 11.5 }}
                 onClick={() => setUseBlocks(!useBlocks)}
               >
-                🧱 Soạn theo khối
+                Soạn theo khối
               </button>
             </label>
 
@@ -1537,7 +1400,7 @@ export default function TeacherCourseDetail() {
                   </div>
                 </div>
                 <div style={{ border: '1px dashed var(--color-rule)', borderRadius: 8, padding: 10, background: 'var(--color-surface)', minHeight: 120 }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--color-muted)', marginBottom: 6 }}>👁️ XEM TRƯỚC</div>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--color-muted)', marginBottom: 6 }}>XEM TRƯỚC</div>
                   <LatexRenderer content={serializeBlocks()} />
                 </div>
               </div>
@@ -1607,7 +1470,7 @@ export default function TeacherCourseDetail() {
 
           {form.examId && (
             <div className="form-group">
-              <label>⏰ Hạn nộp BTVN (để trống = không giới hạn)</label>
+              <label>Hạn nộp BTVN (để trống = không giới hạn)</label>
               <input
                 type="datetime-local"
                 value={form.deadline}
@@ -1635,7 +1498,7 @@ export default function TeacherCourseDetail() {
                 onChange={(e) => setForm({ ...form, quizOn: e.target.checked })}
                 style={{ width: 'auto' }}
               />
-              🧩 Quiz củng cố ngay trong bài giảng (trắc nghiệm trộn đề, chấm ngay)
+              Luyện nhanh trong bài (trắc nghiệm trộn câu, chấm ngay)
             </label>
             {form.quizOn && (
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
@@ -1692,7 +1555,7 @@ export default function TeacherCourseDetail() {
                       onChange={(e) => setForm({ ...form, quizNeg: e.target.checked })}
                       style={{ width: 'auto' }}
                     />
-                    🔴 Trừ điểm câu sai:
+                    Trừ điểm câu sai:
                   </label>
                   <input
                     type="number"
@@ -1730,6 +1593,8 @@ export default function TeacherCourseDetail() {
         </form>
       )}
 
+      {tab === 'results' && (
+      <>
       {/* Bảng điểm khóa học */}
       <div className="card" style={{ marginBottom: 24, padding: 16 }}>
         <div
@@ -1739,7 +1604,7 @@ export default function TeacherCourseDetail() {
             if (!showResults && courseResults === null) loadCourseResults();
           }}
         >
-          <strong style={{ fontSize: 15 }}>📊 Bảng điểm khóa học</strong>
+          <strong style={{ fontSize: 15 }}>Bảng điểm khóa học</strong>
           <span style={{ color: 'var(--color-muted)' }}>{showResults ? '▲' : '▼'}</span>
         </div>
         {showResults && (
@@ -1762,14 +1627,14 @@ export default function TeacherCourseDetail() {
                     style={{ width: 'auto', padding: '6px 12px', fontSize: 12 }}
                     onClick={() => exportCourseResults('pdf')}
                   >
-                    📄 Xuất PDF
+                    Xuất PDF
                   </button>
                   <button
                     className="btn btn-outline"
                     style={{ width: 'auto', padding: '6px 12px', fontSize: 12 }}
                     onClick={() => exportCourseResults('xlsx')}
                   >
-                    📊 Xuất Excel
+                    Xuất Excel
                   </button>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
@@ -1841,7 +1706,7 @@ export default function TeacherCourseDetail() {
             if (!showActivity && activity === null) loadActivity();
           }}
         >
-          <strong style={{ fontSize: 15 }}>📈 Hoạt động học tập (ai học bài nào, bao lâu)</strong>
+          <strong style={{ fontSize: 15 }}>Hoạt động học tập (ai học bài nào, lần cuối khi nào)</strong>
           <span style={{ color: 'var(--color-muted)' }}>{showActivity ? '▲' : '▼'}</span>
         </div>
         {showActivity && (
@@ -1893,19 +1758,13 @@ export default function TeacherCourseDetail() {
         )}
       </div>
 
-      {/* Danh sách bài giảng */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
-        <h2 style={{ fontSize: 18, margin: 0 }}>
-          Bài giảng ({course.lessons?.length ?? 0})
-        </h2>
-        <button className="btn-lm ghost" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={openCopyPanel}>
-          📋 Sao chép bài giảng từ khóa học khác
-        </button>
-      </div>
+      </>
+      )}
 
-      {showCopy && (
+      {/* Sao chép bài giảng từ khóa khác */}
+      {tab === 'lessons' && showCopy && (
         <div className="card" style={{ marginBottom: 16, padding: 16, background: 'var(--color-paper-2)' }}>
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>📋 Sao chép bài giảng vào khóa học này</div>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>Sao chép bài giảng vào khóa học này</div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
             <label style={{ fontSize: 13 }}>Khóa học nguồn:</label>
             <select
@@ -1961,7 +1820,7 @@ export default function TeacherCourseDetail() {
       )}
 
       {/* Trợ giảng (chỉ chủ khóa học) */}
-      {isOwner && (
+      {tab === 'settings' && isOwner && (
         <div className="card" style={{ marginBottom: 24, padding: 16 }}>
           <div
             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
@@ -1971,7 +1830,7 @@ export default function TeacherCourseDetail() {
             }}
           >
             <strong style={{ fontSize: 15 }}>
-              👥 Trợ giảng ({assistants.length})
+              Trợ giảng ({assistants.length})
             </strong>
             <span style={{ color: 'var(--color-muted)' }}>{showAssistants ? '▲' : '▼'}</span>
           </div>
@@ -2021,6 +1880,7 @@ export default function TeacherCourseDetail() {
       )}
 
       {/* Quản lý học sinh */}
+      {tab === 'students' && (
       <div className="card" style={{ marginBottom: 24, padding: 16 }}>
         <div
           style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}
@@ -2032,7 +1892,7 @@ export default function TeacherCourseDetail() {
             }}
           >
             <strong style={{ fontSize: 15 }}>
-              👥 Học sinh ({students !== null ? students.length : course._count?.enrollments ?? 0})
+              Học sinh ({students !== null ? students.length : course._count?.enrollments ?? 0})
             </strong>
             <span style={{ color: 'var(--color-muted)' }}>{showStudents ? '▲' : '▼'}</span>
           </div>
@@ -2043,7 +1903,7 @@ export default function TeacherCourseDetail() {
               onClick={() => setShowImport(!showImport)}
               title="Nhập danh sách học sinh từ file Excel"
             >
-              📥 Nhập Excel
+              Nhập từ Excel
             </button>
           </div>
         </div>
@@ -2057,10 +1917,10 @@ export default function TeacherCourseDetail() {
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <button className="btn-lm ghost" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={downloadImportTemplate}>
-                ⬇️ Tải file mẫu
+                Tải file mẫu
               </button>
               <label className="btn-lm amber" style={{ padding: '6px 12px', fontSize: 12.5, cursor: 'pointer', display: 'inline-block' }}>
-                {importing ? '⏳ Đang nhập…' : '📤 Chọn file .xlsx'}
+                {importing ? '⏳ Đang nhập…' : 'Chọn file .xlsx'}
                 <input
                   type="file"
                   accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -2160,7 +2020,7 @@ export default function TeacherCourseDetail() {
                             style={{ width: 'auto', padding: '4px 10px', fontSize: 11 }}
                             onClick={() => openEditStudent(s)}
                           >
-                            ✏️ Sửa
+                            Sửa
                           </button>
                           <button
                             className="btn btn-outline"
@@ -2189,407 +2049,81 @@ export default function TeacherCourseDetail() {
         )}
       </div>
 
-      {!course.lessons || course.lessons.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>📝</div>
-          <p>Chưa có bài giảng. Nhấn "+ Thêm bài giảng" để bắt đầu.</p>
-        </div>
-      ) : (
-        <div className="lm-course-layout">
-          {/* ===== SIDEBAR GIÁO TRÌNH (kiểu Udemy) ===== */}
-          <aside className="lm-course-sidebar">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 10px 8px', gap: 6 }}>
-              <span style={{ fontWeight: 800, color: 'var(--lm-maroon)', fontSize: 13.5 }}>
-                📖 Giáo trình
-              </span>
-              <button
-                type="button"
-                onClick={openChapterEditor}
-                title="Sửa tên chương và thứ tự chương"
-                style={{ border: '1px solid var(--color-rule)', background: 'var(--color-paper)', color: 'var(--color-ink)', borderRadius: 8, padding: '3px 8px', fontSize: 11.5, cursor: 'pointer' }}
-              >
-                ⚙️ Sửa chương
+      )}
+
+      {/* ===== TAB BÀI GIẢNG: mục lục + bài đang chọn ===== */}
+      {tab === 'lessons' &&
+        (!course.lessons || course.lessons.length === 0 ? (
+          <div className="cl-empty">
+            <p>Chưa có bài giảng nào.</p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <button type="button" className="btn sh-btn-accent cl-btn" onClick={startAdd}>
+                + Thêm bài giảng đầu tiên
+              </button>
+              <button type="button" className="btn btn-outline cl-btn" onClick={openCopyPanel}>
+                Sao chép từ khóa học khác
               </button>
             </div>
-            {course.lessons.map((l: any, idx: number) => {
-              const prevL = idx > 0 ? course.lessons[idx - 1] : null;
-              const chapterRow =
-                (l.chapter || '') !== (prevL?.chapter || '')
-                  ? l.chapter || 'Chung'
-                  : null;
-              const isCur = openLesson === l.id;
-              const st = lessonStats[l.id];
-              return (
-                <div key={l.id}>
-                  {chapterRow && (
-                    <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--color-warning)', padding: '8px 10px 4px' }}>
-                      📚 {chapterRow}
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    className={`lm-side-lesson${isCur ? ' current' : ''}`}
-                    onClick={() => toggleLesson(l.id)}
-                  >
-                    <span className="tick" style={{ color: 'var(--lm-amber)' }}>›</span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      {chapterNoOf[l.id]}. {l.title}
-                    </span>
-                    {st ? (
-                      <span style={{ fontSize: 10.5, color: 'var(--color-muted)', flexShrink: 0 }}>
-                        👁️{st.viewed} ✅{st.completed}
-                      </span>
-                    ) : null}
-                  </button>
-                </div>
-              );
-            })}
-          </aside>
-
-          {/* ===== CHI TIẾT BÀI ĐANG CHỌN ===== */}
-          <div style={{ minWidth: 0 }}>
-          {lessonGroups.map((group) => (
-            <div key={group.chapter || 'other'}>
-              {group.chapter && (
-                <div
-                  style={{
-                    fontSize: 16,
-                    fontWeight: 700,
-                    color: 'var(--color-accent)',
-                    padding: '10px 4px 6px',
-                    borderBottom: '2px solid var(--color-accent)',
-                    marginBottom: 10,
-                  }}
-                >
-                  📚 {group.chapter}
-                </div>
-              )}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {group.lessons.map((lesson: any) => {
-                  const lessonNo = chapterNoOf[lesson.id] || 1;
-                  return (
-            <div key={lesson.id} className="card" style={{ padding: 18, display: openLesson === lesson.id ? 'block' : 'none' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div
-                  style={{ cursor: 'pointer', flex: 1 }}
-                  onClick={() => toggleLesson(lesson.id)}
-                >
-                  <strong>
-                    Bài {lessonNo}: {lesson.title}
-                  </strong>
-                  <span style={{ color: 'var(--color-muted)', fontSize: 12, marginLeft: 10 }}>
-                    {lesson.youtubeUrl ? '🎬 Video' : ''}
-                    {lesson.youtubeUrl && lesson.pdfLinks?.length ? ' · ' : ''}
-                    {lesson.pdfLinks?.length ? `📄 ${lesson.pdfLinks.length} tài liệu` : ''}
-                    {lesson.exam ? ' · 📝 BTVN' : ''}
-                    {lesson._count?.exercises ? ` · ✍️ ${lesson._count.exercises} bài tự luận` : ''}
-                    {lessonStats[lesson.id] ? (
-                      <span className="badge badge-accent" style={{ marginLeft: 6, fontSize: 11 }}>
-                        👁️ {lessonStats[lesson.id].viewed} đã xem · ✅ {lessonStats[lesson.id].completed} hoàn thành
-                      </span>
-                    ) : null}
-                    {lesson.deadline ? (
-                      <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: 11 }}>
-                        ⏰ Hạn: {new Date(lesson.deadline).toLocaleString('vi-VN')}
-                      </span>
-                    ) : null}
-                    {openLesson === lesson.id ? ' ▲' : ' ▼'}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    className="btn btn-outline"
-                    style={{ width: 'auto', padding: '6px 8px', fontSize: 13 }}
-                    title="Lên trên"
-                    onClick={() => moveLesson(lesson, -1)}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    className="btn btn-outline"
-                    style={{ width: 'auto', padding: '6px 8px', fontSize: 13 }}
-                    title="Xuống dưới"
-                    onClick={() => moveLesson(lesson, 1)}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    className="btn btn-outline"
-                    style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }}
-                    onClick={() => startEdit(lesson)}
-                  >
-                    ✏️ Sửa
-                  </button>
-                  <button
-                    className="btn btn-danger"
-                    style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }}
-                    onClick={() => setDeleteTarget(lesson)}
-                  >
-                    🗑️ Xóa
-                  </button>
-                </div>
-              </div>
-
-              {openLesson === lesson.id && (
-                <div style={{ marginTop: 12 }}>
-                  {lesson.content && (
-                    <div style={{ marginBottom: 10 }}>
-                      <LatexRenderer content={lesson.content} />
-                    </div>
-                  )}
-                  {lesson.pdfLinks?.length > 0 && (
-                    <div style={{ fontSize: 13 }}>
-                      <strong>📄 Tài liệu:</strong>
-                      <ul style={{ paddingLeft: 20, marginTop: 4 }}>
-                        {lesson.pdfLinks.map((l: string, j: number) => (
-                          <li key={j}>
-                            <a href={l} target="_blank" rel="noreferrer" style={{ color: 'var(--color-accent)' }}>
-                              Tài liệu {j + 1}
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* ===== Bài tập tự luận (chấm AI) ===== */}
-                  <div
-                    style={{
-                      marginTop: 14,
-                      borderTop: '1px solid var(--color-rule)',
-                      paddingTop: 12,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: 8,
-                        gap: 8,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <strong style={{ fontSize: 14 }}>Bài tập tự luận</strong>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button
-                          className="btn btn-outline"
-                          style={{ width: 'auto', padding: '5px 12px', fontSize: 12 }}
-                          onClick={() => openBankPicker(lesson.id)}
-                        >
-                          🏦 Chọn từ ngân hàng đề
-                        </button>
-                        <button
-                          className="btn btn-outline"
-                          style={{ width: 'auto', padding: '5px 12px', fontSize: 12 }}
-                          onClick={() =>
-                            setShowExForm(showExForm === lesson.id ? null : lesson.id)
-                          }
-                        >
-                          {showExForm === lesson.id ? 'Hủy' : '+ Gõ đề mới'}
-                        </button>
-                      </div>
-                    </div>
-
-                    {showExForm === lesson.id && (
-                      <form
-                        onSubmit={(e) => createExercise(lesson.id, e)}
-                        style={{
-                          padding: 12,
-                          border: '1px solid var(--color-rule)',
-                          borderRadius: 8,
-                          marginBottom: 10,
-                          background: 'var(--color-paper)',
-                        }}
-                      >
-                        <div className="form-group" style={{ marginBottom: 10 }}>
-                          <label>Đề bài *</label>
-                          <textarea
-                            value={exForm.prompt}
-                            onChange={(e) => setExForm({ ...exForm, prompt: e.target.value })}
-                            rows={3}
-                            placeholder="VD: Chứng minh rằng với mọi x > 0 ta có..."
-                            required
-                          />
-                        </div>
-                        <div className="form-group" style={{ marginBottom: 10 }}>
-                          <label>Đáp án / tiêu chí chấm (để AI chấm chính xác hơn)</label>
-                          <textarea
-                            value={exForm.rubric}
-                            onChange={(e) => setExForm({ ...exForm, rubric: e.target.value })}
-                            rows={3}
-                            placeholder="Gợi ý lời giải hoặc các ý cần có..."
-                          />
-                        </div>
-                        <div className="form-group" style={{ marginBottom: 10, maxWidth: 160 }}>
-                          <label>Thang điểm</label>
-                          <input
-                            type="number"
-                            value={exForm.maxScore}
-                            onChange={(e) => setExForm({ ...exForm, maxScore: e.target.value })}
-                            min={1}
-                            max={100}
-                          />
-                        </div>
-                        <button className="btn" style={{ width: 'auto' }} disabled={exSaving}>
-                          {exSaving ? 'Đang lưu…' : 'Lưu bài tập'}
-                        </button>
-                      </form>
-                    )}
-
-                    {exercisesByLesson[lesson.id]?.length ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {exercisesByLesson[lesson.id].map((ex: any) => (
-                          <div
-                            key={ex.id}
-                            style={{
-                              padding: 10,
-                              border: '1px solid var(--color-rule)',
-                              borderRadius: 8,
-                              background: 'var(--color-paper)',
-                            }}
-                          >
-                            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                              <div style={{ flex: 1, fontSize: 13 }}>
-                                <LatexRenderer content={ex.prompt} />
-                                <div className="mono" style={{ fontSize: 11, color: 'var(--color-muted)', marginTop: 4 }}>
-                                  Thang {ex.maxScore} điểm · {ex.submissions?.length ?? 0} bài nộp
-                                </div>
-                              </div>
-                              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                                <button
-                                  className="btn btn-outline"
-                                  style={{ width: 'auto', padding: '4px 10px', fontSize: 12 }}
-                                  onClick={() =>
-                                    setOpenSubmissions(openSubmissions === ex.id ? null : ex.id)
-                                  }
-                                >
-                                  Bài nộp ({ex.submissions?.length ?? 0})
-                                </button>
-                                <button
-                                  className="btn btn-danger"
-                                  style={{ width: 'auto', padding: '4px 10px', fontSize: 12 }}
-                                  onClick={() => deleteExercise(lesson.id, ex.id)}
-                                >
-                                  Xóa
-                                </button>
-                              </div>
-                            </div>
-
-                            {openSubmissions === ex.id && (
-                              <div style={{ marginTop: 10 }}>
-                                {!ex.submissions?.length ? (
-                                  <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>
-                                    Chưa có học sinh nộp bài.
-                                  </p>
-                                ) : (
-                                  ex.submissions.map((s: any) => (
-                                    <div
-                                      key={s.id}
-                                      style={{
-                                        padding: 10,
-                                        border: '1px solid var(--color-rule)',
-                                        borderRadius: 6,
-                                        marginBottom: 8,
-                                        background: 'var(--color-paper-2)',
-                                      }}
-                                    >
-                                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, flexWrap: 'wrap' }}>
-                                        <strong style={{ fontSize: 13 }}>{s.student?.fullName}</strong>
-                                        <span className="mono" style={{ fontSize: 11, color: 'var(--color-muted)' }}>
-                                          {s.student?.studentCode}
-                                        </span>
-                                        {s.teacherScore !== null && s.teacherScore !== undefined ? (
-                                          <span className="badge badge-success">
-                                            Đã chốt: {s.teacherScore}/{ex.maxScore}
-                                          </span>
-                                        ) : s.aiScore !== null && s.aiScore !== undefined ? (
-                                          <span className="badge badge-accent">Sơ bộ: {s.aiScore}/{ex.maxScore}</span>
-                                        ) : (
-                                          <span className="badge badge-warning">Chờ chấm</span>
-                                        )}
-                                      </div>
-                                      <p style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{s.content}</p>
-                                      {s.imageUrls?.length > 0 && (
-                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                                          {s.imageUrls.map((url: string, i: number) => (
-                                            <a key={i} href={url} target="_blank" rel="noreferrer">
-                                              <img
-                                                src={url}
-                                                alt={`Ảnh ${i + 1}`}
-                                                style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--color-rule)' }}
-                                              />
-                                            </a>
-                                          ))}
-                                        </div>
-                                      )}
-                                      {s.aiFeedback && (
-                                        <div
-                                          style={{
-                                            fontSize: 12,
-                                            marginTop: 6,
-                                            padding: 8,
-                                            background: 'color-mix(in oklch, var(--color-accent) 7%, var(--color-paper))',
-                                            borderRadius: 6,
-                                            whiteSpace: 'pre-wrap',
-                                          }}
-                                        >
-                                          <strong style={{ fontSize: 11 }}>Bản nháp chấm sơ bộ:</strong>
-                                          <div style={{ marginTop: 2 }}>{s.aiFeedback}</div>
-                                        </div>
-                                      )}
-                                      {s.teacherNote && (
-                                        <div
-                                          style={{
-                                            fontSize: 12,
-                                            marginTop: 6,
-                                            padding: 8,
-                                            background: 'color-mix(in oklch, var(--color-success) 10%, var(--color-paper))',
-                                            borderRadius: 6,
-                                            whiteSpace: 'pre-wrap',
-                                          }}
-                                        >
-                                          <strong style={{ fontSize: 11 }}>📝 Thầy cô nhận xét:</strong>
-                                          <div style={{ marginTop: 2 }}>{s.teacherNote}</div>
-                                        </div>
-                                      )}
-                                      <div style={{ marginTop: 8 }}>
-                                        <button
-                                          className="btn"
-                                          style={{ width: 'auto', padding: '5px 12px', fontSize: 12 }}
-                                          onClick={() => openReviewSubmission(ex, s)}
-                                        >
-                                          {s.teacherScore !== null && s.teacherScore !== undefined ? '✏️ Sửa điểm chốt' : '✅ Chốt điểm'}
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>
-                        Chưa có bài tập. Thêm bài tập tự luận để chấm điểm cho học sinh.
-                      </p>
-                    )}
-
-                    {/* Thảo luận bài giảng */}
-                    <LessonComments courseId={courseId as string} lessonId={lesson.id} />
-                  </div>
-                </div>
-              )}
-            </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="cl-layout">
+            <div className="cl-aside">
+              <CourseSyllabus
+                lessons={course.lessons}
+                currentId={openLesson}
+                onSelect={selectLesson}
+                showProgress={false}
+                title={`Mục lục · ${course.lessons.length} bài`}
+                statusOf={(l: any): LessonStatus =>
+                  l.hidden
+                    ? 'hidden'
+                    : l.publishAt && new Date(l.publishAt).getTime() > Date.now()
+                      ? 'scheduled'
+                      : 'todo'
+                }
+                meta={(l: any) => {
+                  const st = lessonStats[l.id];
+                  return st ? `${st.viewed} xem` : null;
+                }}
+                headerAction={
+                  <span className="tl-syl-tools">
+                    <button type="button" onClick={openChapterEditor} title="Đổi tên và sắp xếp chương">
+                      Chương
+                    </button>
+                    <button type="button" onClick={openCopyPanel} title="Sao chép bài giảng từ khóa khác">
+                      Sao chép
+                    </button>
+                  </span>
+                }
+              />
+            </div>
+            <main className="cl-main">
+              {(() => {
+                const ls: any[] = course.lessons;
+                const i = ls.findIndex((x: any) => x.id === openLesson);
+                const lesson = i >= 0 ? ls[i] : null;
+                if (!lesson) return <div className="cl-empty">Chọn một bài trong mục lục.</div>;
+                return (
+                  <TeacherLessonPanel
+                    key={lesson.id}
+                    courseId={courseId}
+                    lesson={lesson}
+                    index={i}
+                    isFirst={i === 0}
+                    isLast={i === ls.length - 1}
+                    stats={lessonStats[lesson.id]}
+                    assignments={courseAssignments.filter((a) => a.lessonId === lesson.id)}
+                    onEdit={() => startEdit(lesson)}
+                    onMove={(dir) => moveLesson(lesson, dir)}
+                    onToggleHidden={() => toggleHidden(lesson)}
+                    onDelete={() => setDeleteTarget(lesson)}
+                    toast={showToast}
+                  />
+                );
+              })()}
+            </main>
+          </div>
+        ))}
 
       {/* Modal xác nhận xóa */}
       {deleteTarget && (
@@ -2644,7 +2178,7 @@ export default function TeacherCourseDetail() {
             style={{ width: '100%', maxWidth: 560, margin: 0, maxHeight: '86vh', overflowY: 'auto' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ marginBottom: 6 }}>⚙️ Quản lý chương</h3>
+            <h3 style={{ marginBottom: 6 }}>Quản lý chương</h3>
             <p style={{ fontSize: 12.5, color: 'var(--color-muted)', marginBottom: 14 }}>
               Sửa tên chương và dùng nút ▲ ▼ để đổi thứ tự. Bài học trong mỗi chương được đánh số lại từ 1.
             </p>
@@ -2744,279 +2278,6 @@ export default function TeacherCourseDetail() {
                 style={{ flex: 1 }}
                 onClick={() => setDeleteCourseConfirm(false)}
               >
-                Hủy
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal chốt điểm bài nộp */}
-      {reviewSub && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'color-mix(in oklch, var(--color-ink) 50%, transparent)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1600,
-            padding: 16,
-          }}
-          onClick={() => setReviewSub(null)}
-        >
-          <div
-            style={{
-              background: 'var(--color-paper)',
-              borderRadius: 14,
-              maxWidth: 680,
-              width: '100%',
-              maxHeight: '88vh',
-              overflowY: 'auto',
-              padding: 20,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 style={{ fontSize: 16, marginBottom: 4 }}>
-              ✅ Chốt điểm — {reviewSub.submission.student?.fullName}
-            </h2>
-            <p style={{ fontSize: 13, color: 'var(--color-muted)', marginBottom: 10 }}>
-              Thang điểm {reviewSub.exercise.maxScore} · {reviewSub.submission.student?.studentCode}
-            </p>
-
-            <div style={{ fontSize: 13, marginBottom: 10 }}>
-              <strong>Đề bài:</strong> <LatexRenderer content={reviewSub.exercise.prompt} />
-            </div>
-
-            <div style={{ fontSize: 13, marginBottom: 10, padding: 10, background: 'var(--color-paper-2)', borderRadius: 8, whiteSpace: 'pre-wrap' }}>
-              <strong>Bài làm:</strong>
-              <div style={{ marginTop: 4 }}>{reviewSub.submission.content}</div>
-            </div>
-
-            {reviewSub.submission.imageUrls?.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: 13 }}>Ảnh bài làm (bấm "✏️ Sửa" để viết trực tiếp lên ảnh):</strong>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                  {reviewSub.submission.imageUrls.map((url: string, i: number) => (
-                    <div key={i} style={{ position: 'relative' }}>
-                      <img
-                        src={url}
-                        alt={`Ảnh ${i + 1}`}
-                        style={{ width: 130, height: 130, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--color-rule)' }}
-                      />
-                      <button
-                        className="btn"
-                        style={{
-                          position: 'absolute',
-                          bottom: 6,
-                          left: '50%',
-                          transform: 'translateX(-50%)',
-                          padding: '4px 10px',
-                          fontSize: 11,
-                          width: 'auto',
-                        }}
-                        onClick={() => setAnnotatingSrc(url)}
-                      >
-                        ✏️ Sửa
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {reviewSub.submission.annotatedUrls?.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <strong style={{ fontSize: 13, color: 'var(--color-success)' }}>
-                  📝 Ảnh đã sửa (học sinh sẽ thấy):
-                </strong>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                  {reviewSub.submission.annotatedUrls.map((url: string, i: number) => (
-                    <a key={i} href={url} target="_blank" rel="noreferrer">
-                      <img
-                        src={url}
-                        alt={`Đã sửa ${i + 1}`}
-                        style={{ width: 130, height: 130, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--color-success)' }}
-                      />
-                    </a>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {reviewSub.submission.aiFeedback && (
-              <div
-                style={{
-                  fontSize: 12,
-                  marginBottom: 10,
-                  padding: 8,
-                  background: 'color-mix(in oklch, var(--color-accent) 7%, var(--color-paper))',
-                  borderRadius: 6,
-                  whiteSpace: 'pre-wrap',
-                }}
-              >
-                <strong style={{ fontSize: 11 }}>Bản nháp chấm sơ bộ:</strong>
-                <div style={{ marginTop: 2 }}>{reviewSub.submission.aiFeedback}</div>
-              </div>
-            )}
-
-            <div className="form-group">
-              <label>Điểm chốt (0 – {reviewSub.exercise.maxScore})</label>
-              <input
-                type="number"
-                min={0}
-                max={reviewSub.exercise.maxScore}
-                step={0.25}
-                value={reviewScore}
-                onChange={(e) => setReviewScore(e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label>📝 Nhận xét của thầy cô (học sinh và phụ huynh sẽ thấy)</label>
-              <textarea
-                rows={4}
-                value={reviewNote}
-                onChange={(e) => setReviewNote(e.target.value)}
-                placeholder="Nhận xét về bài làm, cách trình bày..."
-              />
-            </div>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <button className="btn" style={{ flex: 1 }} onClick={saveReview} disabled={reviewSaving}>
-                {reviewSaving ? 'Đang lưu…' : '✅ Chốt điểm & gửi nhận xét'}
-              </button>
-              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setReviewSub(null)}>
-                Hủy
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Sửa bài trên ảnh */}
-      {annotatingSrc && (
-        <ImageAnnotator
-          src={annotatingSrc}
-          onCancel={() => setAnnotatingSrc(null)}
-          onSave={handleAnnotatedBlob}
-        />
-      )}
-
-      {/* Modal chọn câu tự luận từ ngân hàng đề */}
-      {bankPicker && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'color-mix(in oklch, var(--color-ink) 50%, transparent)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1700,
-            padding: 16,
-          }}
-          onClick={() => setBankPicker(null)}
-        >
-          <div
-            style={{
-              background: 'var(--color-paper)',
-              borderRadius: 14,
-              maxWidth: 720,
-              width: '100%',
-              maxHeight: '88vh',
-              display: 'flex',
-              flexDirection: 'column',
-              padding: 18,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 style={{ fontSize: 16, marginBottom: 4 }}>🏦 Chọn câu tự luận từ ngân hàng đề</h2>
-            <p style={{ fontSize: 12, color: 'var(--color-muted)', marginBottom: 10 }}>
-              Đã chọn <strong>{bankSelected.length}</strong> câu · mỗi câu sẽ thành 1 bài BTVN riêng
-            </p>
-
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-              <input
-                value={bankSearch}
-                onChange={(e) => setBankSearch(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    searchBank(bankSearch);
-                  }
-                }}
-                placeholder="Tìm câu hỏi (nội dung, chủ đề)..."
-                style={{ flex: 1 }}
-              />
-              <button className="btn" style={{ width: 'auto' }} onClick={() => searchBank(bankSearch)}>
-                🔍 Tìm
-              </button>
-              <div className="form-group" style={{ width: 120, margin: 0 }}>
-                <label style={{ fontSize: 11 }}>Điểm/câu</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={bankMaxScore}
-                  onChange={(e) => setBankMaxScore(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div style={{ overflowY: 'auto', flex: 1, border: '1px solid var(--color-rule)', borderRadius: 8 }}>
-              {bankLoading ? (
-                <p style={{ padding: 20, color: 'var(--color-muted)', fontSize: 13 }}>Đang tải…</p>
-              ) : bankQuestions.length === 0 ? (
-                <p style={{ padding: 20, color: 'var(--color-muted)', fontSize: 13 }}>
-                  Không có câu tự luận nào trong ngân hàng đề.
-                </p>
-              ) : (
-                bankQuestions.map((q: any) => {
-                  const checked = bankSelected.includes(q.id);
-                  return (
-                    <label
-                      key={q.id}
-                      style={{
-                        display: 'flex',
-                        gap: 10,
-                        alignItems: 'flex-start',
-                        padding: '10px 12px',
-                        borderBottom: '1px solid var(--color-rule)',
-                        cursor: 'pointer',
-                        background: checked ? 'color-mix(in oklch, var(--color-accent) 8%, var(--color-paper))' : 'transparent',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleBankSelect(q.id)}
-                        style={{ width: 'auto', marginTop: 4 }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13 }}>
-                          <LatexRenderer content={q.content} />
-                        </div>
-                        <div className="mono" style={{ fontSize: 11, color: 'var(--color-muted)', marginTop: 3 }}>
-                          {q.code} {q.topic?.name ? '· ' + q.topic.name : ''}
-                          {q.grade ? ` · Lớp ${q.grade}` : ''}
-                        </div>
-                      </div>
-                    </label>
-                  );
-                })
-              )}
-            </div>
-
-            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-              <button
-                className="btn"
-                style={{ flex: 1 }}
-                onClick={assignFromBank}
-                disabled={exSaving || bankSelected.length === 0}
-              >
-                {exSaving ? 'Đang gán…' : `✅ Gán ${bankSelected.length || ''} câu làm BTVN`}
-              </button>
-              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setBankPicker(null)}>
                 Hủy
               </button>
             </div>

@@ -1001,7 +1001,7 @@ export class CoursesService {
   }
 
   async myCourses(studentId: string) {
-    return this.prisma.enrollment.findMany({
+    const rows = await this.prisma.enrollment.findMany({
       where: { studentId },
       include: {
         course: {
@@ -1013,6 +1013,7 @@ export class CoursesService {
       },
       orderBy: { enrolledAt: 'desc' },
     });
+    return rows.map((r) => ({ ...r, course: this.publicCourse(r.course) }));
   }
 
   // ============ QUẢN LÝ HỌC SINH (GIÁO VIÊN) ============
