@@ -124,7 +124,7 @@ export default function StudentDashboard() {
         title,
         course: t.courseTitle,
         deadline: dl,
-        href: `/student/courses/${t.courseId}`,
+        href: `/student/courses/${t.courseId}?lesson=${t.lessonId}`,
       });
     }
     list.sort((a, b) => (a.deadline ?? Infinity) - (b.deadline ?? Infinity));
@@ -135,7 +135,7 @@ export default function StudentDashboard() {
         title: t.title,
         course: t.courseTitle,
         deadline: null,
-        href: `/student/courses/${t.courseId}`,
+        href: `/student/courses/${t.courseId}?lesson=${t.lessonId}`,
       });
     }
     return list;

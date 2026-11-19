@@ -45,6 +45,9 @@ export default function StudentCourseAssignments() {
 
   useEffect(() => {
     load();
+    // Mở thẳng một bài giao khi đến từ bài giảng: ?open=<assignmentId>
+    const open = new URLSearchParams(window.location.search).get('open');
+    if (open) openDetail(open);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId]);
 

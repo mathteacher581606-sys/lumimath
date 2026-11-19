@@ -157,11 +157,12 @@ export class CoursesService {
       let lockReason: string | null = null;
       if (scheduled) lockReason = 'scheduled';
       else if (!enrolled && !l.isPreviewFree) lockReason = 'enroll';
-      else if (enrolled && (course as any).sequential && blockedBySequence) lockReason = 'sequential';
-      // Học tuần tự: bài sau chỉ mở khi bài trước (đã mở) được đánh dấu hoàn thành
+      // Học tuần tự: HS vẫn XEM TRƯỚC được bài sau (theo ý GV), chỉ không được
+      // đánh dấu hoàn thành khi bài trước chưa xong → gắn cờ seqPending để giao diện nhắc.
+      const seqPending = enrolled && !!(course as any).sequential && blockedBySequence;
       if (enrolled && !scheduled && !done.has(l.id)) blockedBySequence = true;
       const { hidden, ...rest } = l;
-      if (!lockReason) return { ...rest, locked: false, lockReason: null };
+      if (!lockReason) return { ...rest, locked: false, lockReason: null, seqPending };
       return {
         id: l.id,
         title: l.title,
