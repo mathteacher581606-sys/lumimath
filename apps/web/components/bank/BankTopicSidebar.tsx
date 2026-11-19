@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/lib/api';
+import { GRADES, gradeLevel } from '@/lib/grades';
 
 // Mục lục ngân hàng câu hỏi (theo mẫu đã duyệt): chọn lớp dạng nút gạt, cây gọn,
 // bấm tên để lọc, nút ⋯ từng mục để thêm/đổi tên/chuyển/xoá, và "Sắp xếp lại" để dọn mục lẻ & mục trùng.
@@ -69,11 +70,13 @@ export default function BankTopicSidebar(props: {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [moving, setMoving] = useState<TNode | null>(null);
   const [tidyOpen, setTidyOpen] = useState(false);
+  // Hộp thoại thêm lớp / chương / mục con (thay cho window.prompt)
+  const [adding, setAdding] = useState<{ parent: TNode | null; grade: string; askGrade: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Lớp đang xem: '' = tất cả
   const grades = useMemo(() => {
-    const list = ['10', '11', '12'].filter(
+    const list = GRADES.filter(
       (g) => tree.some((t) => String(t.grade) === g) || (summary?.byGrade?.[g] ?? 0) > 0,
     );
     if (tree.some((t) => t.grade == null) || (summary?.byGrade?.none ?? 0) > 0) list.push('none');
@@ -138,23 +141,21 @@ export default function BankTopicSidebar(props: {
     });
   }
 
-  async function addChild(parent: TNode | null, grade: string) {
-    const name = window.prompt(parent ? `Tên mục con trong “${prettyTopic(parent.name)}”:` : `Tên chương mới (Lớp ${grade}):`);
-    if (!name || !name.trim()) return;
-    try {
-      await apiFetch('/bank/topics', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: name.trim(),
-          grade: parent ? parent.grade : Number(grade) || null,
-          ...(parent ? { parentId: parent.id } : {}),
-        }),
-      });
-      if (parent) setOpen((o) => new Set([...Array.from(o), parent.id]));
-      await props.onReload();
-    } catch (e: any) {
-      alert(e.message);
-    }
+  function addChild(parent: TNode | null, grade: string, askGrade = false) {
+    setAdding({ parent, grade, askGrade });
+  }
+
+  async function createTopic(name: string, grade: string, parent: TNode | null) {
+    await apiFetch('/bank/topics', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: name.trim(),
+        grade: parent ? parent.grade : Number(grade) || null,
+        ...(parent ? { parentId: parent.id } : {}),
+      }),
+    });
+    if (parent) setOpen((o) => new Set([...Array.from(o), parent.id]));
+    await props.onReload();
   }
 
   async function rename(n: TNode) {
@@ -216,6 +217,15 @@ export default function BankTopicSidebar(props: {
             {prettyTopic(n.name)}
           </button>
           <span className="bt-count">{n.count}</span>
+          <button
+            type="button"
+            className="bt-more-btn bt-plus-btn"
+            aria-label={`Thêm mục con vào ${prettyTopic(n.name)}`}
+            title="Thêm mục con"
+            onClick={() => addChild(n, String(n.grade ?? ''))}
+          >
+            +
+          </button>
           <div className="bt-more" ref={menuFor === n.id ? menuRef : undefined}>
             <button
               type="button"
@@ -263,6 +273,9 @@ export default function BankTopicSidebar(props: {
     <aside className="bt-side" aria-label="Mục lục ngân hàng câu hỏi">
       <div className="bt-head" ref={toolsOpen ? menuRef : undefined}>
         <h2>Mục lục</h2>
+        <button type="button" className="bt-tool is-add" onClick={() => addChild(null, fGrade && fGrade !== 'none' ? fGrade : '', true)} title="Thêm lớp mới hoặc chương mới">
+          + Thêm
+        </button>
         <button type="button" className="bt-tool" onClick={() => setTidyOpen(true)} title="Gộp mục trùng, đưa mục lẻ vào đúng chương">
           Sắp xếp lại
         </button>
@@ -278,11 +291,9 @@ export default function BankTopicSidebar(props: {
               <button type="button" role="menuitem" disabled={props.reclassifying} onClick={() => { setToolsOpen(false); props.onReclassify(); }}>
                 {props.reclassifying ? 'AI đang phân loại…' : 'AI xếp câu hỏi vào đúng dạng'}
               </button>
-              {fGrade && fGrade !== 'none' && (
-                <button type="button" role="menuitem" onClick={() => { setToolsOpen(false); addChild(null, fGrade); }}>
-                  Thêm chương mới cho Lớp {fGrade}
-                </button>
-              )}
+              <button type="button" role="menuitem" onClick={() => { setToolsOpen(false); addChild(null, fGrade && fGrade !== 'none' ? fGrade : '', true); }}>
+                Thêm lớp / chương mới…
+              </button>
             </div>
           )}
         </div>
@@ -321,7 +332,19 @@ export default function BankTopicSidebar(props: {
         {grouped.map(({ g, nodes }) =>
           nodes.length ? (
             <section key={g}>
-              {!fGrade && <div className="bt-grade">{gradeLabel(g)}</div>}
+              {!fGrade && (
+                <div className="bt-grade bt-grade-row">
+                  <span>
+                    {gradeLabel(g)}
+                    {g !== 'none' && gradeLevel(g) ? ` · ${gradeLevel(g)}` : ''}
+                  </span>
+                  {g !== 'none' && (
+                    <button type="button" className="bt-mini" onClick={() => addChild(null, g)} title={`Thêm chương vào Lớp ${g}`}>
+                      + Chương
+                    </button>
+                  )}
+                </div>
+              )}
               {/* Chương (và mục có con) trước; mục lẻ ở gốc tách riêng để không lẫn vào chương cuối */}
               <ul className="bt-list">
                 {nodes.filter((n) => !isLoose(n)).map((n) => renderNode(n, 0))}
@@ -346,6 +369,11 @@ export default function BankTopicSidebar(props: {
           ) : null,
         )}
         {!roots.length && <p className="bt-empty">{q ? 'Không có mục nào khớp.' : 'Chưa có mục lục cho lớp này.'}</p>}
+        {fGrade && fGrade !== 'none' && !q && (
+          <button type="button" className="bt-add-root" onClick={() => addChild(null, fGrade)}>
+            + Thêm chương vào Lớp {fGrade}
+          </button>
+        )}
       </div>
 
       <div className="bt-filters">
@@ -389,8 +417,22 @@ export default function BankTopicSidebar(props: {
       </div>
 
       {/* Hộp thoại đưa ra <body> để không bị lớp xếp chồng của mục lục (sticky) che */}
-      {(moving || tidyOpen) && typeof document !== 'undefined' && createPortal(
+      {(moving || tidyOpen || adding) && typeof document !== 'undefined' && createPortal(
         <>
+      {adding && (
+        <AddDialog
+          parent={adding.parent}
+          grade={adding.grade}
+          askGrade={adding.askGrade}
+          existing={grades}
+          onClose={() => setAdding(null)}
+          onCreate={async (name, grade) => {
+            await createTopic(name, grade, adding.parent);
+            setAdding(null);
+            if (!adding.parent) props.onSelectGrade(grade);
+          }}
+        />
+      )}
       {moving && (
         <MoveDialog
           node={moving}
@@ -420,6 +462,85 @@ export default function BankTopicSidebar(props: {
 }
 
 // ================== CHUYỂN / GỘP MỘT MỤC ==================
+function AddDialog({
+  parent,
+  grade: grade0,
+  askGrade,
+  existing,
+  onClose,
+  onCreate,
+}: {
+  parent: TNode | null;
+  grade: string;
+  askGrade: boolean;
+  existing: string[];
+  onClose: () => void;
+  onCreate: (name: string, grade: string) => Promise<void>;
+}) {
+  const [grade, setGrade] = useState(grade0 || '6');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isNewGrade = !parent && !existing.includes(grade);
+  const title = parent
+    ? `Thêm mục con vào “${prettyTopic(parent.name)}”`
+    : askGrade
+      ? 'Thêm lớp hoặc chương mới'
+      : `Thêm chương vào Lớp ${grade}`;
+
+  async function submit() {
+    if (!name.trim()) return;
+    setBusy(true);
+    try {
+      await onCreate(name, grade);
+    } catch (e: any) {
+      alert(e.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="bt-modal-back" onClick={onClose}>
+      <div className="bt-modal" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
+        {!parent && askGrade && (
+          <label className="bt-flt">
+            <span>Lớp</span>
+            <select value={grade} onChange={(e) => setGrade(e.target.value)}>
+              {GRADES.map((g) => (
+                <option key={g} value={g}>
+                  Lớp {g} ({gradeLevel(g)}){existing.includes(g) ? '' : ' — chưa có'}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="bt-flt">
+          <span>{parent ? 'Tên mục con (bài, dạng, thư mục…)' : 'Tên chương'}</span>
+          <input
+            className="bt-search"
+            autoFocus
+            value={name}
+            placeholder={parent ? 'VD: Bài 1. Hàm số bậc nhất' : 'VD: Chương I. Số hữu tỉ'}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submit();
+            }}
+          />
+        </label>
+        {isNewGrade && <p className="bt-note">Lớp {grade} chưa có trong mục lục — chương này sẽ tạo luôn lớp đó.</p>}
+        <div className="bt-modal-act">
+          <button type="button" className="btn btn-outline bk-btn" onClick={onClose}>
+            Huỷ
+          </button>
+          <button type="button" className="btn sh-btn-accent bk-btn is-primary" disabled={busy || !name.trim()} onClick={submit}>
+            {busy ? 'Đang tạo…' : 'Tạo'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MoveDialog({ node, tree, onClose, onDone }: { node: TNode; tree: TNode[]; onClose: () => void; onDone: () => void }) {
   const [target, setTarget] = useState('');
   const [mode, setMode] = useState<'move' | 'merge'>('move');

@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/api';
+import { GRADES } from '@/lib/grades';
 import LatexRenderer from '@/components/LatexRenderer';
 import { formatAnswer } from '@/lib/answer';
 import BankTopicSidebar from '@/components/bank/BankTopicSidebar';
@@ -2071,9 +2072,11 @@ export default function BankPage() {
             <div className="form-group" style={{ flex: 1, minWidth: 0 }}>
               <label>Lớp</label>
               <select value={grade} onChange={(e) => setGrade(e.target.value)}>
-                <option value="10">Lớp 10</option>
-                <option value="11">Lớp 11</option>
-                <option value="12">Lớp 12</option>
+                {GRADES.map((g) => (
+                  <option key={g} value={g}>
+                    Lớp {g}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="form-group" style={{ flex: 1, minWidth: 0 }}>
@@ -2426,9 +2429,11 @@ export default function BankPage() {
                         style={{ padding: '7px 10px', fontSize: 13 }}
                       >
                         <option value="">—</option>
-                        <option value="10">10</option>
-                        <option value="11">11</option>
-                        <option value="12">12</option>
+                        {GRADES.map((g) => (
+                          <option key={g} value={g}>
+                            {g}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div className="form-group" style={{ width: 150, marginBottom: 0 }}>
@@ -2693,12 +2698,7 @@ export default function BankPage() {
                 <span className="lm-filter-rule" />
               </div>
               <div className="lm-filter-options">
-                {[
-                  { id: '', label: 'Tất cả' },
-                  { id: '10', label: 'Lớp 10' },
-                  { id: '11', label: 'Lớp 11' },
-                  { id: '12', label: 'Lớp 12' },
-                ].map((g) => (
+                {[{ id: '', label: 'Tất cả' }, ...GRADES.map((g) => ({ id: g, label: `Lớp ${g}` }))].map((g) => (
                   <button
                     key={g.id || 'all'}
                     type="button"

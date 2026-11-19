@@ -5168,8 +5168,9 @@ span.bk-stats-h { cursor: default; }
   border: 1px solid var(--color-rule-2); background: var(--color-surface); color: var(--color-ink);
 }
 .bt-tool:hover, .bt-mini:hover { border-color: var(--color-accent); color: var(--color-accent); }
-.bt-seg { display: flex; gap: 3px; padding: 3px; border-radius: var(--radius-ctrl); background: var(--color-track); }
+.bt-seg { display: flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: var(--radius-ctrl); background: var(--color-track); }
 .bt-seg button {
+  flex: 1 1 auto;
   flex: 1; min-height: 32px; border: 0; border-radius: calc(var(--radius-ctrl) - 2px);
   background: transparent; color: var(--color-muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
 }
@@ -5268,3 +5269,16 @@ span.bk-stats-h { cursor: default; }
 .bt-badge.is-manual { background: color-mix(in srgb, var(--color-warning) 16%, transparent); color: var(--color-warning); }
 @media (max-width: 1100px) { .bt-side { position: static; max-height: none; } }
 @media (prefers-reduced-motion: reduce) { .bt-modal { animation: none; } }
+
+/* Thêm lớp / chương / mục con */
+.bt-tool.is-add { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
+.bt-plus-btn { font-size: 17px; line-height: 1; }
+.bt-row:hover .bt-plus-btn, .bt-row:focus-within .bt-plus-btn { opacity: 1; }
+.bt-plus-btn:hover { color: var(--color-accent); }
+.bt-grade-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-right: 4px; }
+.bt-add-root {
+  margin: 8px 0 0 6px; padding: 8px 10px; width: calc(100% - 6px); font: inherit; font-size: 13px; font-weight: 600; text-align: left;
+  border: 1px dashed var(--color-rule-2); border-radius: var(--radius-ctrl); background: none; color: var(--color-muted); cursor: pointer;
+}
+.bt-add-root:hover { border-color: var(--color-accent); color: var(--color-accent); }
+@media (hover: none) { .bt-plus-btn { opacity: 1; } }
