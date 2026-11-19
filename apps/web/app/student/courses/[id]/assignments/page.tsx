@@ -179,7 +179,7 @@ export default function StudentCourseAssignments() {
   })();
 
   return (
-    <div className="page-container" data-theme="maroon" style={{ maxWidth: 1100 }}>
+    <div className="page-container" style={{ maxWidth: 1100 }}>
       {toast && <div className="toast" style={{ position: 'fixed', top: 20, right: 20, zIndex: 60 }}>{toast}</div>}
       <div className="lm-band">
         <div style={{ flex: 1, minWidth: 220 }}>
@@ -267,7 +267,7 @@ export default function StudentCourseAssignments() {
                 {detail.exam ? ` · ${detail.exam.totalScore}đ` : ''}
               </div>
               {detail.description && (
-                <div style={{ padding: 10, background: '#faf6ee', borderRadius: 8, marginBottom: 12, whiteSpace: 'pre-wrap', fontSize: 13.5 }}>
+                <div style={{ padding: 10, background: 'var(--color-paper-2)', borderRadius: 8, marginBottom: 12, whiteSpace: 'pre-wrap', fontSize: 13.5 }}>
                   {detail.description}
                 </div>
               )}
@@ -295,7 +295,7 @@ export default function StudentCourseAssignments() {
                         <div
                           key={q.id || i}
                           style={{
-                            background: '#fff',
+                            background: 'var(--color-surface)',
                             border: '1px solid var(--color-rule)',
                             borderRadius: 10,
                             padding: 14,
@@ -333,14 +333,14 @@ export default function StudentCourseAssignments() {
               )}
 
               {detail.customContent && (
-                <div style={{ padding: 12, background: '#fff', border: '1px solid var(--color-rule)', borderRadius: 8, marginBottom: 12 }}>
+                <div style={{ padding: 12, background: 'var(--color-surface)', border: '1px solid var(--color-rule)', borderRadius: 8, marginBottom: 12 }}>
                   <LatexRenderer content={detail.customContent} />
                 </div>
               )}
               {detail.customQuestions?.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
                   {detail.customQuestions.map((c: string, i: number) => (
-                    <div key={i} style={{ padding: 12, background: '#fff', border: '1px solid var(--color-rule)', borderRadius: 8 }}>
+                    <div key={i} style={{ padding: 12, background: 'var(--color-surface)', border: '1px solid var(--color-rule)', borderRadius: 8 }}>
                       <div style={{ fontSize: 13.5 }}>
                         <b>Câu {i + 1}.</b> <LatexRenderer content={c} />
                       </div>
@@ -427,7 +427,7 @@ export default function StudentCourseAssignments() {
                               fontWeight: 800,
                               fontSize: 15.5,
                               borderRadius: 10,
-                              background: '#fff',
+                              background: 'var(--color-surface)',
                               color: 'var(--lm-maroon)',
                               boxShadow: '0 4px 14px rgba(0,0,0,0.22)',
                             }}
@@ -447,7 +447,7 @@ export default function StudentCourseAssignments() {
                       )}
                     </div>
                   ) : detail.kind === 'EXAM' ? (
-                    <div style={{ marginBottom: 14, padding: 14, background: '#fdf1dc', borderRadius: 10, fontSize: 13 }}>
+                    <div style={{ marginBottom: 14, padding: 14, background: 'var(--color-paper-2)', borderRadius: 10, fontSize: 13 }}>
                       ⏳ Đề thi đang tải hoặc đã bị gỡ khỏi kho đề.
                     </div>
                   ) : (
@@ -575,7 +575,7 @@ export default function StudentCourseAssignments() {
                         marginTop: 12,
                         padding: '9px 12px',
                         borderRadius: 8,
-                        background: '#fef2f2',
+                        background: 'var(--color-danger-wash)',
                         border: '1px solid #fecaca',
                         fontSize: 12.5,
                         color: '#b91c1c',
@@ -602,8 +602,8 @@ export default function StudentCourseAssignments() {
 
               {/* Bảng xếp hạng */}
               {detail.showLeaderboard && leaderboard && leaderboard.length > 0 && (
-                <div style={{ marginTop: 16, padding: 12, background: '#fdf1dc', borderRadius: 10 }}>
-                  <div style={{ fontWeight: 800, fontSize: 13.5, color: '#8a5a1a', marginBottom: 8 }}>🏆 Bảng xếp hạng</div>
+                <div style={{ marginTop: 16, padding: 12, background: 'var(--color-paper-2)', borderRadius: 10 }}>
+                  <div style={{ fontWeight: 800, fontSize: 13.5, color: 'var(--color-warning)', marginBottom: 8 }}>🏆 Bảng xếp hạng</div>
                   {leaderboard.map((r: any) => (
                     <div key={r.studentId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}>
                       <span>

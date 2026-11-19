@@ -719,13 +719,13 @@ export default function TakeExam() {
         </div>
       )}
       {exam.practiceMode && (
-        <div className="card" style={{ marginBottom: 16, padding: 12, borderLeft: '4px solid var(--lm-amber)', background: '#fff7e0' }}>
+        <div className="card" style={{ marginBottom: 16, padding: 12, borderLeft: '4px solid var(--lm-amber)', background: 'var(--color-paper-2)' }}>
           <strong>🎯 Chế độ LUYỆN TẬP</strong>{' '}
           <span style={{ fontSize: 13 }}>— chọn đáp án là biết đúng/sai + xem lời giải ngay. Làm lại thoải mái, không tính điểm.</span>
         </div>
       )}
       {!exam.practiceMode && exam.answersAtEnd === false && (
-        <div className="card" style={{ marginBottom: 16, padding: 12, borderLeft: '4px solid var(--lm-amber)', background: '#fff7e0' }}>
+        <div className="card" style={{ marginBottom: 16, padding: 12, borderLeft: '4px solid var(--lm-amber)', background: 'var(--color-paper-2)' }}>
           <strong>👀 Xem đáp án từng câu</strong>{' '}
           <span style={{ fontSize: 13 }}>— giáo viên cho phép biết đúng/sai ngay khi chọn.</span>
         </div>

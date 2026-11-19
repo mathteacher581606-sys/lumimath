@@ -60,6 +60,32 @@ export function getUser() {
   }
 }
 
+// Cập nhật thông tin người dùng đang lưu ở trình duyệt (sau khi sửa hồ sơ)
+export function updateStoredUser(patch: Record<string, any>) {
+  if (typeof window === 'undefined') return;
+  const cur = getUser() || {};
+  localStorage.setItem('user', JSON.stringify({ ...cur, ...patch }));
+}
+
+// Tải 1 ảnh lên máy chủ → trả URL tương đối dạng /api/uploads/<tên-file>
+export async function uploadImageFile(file: File): Promise<string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  const res = await fetch(`${API_URL}/uploads/image`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'image/png',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: 'Không tải được ảnh' }));
+    throw new Error(err.message || 'Không tải được ảnh');
+  }
+  const data = await res.json();
+  return data.url as string;
+}
+
 export function logout() {
   localStorage.removeItem('token');
   localStorage.removeItem('user');

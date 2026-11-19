@@ -397,7 +397,7 @@ export default function ExamLibraryPage() {
   }
 
   return (
-    <div className="page-container" data-theme="maroon">
+    <div className="page-container">
       {/* ====== THANH TIÊU ĐỀ ĐỎ ĐÔ ====== */}
       <div className="lm-band">
         <div
@@ -550,27 +550,27 @@ export default function ExamLibraryPage() {
 
       {/* ====== Ô THỐNG KÊ NHANH ====== */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, marginBottom: 14 }}>
-        <div className="lm-stat" style={{ background: '#fff', border: '1px solid var(--lm-line)' }}>
+        <div className="lm-stat" style={{ background: 'var(--color-surface)', border: '1px solid var(--lm-line)' }}>
           <span style={{ color: 'var(--color-muted)' }}>Tổng đề thi</span>
           <b style={{ color: 'var(--lm-maroon)' }}>{exams.length}</b>
         </div>
-        <div className="lm-stat" style={{ background: '#fff', border: '1px solid var(--lm-line)' }}>
+        <div className="lm-stat" style={{ background: 'var(--color-surface)', border: '1px solid var(--lm-line)' }}>
           <span style={{ color: 'var(--color-muted)' }}>Công khai</span>
           <b style={{ color: 'var(--lm-maroon)' }}>{exams.filter((e) => e.status === 'PUBLISHED').length}</b>
         </div>
-        <div className="lm-stat" style={{ background: '#fff', border: '1px solid var(--lm-line)' }}>
+        <div className="lm-stat" style={{ background: 'var(--color-surface)', border: '1px solid var(--lm-line)' }}>
           <span style={{ color: 'var(--color-muted)' }}>Bản nháp</span>
           <b style={{ color: 'var(--lm-maroon)' }}>{exams.filter((e) => e.status !== 'PUBLISHED').length}</b>
         </div>
-        <div className="lm-stat" style={{ background: '#fff', border: '1px solid var(--lm-line)' }}>
+        <div className="lm-stat" style={{ background: 'var(--color-surface)', border: '1px solid var(--lm-line)' }}>
           <span style={{ color: 'var(--color-muted)' }}>Template</span>
           <b style={{ color: 'var(--lm-maroon)' }}>{exams.filter((e) => e.isTemplate).length}</b>
         </div>
-        <div className="lm-stat" style={{ background: '#fff', border: '1px solid var(--lm-line)' }}>
+        <div className="lm-stat" style={{ background: 'var(--color-surface)', border: '1px solid var(--lm-line)' }}>
           <span style={{ color: 'var(--color-muted)' }}>Tổng câu hỏi</span>
           <b style={{ color: 'var(--lm-maroon)' }}>{exams.reduce((s, e) => s + (e._count?.items ?? 0), 0)}</b>
         </div>
-        <div className="lm-stat" style={{ background: '#fff', border: '1px solid var(--lm-line)' }}>
+        <div className="lm-stat" style={{ background: 'var(--color-surface)', border: '1px solid var(--lm-line)' }}>
           <span style={{ color: 'var(--color-muted)' }}>Lượt làm bài</span>
           <b style={{ color: 'var(--lm-maroon)' }}>{exams.reduce((s, e) => s + (e._count?.attempts ?? 0), 0)}</b>
         </div>
@@ -581,7 +581,7 @@ export default function ExamLibraryPage() {
         <select
           value={fGrade}
           onChange={(e) => setFGrade(e.target.value)}
-          style={{ padding: '8px 12px', border: '1.5px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: '#fff' }}
+          style={{ padding: '8px 12px', border: '1.5px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: 'var(--color-surface)' }}
         >
           <option value="">🎓 Tất cả lớp</option>
           <option value="10">Lớp 10</option>
@@ -591,7 +591,7 @@ export default function ExamLibraryPage() {
         <select
           value={fTopic}
           onChange={(e) => setFTopic(e.target.value)}
-          style={{ padding: '8px 12px', border: '1.5px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: '#fff', maxWidth: 220 }}
+          style={{ padding: '8px 12px', border: '1.5px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: 'var(--color-surface)', maxWidth: 220 }}
         >
           <option value="">📚 Tất cả chủ đề</option>
           {topics.map((t) => (
@@ -601,7 +601,7 @@ export default function ExamLibraryPage() {
         <select
           value={fDifficulty}
           onChange={(e) => setFDifficulty(e.target.value)}
-          style={{ padding: '8px 12px', border: '1.5px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: '#fff' }}
+          style={{ padding: '8px 12px', border: '1.5px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: 'var(--color-surface)' }}
         >
           <option value="">🎯 Tất cả độ khó</option>
           <option value="NHAN_BIET">Nhận biết</option>

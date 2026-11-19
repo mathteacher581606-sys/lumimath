@@ -371,15 +371,14 @@ export default function LatexEditor({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isFullscreen, setIsFullscreen] = React.useState(false);
 
-  // Theme sáng mặc định; chỉ tối khi app đang dùng theme Nocturne
+  // Theme sáng mặc định; chỉ tối khi app đang dùng bảng màu tối (Bảng đen)
   const [isDark, setIsDark] = React.useState(false);
 
   React.useEffect(() => {
     try {
-      setIsDark(
-        (typeof window !== 'undefined' &&
-          window.localStorage.getItem('lumimath-theme')) === 'nocturne',
-      );
+      const t =
+        typeof window !== 'undefined' ? window.localStorage.getItem('lumimath-theme') : null;
+      setIsDark(t === 'chalk' || t === 'nocturne');
     } catch (e) {
       /* ignore */
     }

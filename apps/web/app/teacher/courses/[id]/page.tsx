@@ -973,7 +973,7 @@ export default function TeacherCourseDetail() {
   }
 
   return (
-    <div className="page-container" data-theme="maroon" style={{ maxWidth: 1600 }}>
+    <div className="page-container" style={{ maxWidth: 1600 }}>
       {/* Header khóa học — phong cách đỏ đô */}
       <div className="lm-band">
         <div style={{ flex: 1, minWidth: 220 }}>
@@ -1377,7 +1377,7 @@ export default function TeacherCourseDetail() {
                   onClick={() =>
                     setForm({ ...form, videos: (form.videos || []).filter((_: any, j: number) => j !== i) })
                   }
-                  style={{ background: '#fecaca', border: 'none', borderRadius: 6, padding: '4px 9px', cursor: 'pointer', fontSize: 12 }}
+                  style={{ background: 'var(--color-danger-wash)', border: 'none', borderRadius: 6, padding: '4px 9px', cursor: 'pointer', fontSize: 12 }}
                 >
                   ✕
                 </button>
@@ -1454,7 +1454,7 @@ export default function TeacherCourseDetail() {
                   onClick={() =>
                     setForm({ ...form, materials: (form.materials || []).filter((_: any, j: number) => j !== i) })
                   }
-                  style={{ background: '#fecaca', border: 'none', borderRadius: 6, padding: '4px 9px', cursor: 'pointer', fontSize: 12 }}
+                  style={{ background: 'var(--color-danger-wash)', border: 'none', borderRadius: 6, padding: '4px 9px', cursor: 'pointer', fontSize: 12 }}
                 >
                   ✕
                 </button>
@@ -1489,7 +1489,7 @@ export default function TeacherCourseDetail() {
                     </p>
                   )}
                   {blocks.map((b) => (
-                    <div key={b.id} style={{ border: '1px solid var(--color-rule)', borderRadius: 8, padding: 8, background: '#fff' }}>
+                    <div key={b.id} style={{ border: '1px solid var(--color-rule)', borderRadius: 8, padding: 8, background: 'var(--color-surface)' }}>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
                         <select
                           value={b.type}
@@ -1536,7 +1536,7 @@ export default function TeacherCourseDetail() {
                     <button type="button" className="lm-filter-btn" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => addBlock('image')}>＋ Hình</button>
                   </div>
                 </div>
-                <div style={{ border: '1px dashed var(--color-rule)', borderRadius: 8, padding: 10, background: '#fff', minHeight: 120 }}>
+                <div style={{ border: '1px dashed var(--color-rule)', borderRadius: 8, padding: 10, background: 'var(--color-surface)', minHeight: 120 }}>
                   <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--color-muted)', marginBottom: 6 }}>👁️ XEM TRƯỚC</div>
                   <LatexRenderer content={serializeBlocks()} />
                 </div>
@@ -1628,7 +1628,7 @@ export default function TeacherCourseDetail() {
               background: form.quizOn ? '#fdf1dc' : 'transparent',
             }}
           >
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, color: '#8a5a1a' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, color: 'var(--color-warning)' }}>
               <input
                 type="checkbox"
                 checked={form.quizOn}
@@ -1904,7 +1904,7 @@ export default function TeacherCourseDetail() {
       </div>
 
       {showCopy && (
-        <div className="card" style={{ marginBottom: 16, padding: 16, background: '#fdf6e8' }}>
+        <div className="card" style={{ marginBottom: 16, padding: 16, background: 'var(--color-paper-2)' }}>
           <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>📋 Sao chép bài giảng vào khóa học này</div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
             <label style={{ fontSize: 13 }}>Khóa học nguồn:</label>
@@ -1930,7 +1930,7 @@ export default function TeacherCourseDetail() {
                   Chọn tất cả ({sourceLessons.length} bài)
                 </label>
               </div>
-              <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--color-rule)', borderRadius: 8, background: '#fffdf7', padding: 6 }}>
+              <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--color-rule)', borderRadius: 8, background: 'var(--color-paper-2)', padding: 6 }}>
                 {sourceLessons.map((l: any) => (
                   <label key={l.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 8px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid var(--color-rule)' }}>
                     <input
@@ -2050,7 +2050,7 @@ export default function TeacherCourseDetail() {
 
         {/* Panel nhập Excel */}
         {showImport && (
-          <div style={{ marginTop: 12, padding: 12, background: '#fdf6e8', borderRadius: 8, border: '1px solid var(--color-rule)' }}>
+          <div style={{ marginTop: 12, padding: 12, background: 'var(--color-paper-2)', borderRadius: 8, border: '1px solid var(--color-rule)' }}>
             <div style={{ fontSize: 13, marginBottom: 10, lineHeight: 1.7 }}>
               Tải <b>file mẫu</b>, điền danh sách học sinh (Họ tên, Email, Lớp, Mật khẩu, Trường), rồi tải file lên.
               Học sinh chưa có tài khoản sẽ được <b>tạo tự động</b> và thêm vào khóa học này.
@@ -2222,7 +2222,7 @@ export default function TeacherCourseDetail() {
               return (
                 <div key={l.id}>
                   {chapterRow && (
-                    <div style={{ fontSize: 12.5, fontWeight: 800, color: '#8a5a1a', padding: '8px 10px 4px' }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--color-warning)', padding: '8px 10px 4px' }}>
                       📚 {chapterRow}
                     </div>
                   )}

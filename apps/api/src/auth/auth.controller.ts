@@ -1,8 +1,10 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
   Get,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -58,6 +60,117 @@ export class AuthController {
       where: { userId: user.id },
     });
     return { ...user, assistantOnly: owned === 0 && assisted > 0 };
+  }
+
+  // ============ HỒ SƠ CÁ NHÂN (trang Cài đặt) ============
+
+  private static readonly PROFILE_SELECT = {
+    id: true,
+    email: true,
+    role: true,
+    fullName: true,
+    avatarUrl: true,
+    school: true,
+    className: true,
+    grade: true,
+    workplace: true,
+    birthDate: true,
+    phone: true,
+    parentPhone: true,
+    teacherCode: true,
+    studentCode: true,
+    xp: true,
+    level: true,
+    streakDays: true,
+    emailNotify: true,
+  } as const;
+
+  // Lấy hồ sơ đầy đủ của chính mình
+  @UseGuards(JwtAuthGuard)
+  @Get('profile')
+  getProfile(@CurrentUser() user: any) {
+    return this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: AuthController.PROFILE_SELECT,
+    });
+  }
+
+  // Tự sửa hồ sơ: chỉ sửa được tài khoản của chính mình.
+  // Email, vai trò, mã HS/GV, XP… KHÔNG sửa được qua đây.
+  @UseGuards(JwtAuthGuard)
+  @Patch('profile')
+  async updateProfile(@CurrentUser() user: any, @Body() body: any) {
+    const b = body || {};
+    const data: Record<string, any> = {};
+
+    const text = (v: any, max: number, label: string) => {
+      if (v === null) return null;
+      const s = String(v ?? '').trim();
+      if (s.length > max) {
+        throw new BadRequestException(`${label} dài quá ${max} ký tự`);
+      }
+      return s === '' ? null : s;
+    };
+
+    if (b.fullName !== undefined) {
+      const name = text(b.fullName, 80, 'Họ và tên');
+      if (!name || name.length < 2) {
+        throw new BadRequestException('Họ và tên phải có ít nhất 2 ký tự');
+      }
+      data.fullName = name;
+    }
+    if (b.className !== undefined) data.className = text(b.className, 20, 'Lớp');
+    if (b.school !== undefined) data.school = text(b.school, 120, 'Trường');
+    if (b.workplace !== undefined) data.workplace = text(b.workplace, 120, 'Nơi công tác');
+    if (b.grade !== undefined) {
+      if (b.grade === null || b.grade === '') data.grade = null;
+      else {
+        const g = Number(b.grade);
+        if (!Number.isInteger(g) || g < 1 || g > 12) {
+          throw new BadRequestException('Khối lớp không hợp lệ');
+        }
+        data.grade = g;
+      }
+    }
+    const phoneOk = (v: string | null) =>
+      v === null || /^[0-9+ .-]{8,20}$/.test(v);
+    if (b.phone !== undefined) {
+      const v = text(b.phone, 20, 'Số điện thoại');
+      if (!phoneOk(v)) throw new BadRequestException('Số điện thoại không hợp lệ');
+      data.phone = v;
+    }
+    if (b.parentPhone !== undefined) {
+      const v = text(b.parentPhone, 20, 'Số điện thoại phụ huynh');
+      if (!phoneOk(v)) {
+        throw new BadRequestException('Số điện thoại phụ huynh không hợp lệ');
+      }
+      data.parentPhone = v;
+    }
+    if (b.birthDate !== undefined) {
+      if (b.birthDate === null || b.birthDate === '') data.birthDate = null;
+      else {
+        const d = new Date(b.birthDate);
+        const year = d.getFullYear();
+        if (isNaN(d.getTime()) || year < 1940 || d > new Date()) {
+          throw new BadRequestException('Ngày sinh không hợp lệ');
+        }
+        data.birthDate = d;
+      }
+    }
+    if (b.avatarUrl !== undefined) {
+      const v = text(b.avatarUrl, 500, 'Ảnh đại diện');
+      // Chỉ nhận ảnh đã tải lên qua /uploads của chính web
+      if (v !== null && !/^(\/api)?\/uploads\/[\w.-]+$/.test(v)) {
+        throw new BadRequestException('Ảnh đại diện không hợp lệ');
+      }
+      data.avatarUrl = v;
+    }
+
+    return this.prisma.user.update({
+      where: { id: user.id },
+      data,
+      select: AuthController.PROFILE_SELECT,
+    });
   }
 
   // ============ QUÊN MẬT KHẨU (email thật) ============

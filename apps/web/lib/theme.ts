@@ -1,64 +1,107 @@
 export interface ThemeDef {
   id: string;
+  letter: string;
   name: string;
   desc: string;
+  /** Màu xem trước cho thẻ chọn theme (khớp token trong globals.css) */
   paper: string;
+  surface: string;
   ink: string;
   accent: string;
   rule: string;
 }
 
+// Thứ tự hiển thị trong Cài đặt → Giao diện
 export const THEMES: ThemeDef[] = [
   {
     id: 'paper',
+    letter: 'A',
     name: 'Mực & Giấy',
-    desc: 'Giấy ấm, mực đỏ son — phong cách biên tập',
-    paper: 'oklch(97.5% 0.012 85)',
-    ink: 'oklch(22% 0.012 60)',
-    accent: 'oklch(52% 0.17 35)',
-    rule: 'oklch(86% 0.012 85)',
+    desc: 'Giấy kem, mực nâu, đỏ đô',
+    paper: '#f8f4ec',
+    surface: '#fffdf8',
+    ink: '#2b2420',
+    accent: '#8e2a1c',
+    rule: '#e2d9c9',
   },
   {
-    id: 'cobalt',
-    name: 'Cobalt',
-    desc: 'Xanh dương kỹ thuật, trung tính lạnh',
-    paper: 'oklch(97% 0.008 255)',
-    ink: 'oklch(20% 0.015 260)',
-    accent: 'oklch(50% 0.16 262)',
-    rule: 'oklch(86% 0.01 255)',
+    id: 'chalk',
+    letter: 'B',
+    name: 'Bảng đen',
+    desc: 'Nền tối, chữ phấn, đỡ mỏi mắt',
+    paper: '#161e1b',
+    surface: '#1e2925',
+    ink: '#ecede6',
+    accent: '#e8c766',
+    rule: '#2f3d37',
   },
   {
-    id: 'evergreen',
-    name: 'Evergreen',
-    desc: 'Xanh lá sẫm — thư viện, điềm tĩnh',
-    paper: 'oklch(97% 0.01 155)',
-    ink: 'oklch(22% 0.012 150)',
-    accent: 'oklch(48% 0.13 155)',
-    rule: 'oklch(86% 0.01 155)',
+    id: 'garden',
+    letter: 'F',
+    name: 'Khu vườn',
+    desc: 'Xanh lá dịu, nhẹ nhàng',
+    paper: '#f2f5ef',
+    surface: '#ffffff',
+    ink: '#22302a',
+    accent: '#2f6a4c',
+    rule: '#dce6d8',
   },
   {
-    id: 'nocturne',
-    name: 'Nocturne',
-    desc: 'Nền tối, điểm nhấn hổ phách',
-    paper: 'oklch(16% 0.01 60)',
-    ink: 'oklch(94% 0.006 85)',
-    accent: 'oklch(72% 0.14 75)',
-    rule: 'oklch(30% 0.01 60)',
+    id: 'blueprint',
+    letter: 'D',
+    name: 'Bản vẽ',
+    desc: 'Trắng xanh, gọn gàng, chính xác',
+    paper: '#f7f9fc',
+    surface: '#ffffff',
+    ink: '#1a2338',
+    accent: '#2d5be3',
+    rule: '#dce2ec',
+  },
+  {
+    id: 'notebook',
+    letter: 'C',
+    name: 'Vở ô li',
+    desc: 'Vở kẻ ô, xanh mực, vui tươi',
+    paper: '#fbfcff',
+    surface: '#ffffff',
+    ink: '#1b2440',
+    accent: '#2147c4',
+    rule: '#1b2440',
   },
 ];
 
+export const DEFAULT_THEME = 'paper';
+
+// Id cũ trước bản nâng cấp giao diện → id mới
+const LEGACY: Record<string, string> = {
+  cobalt: 'blueprint',
+  evergreen: 'garden',
+  nocturne: 'chalk',
+  maroon: 'paper',
+};
+
+export function normalizeTheme(id: string | null | undefined): string {
+  if (!id) return DEFAULT_THEME;
+  const mapped = LEGACY[id] || id;
+  return THEMES.some((t) => t.id === mapped) ? mapped : DEFAULT_THEME;
+}
+
 export function getTheme(): string {
-  if (typeof window === 'undefined') return 'paper';
+  if (typeof window === 'undefined') return DEFAULT_THEME;
   try {
-    return localStorage.getItem('lumimath-theme') || 'paper';
+    return normalizeTheme(localStorage.getItem('lumimath-theme'));
   } catch {
-    return 'paper';
+    return DEFAULT_THEME;
   }
 }
 
 export function setTheme(id: string) {
+  const t = normalizeTheme(id);
   try {
-    localStorage.setItem('lumimath-theme', id);
+    localStorage.setItem('lumimath-theme', t);
   } catch {}
-  document.documentElement.setAttribute('data-theme', id);
+  document.documentElement.setAttribute('data-theme', t);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  const def = THEMES.find((x) => x.id === t);
+  if (meta && def) meta.setAttribute('content', def.paper);
 }

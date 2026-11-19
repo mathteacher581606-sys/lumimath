@@ -140,7 +140,7 @@ export default function CourseAnnouncements() {
   const EMOJIS = ['👍', '❤️', '🎉', '🙏', '😮'];
 
   return (
-    <div className="page-container" data-theme="maroon" style={{ maxWidth: 960 }}>
+    <div className="page-container" style={{ maxWidth: 960 }}>
       {toast && (
         <div className="toast" style={{ position: 'fixed', top: 20, right: 20, zIndex: 60 }}>
           {toast}
@@ -277,8 +277,8 @@ export default function CourseAnnouncements() {
 
               {/* Biểu quyết */}
               {a.voteOptions?.length > 0 && (
-                <div style={{ marginTop: 10, padding: 10, background: '#fdf1dc', borderRadius: 8 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: '#8a5a1a', marginBottom: 6 }}>
+                <div style={{ marginTop: 10, padding: 10, background: 'var(--color-paper-2)', borderRadius: 8 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--color-warning)', marginBottom: 6 }}>
                     🗳 Biểu quyết {a.voteDeadline ? `(hạn: ${new Date(a.voteDeadline).toLocaleString('vi-VN')})` : ''}
                   </div>
                   {a.voteOptions.map((opt: string, i: number) => {

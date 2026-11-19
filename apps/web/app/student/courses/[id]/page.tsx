@@ -410,7 +410,7 @@ export default function CourseDetailPage() {
   if (!course) return <div className="page-container">Không tìm thấy khóa học.</div>;
 
   return (
-    <div className="page-container" data-theme="maroon" style={{ maxWidth: 1600 }}>
+    <div className="page-container" style={{ maxWidth: 1600 }}>
       {/* Header khóa học — phong cách đỏ đô */}
       <div className="lm-band">
         <div style={{ flex: 1, minWidth: 220 }}>
@@ -612,7 +612,7 @@ export default function CourseDetailPage() {
               return (
                 <div key={l.id}>
                   {chapterRow && (
-                    <div style={{ fontSize: 12.5, fontWeight: 800, color: '#8a5a1a', padding: '8px 10px 4px' }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--color-warning)', padding: '8px 10px 4px' }}>
                       📚 {chapterRow}
                     </div>
                   )}
@@ -836,7 +836,7 @@ export default function CourseDetailPage() {
                           border: '1.5px solid var(--lm-amber)',
                           borderRadius: 10,
                           padding: 14,
-                          background: '#fdf1dc',
+                          background: 'var(--color-paper-2)',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -844,7 +844,7 @@ export default function CourseDetailPage() {
                           <span style={{ fontSize: 13 }}>{quizData.questionCount} câu trắc nghiệm · trộn ngẫu nhiên</span>
                           <span style={{ fontSize: 13 }}>· Đạt ≥ {quizData.passingPercent}%</span>
                           {quizData.negativeMarking && (
-                            <span className="badge" style={{ background: '#fbe9e7', color: '#b91c1c' }}>
+                            <span className="badge" style={{ background: 'var(--color-danger-wash)', color: '#b91c1c' }}>
                               🔴 Trừ {quizData.negativeWeight} điểm/câu sai
                             </span>
                           )}
@@ -882,7 +882,7 @@ export default function CourseDetailPage() {
                             {quizAnswers && Object.keys(quizAnswers).length > 0 && !quizBusy ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                                 {quizData.questions.map((q: any, qi: number) => (
-                                  <div key={q.id} style={{ background: '#fff', borderRadius: 8, padding: 10, border: '1px solid #e8d5a8' }}>
+                                  <div key={q.id} style={{ background: 'var(--color-surface)', borderRadius: 8, padding: 10, border: '1px solid #e8d5a8' }}>
                                     <div style={{ fontSize: 13.5, marginBottom: 6 }}>
                                       <b>Câu {qi + 1}.</b> <LatexRenderer content={q.content} />
                                     </div>
@@ -926,7 +926,7 @@ export default function CourseDetailPage() {
                               {quizResult.results.map((r: any) => {
                                 const q = quizData.questions.find((x: any) => x.id === r.id);
                                 return (
-                                  <div key={r.id} style={{ background: '#fff', borderRadius: 8, padding: 10, border: `1.5px solid ${r.correct ? 'var(--color-success)' : 'var(--color-danger)'}` }}>
+                                  <div key={r.id} style={{ background: 'var(--color-surface)', borderRadius: 8, padding: 10, border: `1.5px solid ${r.correct ? 'var(--color-success)' : 'var(--color-danger)'}` }}>
                                     <div style={{ fontSize: 13.5 }}>
                                       {r.correct ? '✅' : '❌'} <LatexRenderer content={q?.content || ''} />
                                     </div>
@@ -1205,10 +1205,10 @@ export default function CourseDetailPage() {
                         border: '1px dashed #e0c48c',
                         borderRadius: 8,
                         padding: 10,
-                        background: '#fffbe8',
+                        background: 'var(--color-paper-2)',
                       }}
                     >
-                      <div style={{ fontSize: 13, fontWeight: 700, color: '#8a5a1a', marginBottom: 6 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-warning)', marginBottom: 6 }}>
                         📝 Ghi chú của bạn (chỉ mình bạn thấy)
                       </div>
                       <textarea

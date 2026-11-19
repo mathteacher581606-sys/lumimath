@@ -20,7 +20,7 @@
 | `--color-success` | `oklch(50% 0.13 150)` | đạt |
 | `--color-danger` | `oklch(50% 0.17 25)` | lỗi |
 
-Chủ đề thay được qua `data-theme="paper|cobalt|jade"` — **không** hard-code mã màu trong JSX.
+Từ 19/11/2026 có **5 bảng màu** người dùng tự chọn trong Cài đặt: `paper` (A), `chalk` (B, tối), `garden` (F), `blueprint` (D), `notebook` (C). Bảng token đầy đủ: `specs/014-ui-themes-settings/spec.md` và đầu `apps/web/app/globals.css`. **Không** hard-code mã màu trong JSX — luôn dùng `var(--color-…)`.
 
 ## 2. Kiểu chữ
 

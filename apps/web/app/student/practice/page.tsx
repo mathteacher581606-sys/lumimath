@@ -49,7 +49,7 @@ export default function PracticeRoomPage() {
   }
 
   return (
-    <div className="page-container" data-theme="maroon">
+    <div className="page-container">
       <BackButton to="/student" label="Về Trang chủ" />
       <h1 className="page-title">🎯 Phòng luyện đề</h1>
       <p className="page-subtitle">

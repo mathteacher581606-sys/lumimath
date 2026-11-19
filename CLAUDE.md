@@ -58,7 +58,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:4000/api/auth/me        
 
 ### Ngôn ngữ & giao diện
 - **Toàn bộ UI tiếng Việt** — nhãn, thông báo lỗi, empty state. Không trộn tiếng Anh.
-- Dùng token trong `DESIGN.md` (`--lm-maroon`, `--lm-amber`, `--color-ink`…), **không hard-code mã màu mới**.
+- Dùng token trong `DESIGN.md` / `specs/014-ui-themes-settings` (`--color-surface`, `--color-accent`, `--color-ink`…), **không hard-code mã màu mới** — web có 5 bảng màu, kể cả 1 bảng màu tối.
 - Chỉ animate `transform`/`opacity`, thời lượng < 300ms, easing `--ease-out`; tôn trọng
   `prefers-reduced-motion`.
 
@@ -104,6 +104,7 @@ Các feature đã xong (xem chi tiết trong `specs/`):
 | 008 | Polish · Harden · Hiệu năng | memo, phím tắt chấm bài, lazy-load CodeMirror (−30%) |
 | 009 | Tải đáp án PDF + tự sửa LaTeX | `GET /exams/:id/attempts/:aid/answers-pdf` |
 | 010 | Sửa ảnh upload bị hỏng | quality 0–100 |
+| 014 | 5 bảng màu + trang chủ HS + Cài đặt 3 tab | đợt 1; `GET/PATCH /auth/profile` |
 
 ## 8. Nhận việc từ file task
 

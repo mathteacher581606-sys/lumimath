@@ -1,8 +1,60 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { apiFetch, getUser } from '@/lib/api';
+
+// Cấp độ theo kiểu quân đội
+const RANKS = [
+  'Binh Bét', 'Binh Nhì', 'Binh Nhất', 'Hạ Sĩ', 'Trung Sĩ', 'Thượng Sĩ',
+  'Thiếu Úy', 'Trung Úy', 'Thượng Úy', 'Đại Úy',
+  'Thiếu Tá', 'Trung Tá', 'Thượng Tá', 'Đại Tá',
+  'Thiếu Tướng', 'Trung Tướng', 'Thượng Tướng', 'Đại Tướng',
+  'Nguyên Soái', 'Huyền Thoại',
+];
+
+type Task = {
+  key: string;
+  kind: 'exam' | 'homework' | 'lesson';
+  title: string;
+  course: string;
+  deadline: number | null;
+  href: string;
+};
+
+function rankOf(level: number) {
+  return RANKS[Math.min(Math.max(level, 1), RANKS.length) - 1] || 'Huyền Thoại';
+}
+
+// "còn 3 giờ 12 phút" / "còn 2 ngày" / "đã quá hạn"
+function timeLeft(deadline: number, now: number) {
+  const ms = deadline - now;
+  if (ms <= 0) return 'đã quá hạn';
+  const min = Math.floor(ms / 60000);
+  if (min < 60) return `còn ${min} phút`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `còn ${h} giờ ${min % 60} phút`;
+  return `còn ${Math.floor(h / 24)} ngày`;
+}
+
+function deadlineLabel(deadline: number, now: number) {
+  const d = new Date(deadline);
+  const today = new Date(now);
+  const sameDay = d.toDateString() === today.toDateString();
+  const hm = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  if (sameDay) return `Hạn ${hm} hôm nay`;
+  const tomorrow = new Date(now + 86400000);
+  if (d.toDateString() === tomorrow.toDateString()) return `Hạn ${hm} ngày mai`;
+  return `Hạn ${d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`;
+}
+
+function greeting(now: number) {
+  const h = new Date(now).getHours();
+  if (h < 11) return 'Chào buổi sáng';
+  if (h < 14) return 'Chào buổi trưa';
+  if (h < 18) return 'Chào buổi chiều';
+  return 'Chào buổi tối';
+}
 
 export default function StudentDashboard() {
   const [me, setMe] = useState<any>(null);
@@ -12,27 +64,24 @@ export default function StudentDashboard() {
   const [weekly, setWeekly] = useState<any>(null);
   const [achievements, setAchievements] = useState<any>(null);
   const [creatingPractice, setCreatingPractice] = useState(false);
-
-  // Cấp độ theo kiểu quân đội
-  const RANKS = [
-    'Binh Bét', 'Binh Nhì', 'Binh Nhất', 'Hạ Sĩ', 'Trung Sĩ', 'Thượng Sĩ',
-    'Thiếu Úy', 'Trung Úy', 'Thượng Úy', 'Đại Úy',
-    'Thiếu Tá', 'Trung Tá', 'Thượng Tá', 'Đại Tá',
-    'Thiếu Tướng', 'Trung Tướng', 'Thượng Tướng', 'Đại Tướng',
-    'Nguyên Soái', 'Huyền Thoại',
-  ];
+  const [practiceError, setPracticeError] = useState('');
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     setMe(getUser());
-    apiFetch('/exams/dashboard').then(setDash).catch(() => {});
-    apiFetch('/exams/practice/recommend').then(setPractice).catch(() => {});
-    apiFetch('/gamification/daily-quests').then(setQuests).catch(() => {});
+    apiFetch('/exams/dashboard').then(setDash).catch(() => setDash({ upcoming: [], streakDays: 0, activeDays: [] }));
+    apiFetch('/exams/practice/recommend').then(setPractice).catch(() => setPractice({ weakTopics: [], message: 'Chưa phân tích được.' }));
+    apiFetch('/gamification/daily-quests').then(setQuests).catch(() => setQuests({ quests: [] }));
     apiFetch('/gamification/achievements').then(setAchievements).catch(() => {});
-    apiFetch('/courses/my-weekly-tasks').then(setWeekly).catch(() => {});
+    apiFetch('/courses/my-weekly-tasks').then(setWeekly).catch(() => setWeekly({ upcoming: [], todo: [] }));
+    // Cập nhật đồng hồ đếm ngược mỗi phút
+    const t = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(t);
   }, []);
 
   async function createPractice() {
     setCreatingPractice(true);
+    setPracticeError('');
     try {
       const data = await apiFetch('/exams/practice', {
         method: 'POST',
@@ -40,364 +89,264 @@ export default function StudentDashboard() {
       });
       window.location.href = `/student/exams/${data.examId}/take`;
     } catch (e: any) {
-      alert(e.message);
+      setPracticeError(e.message || 'Không tạo được đề luyện');
       setCreatingPractice(false);
     }
   }
 
-  // Thanh tiến độ level
+  // Gộp bài thi + BTVN sắp đến hạn + bài chưa học thành 1 danh sách, xếp theo hạn
+  const tasks: Task[] = useMemo(() => {
+    const list: Task[] = [];
+    const seen = new Set<string>();
+    for (const u of dash?.upcoming || []) {
+      const dl = u.deadline ? new Date(u.deadline).getTime() : null;
+      const k = `${u.examTitle}|${dl}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      list.push({
+        key: 'd' + k,
+        kind: 'exam',
+        title: u.examTitle,
+        course: u.courseTitle,
+        deadline: dl,
+        href: u.examId ? `/student/exams/${u.examId}/take` : '/student/exams',
+      });
+    }
+    for (const t of weekly?.upcoming || []) {
+      const title = t.examTitle || t.title;
+      const dl = t.deadline ? new Date(t.deadline).getTime() : null;
+      const k = `${title}|${dl}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      list.push({
+        key: 'w' + t.lessonId,
+        kind: 'homework',
+        title,
+        course: t.courseTitle,
+        deadline: dl,
+        href: `/student/courses/${t.courseId}`,
+      });
+    }
+    list.sort((a, b) => (a.deadline ?? Infinity) - (b.deadline ?? Infinity));
+    for (const t of weekly?.todo || []) {
+      list.push({
+        key: 't' + t.lessonId,
+        kind: 'lesson',
+        title: t.title,
+        course: t.courseTitle,
+        deadline: null,
+        href: `/student/courses/${t.courseId}`,
+      });
+    }
+    return list;
+  }, [dash, weekly]);
+
+  const loadingTasks = !dash || !weekly;
+  const lead = tasks.find((t) => t.kind !== 'lesson') || null;
+  const rest = tasks.filter((t) => t !== lead).slice(0, 4);
+  const urgent = !!lead?.deadline && lead.deadline - now < 24 * 3600000;
+
   const xp = me?.xp ?? 0;
   const level = me?.level ?? 1;
   const xpInLevel = xp % 100;
-  const xpNext = 100;
-  const pct = Math.min(100, Math.round((xpInLevel / xpNext) * 100));
-  const rank = RANKS[Math.min(level, RANKS.length) - 1] || 'Huyền Thoại';
+  const pct = Math.min(100, Math.round(xpInLevel));
+  const firstName = (me?.fullName || 'bạn').trim().split(/\s+/).pop();
+  const streak = dash?.streakDays ?? 0;
 
   return (
-    <div className="page-container" data-theme="maroon">
-      {/* ===== HỒ SƠ TRANG CHỦ ===== */}
-      <div
-        className="card"
-        style={{
-          padding: 0,
-          overflow: 'hidden',
-          borderRadius: 18,
-          marginBottom: 18,
-          background: 'linear-gradient(120deg, #7b1113 0%, #be123c 55%, #d97706 100%)',
-          color: '#fff',
-          boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap', padding: 22 }}>
-          <div
-            style={{
-              width: 76,
-              height: 76,
-              borderRadius: '50%',
-              background: 'rgba(255,255,255,0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 34,
-              border: '3px solid rgba(255,255,255,0.6)',
-              flexShrink: 0,
-              overflow: 'hidden',
-            }}
-          >
-            {me?.avatarUrl ? (
-              <img src={me.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+    <div className="page-container sh">
+      {/* ===== Lời chào + level ===== */}
+      <section className="sh-hello" aria-labelledby="sh-hello-title">
+        <div
+          className="sh-ring"
+          role="img"
+          aria-label={`Level ${level}, đạt ${pct}% để lên level tiếp theo`}
+          style={{ ['--p' as any]: `${pct}%` }}
+        >
+          <div className="sh-ring-inner">
+            <span className="sh-ring-cap">LEVEL</span>
+            <span className="sh-ring-num">{level}</span>
+          </div>
+        </div>
+        <div className="sh-hello-text">
+          <h1 id="sh-hello-title">
+            {greeting(now)}, {firstName}!
+          </h1>
+          <p>
+            {me?.className ? `Lớp ${me.className} · ` : ''}còn {100 - xpInLevel} XP nữa là lên{' '}
+            {rankOf(level + 1)}
+          </p>
+        </div>
+        <div className="sh-chips">
+          <span className="chip">{rankOf(level)}</span>
+          {streak > 0 && <span className="chip chip-hot">Chuỗi {streak} ngày</span>}
+          <span className="chip">{xp} XP</span>
+        </div>
+      </section>
+
+      {/* ===== Nhắc bài cỡ lớn ===== */}
+      {loadingTasks ? (
+        <div className="sh-lead skeleton" style={{ height: 220 }} aria-hidden="true" />
+      ) : lead ? (
+        <section className={`sh-lead ${urgent ? 'is-urgent' : ''}`} aria-labelledby="sh-lead-title">
+          <p className="sh-lead-kicker">
+            {lead.deadline ? (
+              <>
+                {deadlineLabel(lead.deadline, now)} · {timeLeft(lead.deadline, now)}
+              </>
             ) : (
-              '🧑‍🎓'
+              'Việc cần làm'
             )}
-          </div>
-          <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>
-              {me?.fullName || 'Học sinh'}
-              {me?.className && (
-                <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.85, marginLeft: 10 }}>
-                  Lớp {me.className}
-                </span>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-              <span style={{ background: 'rgba(255,255,255,0.2)', padding: '4px 12px', borderRadius: 999, fontWeight: 700, fontSize: 13 }}>
-                🎖️ {rank}
-              </span>
-              <span style={{ fontSize: 13, opacity: 0.9 }}>
-                Level {level} · {xp} XP
-              </span>
-              {dash?.streakDays ? (
-                <span style={{ fontSize: 13, opacity: 0.9 }}>🔥 {dash.streakDays} ngày</span>
-              ) : null}
-            </div>
-            <div style={{ height: 8, background: 'rgba(255,255,255,0.25)', borderRadius: 4, overflow: 'hidden', marginTop: 12, maxWidth: 420 }}>
-              <div style={{ height: '100%', width: `${pct}%`, background: '#ffd27a', borderRadius: 4 }} />
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
-              {xpNext - xpInLevel} XP nữa → Level {level + 1} ({RANKS[Math.min(level + 1, RANKS.length) - 1]})
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Nội dung Trang chủ (tab "Khóa học của tôi" đã tách sang /student/my-courses) */}
-      <>
-
-      {/* 📅 Nhiệm vụ tuần này */}
-      {weekly && (weekly.upcoming?.length > 0 || weekly.todo?.length > 0) && (
-        <div className="card" style={{ marginBottom: 24, padding: 16, borderLeft: '4px solid var(--color-warning, #d97706)' }}>
-          <h3 style={{ fontSize: 15, marginBottom: 10 }}>📅 Nhiệm vụ tuần này</h3>
-          {weekly.upcoming?.length > 0 && (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-warning, #d97706)', marginBottom: 4 }}>
-                ⏰ BTVN sắp hết hạn:
-              </div>
-              {weekly.upcoming.map((t: any) => (
-                <div key={t.lessonId + 'up'} style={{ fontSize: 13, padding: '4px 0', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ color: 'var(--color-muted)' }}>{t.courseTitle}</span>
-                  <Link href={`/student/courses/${t.courseId}`} style={{ fontWeight: 600 }}>
-                    📝 {t.examTitle || t.title}
-                  </Link>
-                  <span className="mono" style={{ fontSize: 11, color: 'var(--color-danger)' }}>
-                    hạn {new Date(t.deadline).toLocaleDateString('vi-VN')}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          {weekly.todo?.length > 0 && (
-            <div>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-muted)', marginBottom: 4 }}>
-                📖 Bài chưa học ({weekly.totalTodo}):
-              </div>
-              {weekly.todo.map((t: any) => (
-                <div key={t.lessonId + 'td'} style={{ fontSize: 13, padding: '4px 0', display: 'flex', gap: 8 }}>
-                  <span style={{ color: 'var(--color-muted)' }}>{t.courseTitle}</span>
-                  <Link href={`/student/courses/${t.courseId}`} style={{ fontWeight: 600 }}>
-                    {t.title}
-                  </Link>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          </p>
+          <h2 id="sh-lead-title" className="sh-lead-title">
+            {lead.kind === 'exam' ? 'Bài thi' : 'Bài tập'} “{lead.title}” đang chờ em
+          </h2>
+          <p className="sh-lead-sub">{lead.course}</p>
+          <Link href={lead.href} className="sh-cta">
+            {lead.kind === 'exam' ? 'Làm bài ngay' : 'Mở bài tập'}
+          </Link>
+        </section>
+      ) : (
+        <section className="sh-lead is-calm" aria-labelledby="sh-lead-title">
+          <p className="sh-lead-kicker">Hôm nay</p>
+          <h2 id="sh-lead-title" className="sh-lead-title">Em không có bài nào sắp đến hạn</h2>
+          <p className="sh-lead-sub">Tranh thủ luyện thêm một đề để giữ chuỗi học tập nhé.</p>
+          <Link href="/student/practice" className="sh-cta">
+            Vào phòng luyện đề
+          </Link>
+        </section>
       )}
 
-      {/* Thẻ XP / Level */}
-      <div className="card" style={{ marginBottom: 24, display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-        <div style={{ textAlign: 'center', minWidth: 90 }}>
-          <div className="mono" style={{ fontSize: 11, color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-            Level
-          </div>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 600, lineHeight: 1.1 }}>
-            {level}
-          </div>
-        </div>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
-            <span className="mono" style={{ fontWeight: 700, color: 'var(--color-accent)' }}>
-              {xp} XP
-            </span>
-            <span className="mono" style={{ color: 'var(--color-muted)' }}>
-              {xpNext - xpInLevel} XP nữa → Level {level + 1}
-            </span>
-          </div>
-          <div style={{ height: 8, background: 'var(--color-rule)', borderRadius: 4, overflow: 'hidden' }}>
-            <div
-              style={{
-                height: '100%',
-                width: `${pct}%`,
-                background: 'var(--color-accent)',
-                borderRadius: 4,
-                transition: 'width 0.4s ease',
-              }}
-            />
-          </div>
-          <div style={{ marginTop: 10 }}>
-            <Link
-              href="/student/leaderboard"
-              style={{ fontSize: 13, color: 'var(--color-accent)', textUnderlineOffset: 3 }}
-            >
-              Xem bảng xếp hạng →
+      {/* ===== Các việc tiếp theo ===== */}
+      {rest.length > 0 && (
+        <section aria-label="Việc tiếp theo" className="sh-cards">
+          {rest.map((t) => (
+            <Link key={t.key} href={t.href} className="sh-task">
+              <span className="sh-task-meta">
+                {t.kind === 'lesson'
+                  ? 'Bài học chưa xem'
+                  : t.deadline
+                    ? `${t.kind === 'exam' ? 'Bài thi' : 'BTVN'} · ${deadlineLabel(t.deadline, now)}`
+                    : t.kind === 'exam'
+                      ? 'Bài thi'
+                      : 'BTVN'}
+              </span>
+              <span className="sh-task-title">{t.title}</span>
+              <span className="sh-task-course">{t.course}</span>
+              <span className="sh-task-btn">{t.kind === 'lesson' ? 'Học bài' : 'Mở bài'}</span>
             </Link>
-          </div>
-        </div>
-      </div>
+          ))}
+        </section>
+      )}
 
-      {/* ===== Ôn tập AI + lịch hạn nộp + streak ===== */}
-      {/* align-items: start → thẻ ngắn không bị kéo cao bằng thẻ dài nhất */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, marginBottom: 24, alignItems: 'start' }}>
-        {/* Ôn tập cá nhân hóa */}
-        <div className="card" style={{ padding: 16 }}>
-          <h3 style={{ fontSize: 15, marginBottom: 8 }}>🎯 Ôn tập thông minh</h3>
+      <div className="sh-grid">
+        {/* Nhiệm vụ hằng ngày */}
+        <section className="sh-box" aria-labelledby="sh-q">
+          <h2 id="sh-q">Nhiệm vụ hằng ngày</h2>
+          {!quests ? (
+            <div className="skeleton" style={{ height: 90 }} aria-hidden="true" />
+          ) : quests.quests?.length === 0 ? (
+            <p className="sh-muted">Hôm nay chưa có nhiệm vụ.</p>
+          ) : (
+            <ul className="sh-quests">
+              {quests.quests.map((q: any) => (
+                <li key={q.key} className={q.done || q.claimed ? 'is-done' : ''}>
+                  <span className="sh-check" aria-hidden="true">
+                    {(q.done || q.claimed) && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 12l5 5L20 7" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className="sh-quest-label">
+                    {q.label}
+                    <span className="sr-only">{q.done || q.claimed ? ' (đã xong)' : ' (chưa xong)'}</span>
+                  </span>
+                  <span className="sh-quest-xp">+{q.bonus}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {quests?.bonusToday > 0 && (
+            <p className="sh-bonus">+{quests.bonusToday} XP thưởng hôm nay</p>
+          )}
+        </section>
+
+        {/* Ôn tập thông minh */}
+        <section className="sh-box" aria-labelledby="sh-p">
+          <h2 id="sh-p">Ôn tập thông minh</h2>
           {!practice ? (
-            <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Đang phân tích…</p>
-          ) : practice.weakTopics?.length === 0 ? (
-            <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>{practice.message}</p>
+            <div className="skeleton" style={{ height: 90 }} aria-hidden="true" />
+          ) : !practice.weakTopics?.length ? (
+            <p className="sh-muted">{practice.message || 'Làm thêm vài bài để LumiMath tìm chủ đề em cần ôn.'}</p>
           ) : (
             <>
-              <div style={{ fontSize: 13, marginBottom: 8 }}>
-                <strong>Chủ đề cần luyện:</strong>
-                <ul style={{ paddingLeft: 18, marginTop: 4 }}>
-                  {practice.weakTopics.map((t: any) => (
-                    <li key={t.topicId}>
-                      {t.name} <span style={{ color: 'var(--color-danger)' }}>(sai {t.wrong}/{t.total})</span>
-                    </li>
-                  ))}
-                </ul>
+              <p className="sh-muted">Em hay sai ở các chủ đề này</p>
+              <div className="sh-topics">
+                {practice.weakTopics.map((t: any) => (
+                  <span key={t.topicId} className="chip chip-hot">
+                    {t.name} {t.wrong}/{t.total}
+                  </span>
+                ))}
               </div>
-              <p style={{ fontSize: 12, color: 'var(--color-muted)', marginBottom: 10 }}>
-                {practice.available} câu hỏi sẵn có · GV {practice.teacher?.fullName || ''}
-              </p>
               <button
-                className="btn"
-                style={{ width: '100%' }}
+                type="button"
+                className="btn sh-btn-accent"
                 disabled={creatingPractice || practice.available < 3}
                 onClick={createPractice}
               >
-                {creatingPractice ? 'Đang tạo đề…' : `⚡ Tạo đề luyện (10 câu)`}
+                {creatingPractice ? 'Đang tạo đề…' : 'Tạo đề luyện 10 câu'}
               </button>
-            </>
-          )}
-        </div>
-
-        {/* Lịch hạn nộp BTVN */}
-        <div className="card" style={{ padding: 16 }}>
-          <h3 style={{ fontSize: 15, marginBottom: 8 }}>⏰ Bài tập đến hạn</h3>
-          {!dash ? (
-            <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Đang tải…</p>
-          ) : dash.upcoming.length === 0 ? (
-            <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Không có bài tập nào sắp đến hạn. 🎉</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {dash.upcoming.map((u: any, i: number) => (
-                <div key={i} style={{ fontSize: 13 }}>
-                  <strong>{u.examTitle}</strong>
-                  <div style={{ color: 'var(--color-muted)', fontSize: 12 }}>
-                    {u.courseTitle} · hạn {new Date(u.deadline).toLocaleString('vi-VN')}
-                  </div>
-                  {u.examId && (
-                    <Link href={`/student/exams/${u.examId}/take`} style={{ fontSize: 12, color: 'var(--color-accent)' }}>
-                      Làm ngay →
-                    </Link>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Streak + hoạt động */}
-        <div className="card" style={{ padding: 16 }}>
-          <h3 style={{ fontSize: 15, marginBottom: 8 }}>🔥 Chuỗi học tập</h3>
-          {!dash ? (
-            <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Đang tải…</p>
-          ) : (
-            <>
-              <div style={{ fontSize: 26, fontWeight: 700 }}>
-                🔥 {dash.streakDays} ngày liên tiếp
-              </div>
-              <p style={{ fontSize: 12, color: 'var(--color-muted)', margin: '6px 0 10px' }}>
-                Học và làm bài mỗi ngày để duy trì chuỗi!
-              </p>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {Array.from({ length: 14 }, (_, i) => {
-                  const d = new Date(Date.now() - (13 - i) * 86400000);
-                  const key = d.toISOString().slice(0, 10);
-                  const active = dash.activeDays?.includes(key);
-                  return (
-                    <div
-                      key={i}
-                      title={d.toLocaleDateString('vi-VN')}
-                      style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: 4,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 10,
-                        background: active ? 'var(--color-success)' : 'color-mix(in oklch, var(--color-rule) 60%, var(--color-paper))',
-                        color: active ? '#fff' : 'var(--color-muted)',
-                      }}
-                    >
-                      {active ? '✓' : ''}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Nhiệm vụ hằng ngày */}
-        <div className="card" style={{ padding: 16 }}>
-          <h3 style={{ fontSize: 15, marginBottom: 8 }}>🎯 Nhiệm vụ hôm nay</h3>
-          {!quests ? (
-            <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Đang tải…</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {quests.quests.map((q: any) => (
-                <div
-                  key={q.key}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: 13,
-                    padding: '7px 10px',
-                    borderRadius: 8,
-                    background: q.claimed
-                      ? 'color-mix(in oklch, var(--color-success) 10%, var(--color-paper))'
-                      : q.done
-                        ? 'color-mix(in oklch, var(--color-warning, #d97706) 12%, var(--color-paper))'
-                        : 'color-mix(in oklch, var(--color-rule) 35%, var(--color-paper))',
-                  }}
-                >
-                  <span style={{ fontSize: 16 }}>{q.icon}</span>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    {q.label}
-                    <span className="mono" style={{ fontSize: 11, color: 'var(--color-muted)' }}>
-                      {' '}
-                      +{q.bonus} XP
-                    </span>
-                  </span>
-                  {q.claimed ? (
-                    <span style={{ color: 'var(--color-success)', fontSize: 12, fontWeight: 700 }}>✓ Đã nhận</span>
-                  ) : q.done ? (
-                    <span style={{ color: 'var(--color-warning, #b45309)', fontSize: 12, fontWeight: 700 }}>
-                      ✓ Hoàn thành
-                    </span>
-                  ) : (
-                    <span style={{ color: 'var(--color-muted)', fontSize: 12 }}>Chưa xong</span>
-                  )}
-                </div>
-              ))}
-              {quests.bonusToday > 0 && (
-                <p style={{ fontSize: 12, color: 'var(--color-success)', fontWeight: 600 }}>
-                  🎉 +{quests.bonusToday} XP thưởng hôm nay!
+              {practice.available < 3 && (
+                <p className="sh-muted sh-small">Chưa đủ câu hỏi để tạo đề ({practice.available} câu).</p>
+              )}
+              {practiceError && (
+                <p className="sh-error" role="alert">
+                  {practiceError}
                 </p>
               )}
+            </>
+          )}
+        </section>
+
+        {/* Chuỗi học tập */}
+        <section className="sh-box" aria-labelledby="sh-s">
+          <h2 id="sh-s">Chuỗi học tập{dash ? ` · ${streak} ngày` : ''}</h2>
+          {!dash ? (
+            <div className="skeleton" style={{ height: 90 }} aria-hidden="true" />
+          ) : (
+            <div className="sh-streak" role="list" aria-label="14 ngày gần nhất">
+              {Array.from({ length: 14 }, (_, i) => {
+                const d = new Date(now - (13 - i) * 86400000);
+                const key = d.toISOString().slice(0, 10);
+                const active = dash.activeDays?.includes(key);
+                const label = `${d.toLocaleDateString('vi-VN')}${active ? ': có học' : ': chưa học'}`;
+                return <span key={i} role="listitem" title={label} aria-label={label} className={active ? 'on' : ''} />;
+              })}
             </div>
           )}
-        </div>
+        </section>
 
-        {/* Huy hiệu đã đạt */}
+        {/* Huy hiệu */}
         {achievements?.all && (
-          <div className="card" style={{ padding: 16 }}>
-            <h3 style={{ fontSize: 15, marginBottom: 8 }}>🏅 Huy hiệu của bạn</h3>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {achievements.all.map((a: any) => (
-                <div
-                  key={a.code}
-                  title={a.name}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: 4,
-                    padding: '10px 12px',
-                    borderRadius: 10,
-                    border: '1px solid var(--color-rule)',
-                    background: a.earned ? '#fff7e0' : 'var(--color-paper)',
-                    opacity: a.earned ? 1 : 0.45,
-                    minWidth: 76,
-                  }}
-                >
-                  <span style={{ fontSize: 24 }}>{a.icon}</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, textAlign: 'center', lineHeight: 1.2 }}>
-                    {a.name}
-                  </span>
-                  {a.earned && (
-                    <span style={{ fontSize: 10, color: 'var(--color-success)', fontWeight: 700 }}>✓</span>
-                  )}
-                </div>
-              ))}
+          <section className="sh-box" aria-labelledby="sh-b">
+            <div className="sh-box-head">
+              <h2 id="sh-b">Huy hiệu</h2>
+              <Link href="/student/leaderboard">Bảng xếp hạng</Link>
             </div>
-          </div>
+            <ul className="sh-badges">
+              {achievements.all.map((a: any) => (
+                <li key={a.code} className={a.earned ? '' : 'is-locked'} title={a.name}>
+                  <span className="sh-badge-icon" aria-hidden="true">
+                    {a.earned ? a.icon : '?'}
+                  </span>
+                  <span>{a.name}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
       </div>
-      </>
     </div>
   );
 }

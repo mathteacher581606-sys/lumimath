@@ -1592,7 +1592,7 @@ export default function BankPage() {
   }
 
   return (
-    <div className="page-container lm-bank" data-theme="maroon">
+    <div className="page-container lm-bank">
       <div className="lm-layout">
         {/* ================= SIDEBAR: CÂY MỤC LỤC ================= */}
         <aside className="lm-sidebar">
@@ -1627,7 +1627,7 @@ export default function BankPage() {
             />
           </div>
           {/* Dạng bài (tìm kiếm nhanh theo dạng) */}
-          <div style={{ borderBottom: '1px solid var(--lm-line)', padding: '8px 10px', background: '#fffdf7' }}>
+          <div style={{ borderBottom: '1px solid var(--lm-line)', padding: '8px 10px', background: 'var(--color-paper-2)' }}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <select
                 value={fForm}
@@ -1636,7 +1636,7 @@ export default function BankPage() {
                   setFForm(v);
                   loadQuestions({ form: v });
                 }}
-                style={{ flex: 1, minWidth: 0, padding: '7px 8px', border: '1px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: '#fff', color: 'var(--lm-maroon)' }}
+                style={{ flex: 1, minWidth: 0, padding: '7px 8px', border: '1px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: 'var(--color-surface)', color: 'var(--lm-maroon)' }}
               >
                 <option value="">📐 Dạng bài: Tất cả</option>
                 {forms.map((f) => (
@@ -1657,7 +1657,7 @@ export default function BankPage() {
           </div>
 
           {/* Nguồn đề (Trường/Sở/Đề HKI...) */}
-          <div style={{ borderBottom: '1px solid var(--lm-line)', padding: '8px 10px', background: '#fffdf7' }}>
+          <div style={{ borderBottom: '1px solid var(--lm-line)', padding: '8px 10px', background: 'var(--color-paper-2)' }}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <select
                 value={fSource}
@@ -1666,7 +1666,7 @@ export default function BankPage() {
                   setFSource(v);
                   loadQuestions({ source: v });
                 }}
-                style={{ flex: 1, minWidth: 0, padding: '7px 8px', border: '1px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: '#fff', color: 'var(--lm-maroon)' }}
+                style={{ flex: 1, minWidth: 0, padding: '7px 8px', border: '1px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: 'var(--color-surface)', color: 'var(--lm-maroon)' }}
               >
                 <option value="">🏫 Nguồn đề: Tất cả</option>
                 {sources.map((s) => (
@@ -2344,7 +2344,7 @@ export default function BankPage() {
                     )}
                   </div>
                   {q.duplicateOf && (
-                    <div style={{ fontSize: 12.5, marginBottom: 8, border: '1px dashed color-mix(in oklch, var(--color-danger) 45%, transparent)', borderRadius: 6, padding: 8, background: '#fff' }}>
+                    <div style={{ fontSize: 12.5, marginBottom: 8, border: '1px dashed color-mix(in oklch, var(--color-danger) 45%, transparent)', borderRadius: 6, padding: 8, background: 'var(--color-surface)' }}>
                       <div style={{ fontWeight: 800, color: 'var(--color-danger)', marginBottom: 4 }}>
                         📄 Câu đã có trong kho (để so sánh):
                       </div>
@@ -2438,8 +2438,8 @@ export default function BankPage() {
                     <div
                       style={{
                         fontSize: 11.5,
-                        color: '#8a5a1a',
-                        background: '#fdf1dc',
+                        color: 'var(--color-warning)',
+                        background: 'var(--color-paper-2)',
                         border: '1px dashed #e0c48c',
                         borderRadius: 6,
                         padding: '4px 8px',
@@ -2996,7 +2996,7 @@ export default function BankPage() {
             setPageSize(n);
             loadQuestions({ limit: n, page: 1 });
           }}
-          style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--lm-line)', fontSize: 12.5, background: '#fff' }}
+          style={{ padding: '7px 10px', borderRadius: 6, border: '1px solid var(--lm-line)', fontSize: 12.5, background: 'var(--color-surface)' }}
         >
           <option value={10}>10 câu/trang</option>
           <option value={20}>20 câu/trang</option>
@@ -3014,7 +3014,7 @@ export default function BankPage() {
           value={search}
           onChange={(e) => smartSearch(e.target.value)}
           placeholder="🔍 Tìm câu hỏi hoặc ID câu (vd: A398335, lớp 12, mức 3, tên dạng bài)…"
-          style={{ flex: 2, minWidth: 220, padding: 10, border: '1.5px solid var(--lm-line-2)', borderRadius: 8, fontSize: 14, background: '#fff' }}
+          style={{ flex: 2, minWidth: 220, padding: 10, border: '1.5px solid var(--lm-line-2)', borderRadius: 8, fontSize: 14, background: 'var(--color-surface)' }}
         />
         <button
           className="toolbar-btn"
@@ -3302,7 +3302,7 @@ export default function BankPage() {
                         marginTop: 10,
                         padding: 12,
                         borderRadius: 8,
-                        background: '#fffdf5',
+                        background: 'var(--color-paper-2)',
                         border: '1px solid #e7d9b8',
                         fontSize: 14,
                       }}
@@ -3663,7 +3663,7 @@ export default function BankPage() {
             ) : (
               <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {dupPairs.map((p, i) => (
-                  <div key={i} style={{ border: '1px solid var(--color-rule)', borderRadius: 8, padding: 10, background: '#fff' }}>
+                  <div key={i} style={{ border: '1px solid var(--color-rule)', borderRadius: 8, padding: 10, background: 'var(--color-surface)' }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
                       <span className="badge">{p.exact ? 'Trùng hoàn toàn' : 'Gần giống ~90%'}</span>
                       <span className="badge badge-success mono">Giữ: {p.keep.code}</span>
@@ -3741,12 +3741,12 @@ export default function BankPage() {
                     style={{
                       marginBottom: 12,
                       border: '1px dashed #e0c48c',
-                      background: '#fdf1dc',
+                      background: 'var(--color-paper-2)',
                       borderRadius: 8,
                       padding: 10,
                     }}
                   >
-                    <div style={{ fontSize: 13, fontWeight: 800, color: '#8a5a1a', marginBottom: 6 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-warning)', marginBottom: 6 }}>
                       🔍 Gợi ý gộp dạng gần giống ({formMerges.length})
                     </div>
                     {formMerges.map((s, i) => (
@@ -3781,7 +3781,7 @@ export default function BankPage() {
                           padding: '8px 10px',
                           border: '1px solid var(--color-rule)',
                           borderRadius: 8,
-                          background: '#fff',
+                          background: 'var(--color-surface)',
                         }}
                       >
                         <span style={{ flex: 1, minWidth: 0, fontWeight: 700, fontSize: 13 }}>{f.name}</span>
@@ -4002,8 +4002,8 @@ export default function BankPage() {
                           <div
                             style={{
                               fontSize: 11.5,
-                              color: '#8a5a1a',
-                              background: '#fdf1dc',
+                              color: 'var(--color-warning)',
+                              background: 'var(--color-paper-2)',
                               border: '1px dashed #e0c48c',
                               borderRadius: 6,
                               padding: '4px 8px',
@@ -4014,7 +4014,7 @@ export default function BankPage() {
                           </div>
                         )}
                         {q.duplicateOf && (
-                          <div style={{ fontSize: 12, marginTop: 6, border: '1px dashed color-mix(in oklch, var(--color-danger) 45%, transparent)', borderRadius: 6, padding: 8, background: '#fff' }}>
+                          <div style={{ fontSize: 12, marginTop: 6, border: '1px dashed color-mix(in oklch, var(--color-danger) 45%, transparent)', borderRadius: 6, padding: 8, background: 'var(--color-surface)' }}>
                             <div style={{ fontWeight: 800, color: 'var(--color-danger)', marginBottom: 4 }}>
                               📄 Câu nghi trùng đã có trong kho (so sánh — bỏ tick nếu không nhập):
                             </div>
@@ -4028,13 +4028,13 @@ export default function BankPage() {
                             value={q.topicName || ''}
                             onChange={(e) => updateDocxQuestion(i, { topicName: e.target.value })}
                             placeholder="Chỉnh Chủ đề…"
-                            style={{ flex: 1, minWidth: 130, padding: '5px 8px', fontSize: 12, border: '1px solid var(--color-rule)', borderRadius: 6, background: '#fff' }}
+                            style={{ flex: 1, minWidth: 130, padding: '5px 8px', fontSize: 12, border: '1px solid var(--color-rule)', borderRadius: 6, background: 'var(--color-surface)' }}
                           />
                           <input
                             value={q.form || ''}
                             onChange={(e) => updateDocxQuestion(i, { form: e.target.value })}
                             placeholder="Chỉnh Dạng bài…"
-                            style={{ flex: 1, minWidth: 150, padding: '5px 8px', fontSize: 12, border: '1px solid var(--color-rule)', borderRadius: 6, background: '#fff' }}
+                            style={{ flex: 1, minWidth: 150, padding: '5px 8px', fontSize: 12, border: '1px solid var(--color-rule)', borderRadius: 6, background: 'var(--color-surface)' }}
                           />
                         </div>
                       </div>

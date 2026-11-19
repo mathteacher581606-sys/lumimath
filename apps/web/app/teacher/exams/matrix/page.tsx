@@ -159,7 +159,7 @@ function TopicMultiPicker({
           background: value.length ? '#fff3d6' : '#fff7e6',
           fontSize: 12,
           fontWeight: 700,
-          color: '#8a5a1a',
+          color: 'var(--color-warning)',
           textAlign: 'left',
           display: 'flex',
           alignItems: 'center',
@@ -186,7 +186,7 @@ function TopicMultiPicker({
             maxWidth: 460,
             maxHeight: 320,
             overflowY: 'auto',
-            background: '#fff',
+            background: 'var(--color-surface)',
             border: '1px solid var(--lm-line-2, #ddd)',
             borderRadius: 8,
             boxShadow: '0 8px 24px rgba(0,0,0,.18)',
@@ -196,7 +196,7 @@ function TopicMultiPicker({
             style={{
               position: 'sticky',
               top: 0,
-              background: '#fff',
+              background: 'var(--color-surface)',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
@@ -224,8 +224,8 @@ function TopicMultiPicker({
                     padding: '6px 10px',
                     fontSize: 11.5,
                     fontWeight: 800,
-                    color: '#8a5a1a',
-                    background: '#fdf6e8',
+                    color: 'var(--color-warning)',
+                    background: 'var(--color-paper-2)',
                   }}
                 >
                   {t.label}
@@ -933,7 +933,7 @@ export default function ExamMatrixPage() {
   }, [slots]);
 
   return (
-    <div className="page-container" data-theme="maroon" style={{ maxWidth: 1180 }}>
+    <div className="page-container" style={{ maxWidth: 1180 }}>
       {/* ================= THANH TIÊU ĐỀ ================= */}
       <div className="lm-band" style={{ borderRadius: 10 }}>
         <div style={{ fontSize: 20, width: 40, height: 40, borderRadius: 8, background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -977,7 +977,7 @@ export default function ExamMatrixPage() {
           <select
             value={preset}
             onChange={(e) => applyPreset(e.target.value as any)}
-            style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--lm-line-2)', fontSize: 12.5, fontWeight: 700, background: '#fff' }}
+            style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--lm-line-2)', fontSize: 12.5, fontWeight: 700, background: 'var(--color-surface)' }}
           >
             <option value="thptqg">Form THPTQG</option>
             <option value="custom">Tùy chỉnh</option>
@@ -1120,14 +1120,14 @@ export default function ExamMatrixPage() {
 
         {parts.map((part, pi) => (
           <div key={pi}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', background: '#fdf1dc', borderTop: '1px solid var(--lm-line)', borderBottom: '1px solid #f0dcb4', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', background: 'var(--color-paper-2)', borderTop: '1px solid var(--lm-line)', borderBottom: '1px solid #f0dcb4', flexWrap: 'wrap' }}>
               <span style={{ background: 'var(--lm-amber)', color: '#4a2a06', fontWeight: 800, fontSize: 12.5, borderRadius: 6, padding: '4px 12px' }}>
                 {TYPE_LABEL[part.type] || part.type}
               </span>
-              <span style={{ fontSize: 12.5, fontWeight: 700, color: '#8a5a1a' }}>{part.count} câu</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-warning)' }}>{part.count} câu</span>
 
               {/* Áp dụng nhanh cho cả nhóm — tránh chọn lặp 12 lần */}
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: '#8a5a1a' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: 'var(--color-warning)' }}>
                 ⚡ Lớp:
                 <select
                   value=""
@@ -1138,7 +1138,7 @@ export default function ExamMatrixPage() {
                     e.currentTarget.value = '';
                   }}
                   title="Áp dụng lớp này cho TẤT CẢ câu trong nhóm"
-                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: '#fff', fontSize: 11.5, fontWeight: 700 }}
+                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: 'var(--color-surface)', fontSize: 11.5, fontWeight: 700 }}
                 >
                   <option value="">—</option>
                   <option value="10">10</option>
@@ -1147,7 +1147,7 @@ export default function ExamMatrixPage() {
                 </select>
               </label>
 
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: '#8a5a1a' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: 'var(--color-warning)' }}>
                 ⚡ Mức:
                 <select
                   value=""
@@ -1158,7 +1158,7 @@ export default function ExamMatrixPage() {
                     e.currentTarget.value = '';
                   }}
                   title="Áp dụng mức độ này cho TẤT CẢ câu trong nhóm"
-                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: '#fff', fontSize: 11.5, fontWeight: 700 }}
+                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: 'var(--color-surface)', fontSize: 11.5, fontWeight: 700 }}
                 >
                   <option value="">—</option>
                   <option value="NHAN_BIET">Mức 1</option>
@@ -1167,7 +1167,7 @@ export default function ExamMatrixPage() {
                   <option value="VAN_DUNG_CAO">Mức 4</option>
                 </select>
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: '#8a5a1a', marginLeft: 'auto' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: 'var(--color-warning)', marginLeft: 'auto' }}>
                 Điểm/câu:
                 <input
                   type="number"
@@ -1177,7 +1177,7 @@ export default function ExamMatrixPage() {
                   onChange={(e) =>
                     setPartScores({ ...partScores, [part.type]: Number(e.target.value) || 0 })
                   }
-                  style={{ width: 62, padding: '4px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: '#fff', fontSize: 12 }}
+                  style={{ width: 62, padding: '4px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: 'var(--color-surface)', fontSize: 12 }}
                 />
               </label>
             </div>
@@ -1203,7 +1203,7 @@ export default function ExamMatrixPage() {
                       <select
                         value={s.type}
                         onChange={(e) => updateSlot(i, { type: e.target.value, question: null })}
-                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: '#fff7e6', fontSize: 12.5, fontWeight: 700, color: '#8a5a1a' }}
+                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: 'var(--color-paper-2)', fontSize: 12.5, fontWeight: 700, color: 'var(--color-warning)' }}
                       >
                         <option value="MCQ">Trắc nghiệm</option>
                         <option value="TRUE_FALSE">Đúng/Sai</option>
@@ -1218,7 +1218,7 @@ export default function ExamMatrixPage() {
                           updateSlot(i, { grade: e.target.value, topicId: '', topicIds: [], question: null });
                           ensureFormOptions(e.target.value);
                         }}
-                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: '#fff7e6', fontSize: 12, fontWeight: 700, color: '#8a5a1a' }}
+                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: 'var(--color-paper-2)', fontSize: 12, fontWeight: 700, color: 'var(--color-warning)' }}
                       >
                         <option value="">Lớp?</option>
                         <option value="10">Lớp 10</option>
@@ -1244,7 +1244,7 @@ export default function ExamMatrixPage() {
                       <select
                         value={s.difficulty}
                         onChange={(e) => updateSlot(i, { difficulty: e.target.value, question: null })}
-                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: '#fff7e6', fontSize: 12, fontWeight: 700, color: '#8a5a1a' }}
+                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: 'var(--color-paper-2)', fontSize: 12, fontWeight: 700, color: 'var(--color-warning)' }}
                       >
                         <option value="">Mức?</option>
                         <option value="NHAN_BIET">Mức 1 · Nhận biết</option>
@@ -1260,7 +1260,7 @@ export default function ExamMatrixPage() {
                         onFocus={() => ensureFormOptions(s.grade)}
                         placeholder="📄 Dạng bài (bỏ trống = không lọc)"
                         list={`matrix-form-list-${i}`}
-                        style={{ width: '100%', padding: '7px 10px', border: '1px dashed var(--lm-line-2)', borderRadius: 6, background: '#fff', fontSize: 13 }}
+                        style={{ width: '100%', padding: '7px 10px', border: '1px dashed var(--lm-line-2)', borderRadius: 6, background: 'var(--color-surface)', fontSize: 13 }}
                       />
                       <datalist id={`matrix-form-list-${i}`}>
                         {(s.grade ? formOptionsByGrade[s.grade] || [] : forms).map((f: any) => (
@@ -1270,7 +1270,7 @@ export default function ExamMatrixPage() {
                     </div>
                     <div style={{ padding: '6px 8px', minWidth: 0 }}>
                       {s.question?.content ? (
-                        <div style={{ border: '1px solid var(--lm-line)', borderRadius: 6, padding: '6px 8px', fontSize: 12.5, background: '#fff', display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <div style={{ border: '1px solid var(--lm-line)', borderRadius: 6, padding: '6px 8px', fontSize: 12.5, background: 'var(--color-surface)', display: 'flex', gap: 8, alignItems: 'center' }}>
                           <div style={{ flex: 1, minWidth: 0, maxHeight: 40, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             <LatexRenderer content={s.question.content} />
                           </div>
@@ -1572,7 +1572,7 @@ export default function ExamMatrixPage() {
                     loadPicker(pickerFor);
                   }}
                   placeholder="🔍 Tìm kiếm..."
-                  style={{ flex: 2, minWidth: 160, padding: 8, border: '1.5px solid var(--lm-line-2)', borderRadius: 6, fontSize: 13, background: '#fff' }}
+                  style={{ flex: 2, minWidth: 160, padding: 8, border: '1.5px solid var(--lm-line-2)', borderRadius: 6, fontSize: 13, background: 'var(--color-surface)' }}
                 />
                 <select
                   value={pickerFilters.difficulty}
@@ -1580,7 +1580,7 @@ export default function ExamMatrixPage() {
                     setPickerFilters({ ...pickerFilters, difficulty: e.target.value });
                     loadPicker(pickerFor);
                   }}
-                  style={{ padding: 8, borderRadius: 6, border: '1.5px solid var(--lm-line-2)', fontSize: 12.5, background: '#fff' }}
+                  style={{ padding: 8, borderRadius: 6, border: '1.5px solid var(--lm-line-2)', fontSize: 12.5, background: 'var(--color-surface)' }}
                 >
                   <option value="">Mọi mức độ</option>
                   <option value="NHAN_BIET">Mức 1 · Nhận biết</option>
@@ -1594,7 +1594,7 @@ export default function ExamMatrixPage() {
                     setPickerFilters({ ...pickerFilters, form: e.target.value });
                     loadPicker(pickerFor);
                   }}
-                  style={{ padding: 8, borderRadius: 6, border: '1.5px solid var(--lm-line-2)', fontSize: 12.5, background: '#fff', maxWidth: 180 }}
+                  style={{ padding: 8, borderRadius: 6, border: '1.5px solid var(--lm-line-2)', fontSize: 12.5, background: 'var(--color-surface)', maxWidth: 180 }}
                 >
                   <option value="">Mọi dạng toán</option>
                   {forms.map((f) => (

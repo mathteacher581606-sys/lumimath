@@ -49,17 +49,17 @@ export default function RootLayout({
             __html: `if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () {}); }); }`,
           }}
         />
-        {/* Font: Lora (tiêu đề) + Be Vietnam Pro (nội dung) + Inter (UI nhỏ) + JetBrains Mono (số/công thức) */}
+        {/* Font: Lora, Be Vietnam Pro, Inter, JetBrains Mono + font tiêu đề của từng bảng màu (Space Grotesk, Lexend, Inter Tight, Nunito) */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..700;1,400..700&family=Be+Vietnam+Pro:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..700;1,400..700&family=Be+Vietnam+Pro:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&family=Lexend:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&family=Nunito:wght@500;600;700;800&display=swap"
           rel="stylesheet"
         />
         {/* Nạp theme đã lưu trước khi render để không bị giật màu */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try { var t = localStorage.getItem('lumimath-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}`,
+            __html: `try { var t = localStorage.getItem('lumimath-theme'); var m = { cobalt: 'blueprint', evergreen: 'garden', nocturne: 'chalk', maroon: 'paper' }; if (t) { t = m[t] || t; document.documentElement.setAttribute('data-theme', t); } } catch (e) {}`,
           }}
         />
       </head>

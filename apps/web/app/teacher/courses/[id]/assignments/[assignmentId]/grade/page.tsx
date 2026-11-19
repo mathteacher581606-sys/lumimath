@@ -662,7 +662,7 @@ export default function GradeAssignmentPage() {
   const histRows: any[] | null =
     history && submission?.id && history.forId === submission.id ? history.rows : null;
 
-  return (    <div className="page-container" data-theme="maroon" style={{ maxWidth: 1300 }}>
+  return (    <div className="page-container" style={{ maxWidth: 1300 }}>
       {toast && <div className="toast" style={{ position: 'fixed', top: 20, right: 20, zIndex: 60 }}>{toast}</div>}
 
       {/* Gợi ý phím tắt chấm bài */}
@@ -764,7 +764,7 @@ export default function GradeAssignmentPage() {
                       key={r.itemId}
                       style={{
                         padding: 12,
-                        background: '#fff',
+                        background: 'var(--color-surface)',
                         border: '1px solid var(--color-rule)',
                         borderRadius: 10,
                         borderLeft: r.type === 'ESSAY' ? '3px solid var(--lm-amber)' : r.correct === false ? '3px solid var(--color-danger)' : '3px solid var(--color-success)',
@@ -795,7 +795,7 @@ export default function GradeAssignmentPage() {
 
                       {r.type === 'ESSAY' ? (
                         <>
-                          <div style={{ padding: 8, background: '#faf6ee', borderRadius: 8, fontSize: 13, whiteSpace: 'pre-wrap' }}>
+                          <div style={{ padding: 8, background: 'var(--color-paper-2)', borderRadius: 8, fontSize: 13, whiteSpace: 'pre-wrap' }}>
                             {r.studentText || <span style={{ color: 'var(--color-muted)' }}>(học sinh không gõ chữ)</span>}
                           </div>
                           {r.images?.length > 0 && (
@@ -1202,7 +1202,7 @@ export default function GradeAssignmentPage() {
               );
             })()}
             {submission?.content && (
-              <div style={{ marginTop: 10, padding: 10, background: '#faf6ee', borderRadius: 8, fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+              <div style={{ marginTop: 10, padding: 10, background: 'var(--color-paper-2)', borderRadius: 8, fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
                 {submission.content}
               </div>
             )}
@@ -1242,7 +1242,7 @@ export default function GradeAssignmentPage() {
                             border: '1px solid var(--color-rule)',
                             borderRadius: 10,
                             padding: 10,
-                            background: '#fff',
+                            background: 'var(--color-surface)',
                           }}
                         >
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
@@ -1255,7 +1255,7 @@ export default function GradeAssignmentPage() {
                             </span>
                           </div>
                           {h.content && (
-                            <div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', background: '#faf6ee', borderRadius: 6, padding: 8, marginBottom: 6 }}>
+                            <div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', background: 'var(--color-paper-2)', borderRadius: 6, padding: 8, marginBottom: 6 }}>
                               {h.content}
                             </div>
                           )}
@@ -1309,8 +1309,8 @@ export default function GradeAssignmentPage() {
           {submission && (
             <>
               {examReview ? (
-                <div style={{ padding: 12, borderRadius: 10, background: '#fdf6e8', marginBottom: 12 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: '#8a5a1a', marginBottom: 6 }}>
+                <div style={{ padding: 12, borderRadius: 10, background: 'var(--color-paper-2)', marginBottom: 12 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--color-warning)', marginBottom: 6 }}>
                     📊 Điểm đề thi ({examReview.totalScore}đ)
                   </div>
                   <div style={{ fontSize: 13, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1489,7 +1489,7 @@ export default function GradeAssignmentPage() {
                 </div>
                 {/* Gợi ý nhận xét khi đang gõ */}
                 {suggestionList.length > 0 && (
-                  <div style={{ marginBottom: 6, border: '1px solid var(--color-rule)', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                  <div style={{ marginBottom: 6, border: '1px solid var(--color-rule)', borderRadius: 8, overflow: 'hidden', background: 'var(--color-surface)' }}>
                     {suggestionList.map((t) => (
                       <button
                         key={t.id}
@@ -1502,7 +1502,7 @@ export default function GradeAssignmentPage() {
                           padding: '7px 12px',
                           border: 'none',
                           borderBottom: '1px solid #f1f5f9',
-                          background: '#fff',
+                          background: 'var(--color-surface)',
                           cursor: 'pointer',
                           fontSize: 12.5,
                         }}
@@ -1514,7 +1514,7 @@ export default function GradeAssignmentPage() {
                 )}
                 {/* Quản lý ngân hàng nhận xét */}
                 {tplOpen && (
-                  <div style={{ marginBottom: 8, padding: 10, border: '1px dashed var(--color-rule)', borderRadius: 8, background: '#fdf8ef' }}>
+                  <div style={{ marginBottom: 8, padding: 10, border: '1px dashed var(--color-rule)', borderRadius: 8, background: 'var(--color-paper-2)' }}>
                     <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
                       <input
                         value={tplNew}
@@ -1568,15 +1568,15 @@ export default function GradeAssignmentPage() {
                     borderRadius: 8,
                     border: '1px solid var(--color-rule)',
                     fontSize: 13.5,
-                    background: '#fff',
+                    background: 'var(--color-surface)',
                     lineHeight: 1.6,
                   }}
                 />
               </div>
 
               {submission.aiScore != null && (
-                <div style={{ padding: 10, borderRadius: 8, background: '#fdf1dc', fontSize: 12.5, marginBottom: 12 }}>
-                  <div style={{ fontWeight: 800, color: '#8a5a1a', marginBottom: 4 }}>🤖 AI chấm thô: {submission.aiScore}đ</div>
+                <div style={{ padding: 10, borderRadius: 8, background: 'var(--color-paper-2)', fontSize: 12.5, marginBottom: 12 }}>
+                  <div style={{ fontWeight: 800, color: 'var(--color-warning)', marginBottom: 4 }}>🤖 AI chấm thô: {submission.aiScore}đ</div>
                   {submission.aiFeedback && (
                     <div style={{ color: '#7a5a1a', whiteSpace: 'pre-wrap' }}>{String(submission.aiFeedback).slice(0, 300)}</div>
                   )}
@@ -1664,13 +1664,13 @@ export default function GradeAssignmentPage() {
             <span style={{ flex: 1 }} />
             <button
               onClick={() => setUseTldraw(true)}
-              style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: '#fff', cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}
+              style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--color-surface)', cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}
               title="Chuyển sang bảng vẽ tldraw (nhiều công cụ hơn)"
             >
               🎨 Bảng vẽ pro
             </button>
-            <button onClick={annoUndo} style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: '#fff', cursor: 'pointer', fontSize: 14 }}>↶</button>
-            <button onClick={annoRedoFn} style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: '#fff', cursor: 'pointer', fontSize: 14 }}>↷</button>
+            <button onClick={annoUndo} style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--color-surface)', cursor: 'pointer', fontSize: 14 }}>↶</button>
+            <button onClick={annoRedoFn} style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--color-surface)', cursor: 'pointer', fontSize: 14 }}>↷</button>
             <button
               onClick={() => {
                 if (confirm('Xóa hết nét vẽ trên ảnh này?')) {
@@ -1679,7 +1679,7 @@ export default function GradeAssignmentPage() {
                   setTimeout(annoRedraw, 20);
                 }
               }}
-              style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: '#fecaca', cursor: 'pointer', fontSize: 13 }}
+              style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--color-danger-wash)', cursor: 'pointer', fontSize: 13 }}
             >
               🗑 Xóa nét
             </button>

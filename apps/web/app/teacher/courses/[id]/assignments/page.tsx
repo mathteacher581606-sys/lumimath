@@ -32,7 +32,7 @@ function ClassDeadlineEditor({
   const removeRow = (i: number) => onChange(rows.filter((_, j) => j !== i));
 
   return (
-    <div className="card" style={{ padding: 14, marginBottom: 14, background: '#fdf6e8', border: '1px solid var(--color-rule)' }}>
+    <div className="card" style={{ padding: 14, marginBottom: 14, background: 'var(--color-paper-2)', border: '1px solid var(--color-rule)' }}>
       <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 8 }}>
         🕐 Hạn nộp riêng theo lớp{' '}
         <span style={{ fontWeight: 400, color: 'var(--color-muted)', fontSize: 12 }}>
@@ -594,7 +594,7 @@ export default function CourseAssignments() {
   };
 
   return (
-    <div className="page-container" data-theme="maroon" style={{ maxWidth: 1100 }}>
+    <div className="page-container" style={{ maxWidth: 1100 }}>
       {toast && <div className="toast" style={{ position: 'fixed', top: 20, right: 20, zIndex: 60 }}>{toast}</div>}
       <div className="lm-band">
         <div style={{ flex: 1, minWidth: 220 }}>
@@ -694,7 +694,7 @@ export default function CourseAssignments() {
                 {kind === 'EXAM' && (
                   <div className="form-group">
                     <label>Chọn đề thi — giao diện Kho đề thi (duyệt thư mục → chọn đề)</label>
-                    <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 10, border: '1px solid var(--color-rule)', borderRadius: 10, padding: 10, background: '#fff' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 10, border: '1px solid var(--color-rule)', borderRadius: 10, padding: 10, background: 'var(--color-surface)' }}>
                       {/* Cây thư mục đề thi */}
                       <div style={{ borderRight: '1px solid var(--color-rule)', paddingRight: 8, maxHeight: 320, overflowY: 'auto' }}>
                         <button
@@ -764,7 +764,7 @@ export default function CourseAssignments() {
                     </div>
 
                     {tuluanMode === 'bank' ? (
-                      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 10, border: '1px solid var(--color-rule)', borderRadius: 10, padding: 10, background: '#fff' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 10, border: '1px solid var(--color-rule)', borderRadius: 10, padding: 10, background: 'var(--color-surface)' }}>
                         <div style={{ borderRight: '1px solid var(--color-rule)', paddingRight: 8, maxHeight: 320, overflowY: 'auto' }}>
                           <button
                             type="button"
@@ -897,8 +897,8 @@ export default function CourseAssignments() {
                   />
                 )}
 
-                <div className="card" style={{ padding: 14, marginBottom: 14, background: '#fdf6e8' }}>
-                  <div style={{ fontWeight: 800, fontSize: 13.5, color: '#8a5a1a', marginBottom: 10 }}>🔐 Cài đặt đáp án & kết quả</div>
+                <div className="card" style={{ padding: 14, marginBottom: 14, background: 'var(--color-paper-2)' }}>
+                  <div style={{ fontWeight: 800, fontSize: 13.5, color: 'var(--color-warning)', marginBottom: 10 }}>🔐 Cài đặt đáp án & kết quả</div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     <div className="form-group">
                       <label>Điểm tối thiểu đạt để xem đáp án</label>
@@ -1084,7 +1084,7 @@ export default function CourseAssignments() {
                     <p><strong>Bảng xếp hạng:</strong> {detail.showLeaderboard ? '🏆 Hiện' : 'Ẩn'}</p>
                     <p><strong>Nộp lại:</strong> {detail.allowResubmit ? 'Cho phép' : 'Không'}</p>
                     {detail.description && (
-                      <div style={{ marginTop: 8, background: '#faf6ee', padding: 10, borderRadius: 8, whiteSpace: 'pre-wrap' }}>
+                      <div style={{ marginTop: 8, background: 'var(--color-paper-2)', padding: 10, borderRadius: 8, whiteSpace: 'pre-wrap' }}>
                         {detail.description}
                       </div>
                     )}
@@ -1104,7 +1104,7 @@ export default function CourseAssignments() {
                       {(detail.students || []).map((s: any) => {
                         const sub = detail.submissions.find((x: any) => x.studentId === s.id);
                         return (
-                          <div key={s.id} style={{ padding: 10, borderRadius: 10, border: '1px solid var(--color-rule)', background: '#fff' }}>
+                          <div key={s.id} style={{ padding: 10, borderRadius: 10, border: '1px solid var(--color-rule)', background: 'var(--color-surface)' }}>
                             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                               <div style={{ width: 34, height: 34, borderRadius: 17, background: 'var(--lm-maroon)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 13, flexShrink: 0 }}>
                                 {(s.fullName || '?')[0]}

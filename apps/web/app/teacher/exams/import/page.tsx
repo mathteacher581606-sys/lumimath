@@ -355,7 +355,7 @@ export default function ImportExamPage() {
                         )}
                       </div>
                       {q.duplicateOf && (
-                        <div style={{ fontSize: 12.5, marginBottom: 8, border: '1px dashed color-mix(in oklch, var(--color-danger) 45%, transparent)', borderRadius: 6, padding: 8, background: '#fff' }}>
+                        <div style={{ fontSize: 12.5, marginBottom: 8, border: '1px dashed color-mix(in oklch, var(--color-danger) 45%, transparent)', borderRadius: 6, padding: 8, background: 'var(--color-surface)' }}>
                           <div style={{ fontWeight: 800, color: 'var(--color-danger)', marginBottom: 4 }}>
                             📄 Câu đã có trong kho (để so sánh):
                           </div>
