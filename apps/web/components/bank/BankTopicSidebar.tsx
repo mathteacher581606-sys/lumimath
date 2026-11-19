@@ -16,9 +16,10 @@ export function prettyTopic(name: string): string {
   if (letters.length < 4 || upper.length / letters.length < 0.7) return s;
   let out = s.toLocaleLowerCase('vi');
   // Viết hoa chữ đầu câu và sau dấu chấm / hai chấm
-  out = out.replace(/(^|[.:!?]\s+)(\p{L})/gu, (_m, p, c) => p + c.toLocaleUpperCase('vi'));
+  // (không dùng cờ /u — dự án biên dịch về ES5)
+  out = out.replace(/(^|[.:!?]\s+)(\S)/g, (_m, p, c) => p + c.toLocaleUpperCase('vi'));
   // Giữ số La Mã sau "Chương/Phần" và các ký hiệu Oxyz
-  out = out.replace(/(chương|phần)\s+([ivxlc]+)\b/giu, (_m, w, r) => `${w[0].toUpperCase()}${w.slice(1)} ${r.toUpperCase()}`);
+  out = out.replace(/(chương|phần)\s+([ivxlc]+)(?![a-zà-ỹ])/gi, (_m, w, r) => `${w[0].toUpperCase()}${w.slice(1)} ${r.toUpperCase()}`);
   out = out.replace(/\boxyz\b/g, 'Oxyz').replace(/\boxy\b/g, 'Oxy');
   return out;
 }
