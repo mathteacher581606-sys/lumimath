@@ -643,9 +643,9 @@ export default function ExamLibraryPage() {
               <div className="q-card-head">
                 <span className="q-no">📄 {ex.title}</span>
                 {ex.status === 'PUBLISHED' ? (
-                  <span className="q-type-badge" style={{ background: '#79c07c', color: '#123a18' }}>Công khai</span>
+                  <span className="q-type-badge" style={{ background: 'var(--color-success)', color: 'var(--color-success-ink)' }}>Công khai</span>
                 ) : (
-                  <span className="q-type-badge" style={{ background: '#cfc4ae', color: '#4a4232' }}>Bản nháp</span>
+                  <span className="q-type-badge" style={{ background: 'var(--color-track)', color: 'var(--color-muted)' }}>Bản nháp</span>
                 )}
                 {ex.isTemplate && <span className="q-type-badge">📋 Template</span>}
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>

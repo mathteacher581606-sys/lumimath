@@ -33,7 +33,7 @@ export class AnnouncementsController {
     @CurrentUser() user: any,
     @Body() body: any,
   ) {
-    return this.announcements.create(courseId, user.id, body);
+    return this.announcements.create(courseId, user.id, body, user.role);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -45,7 +45,7 @@ export class AnnouncementsController {
     @CurrentUser() user: any,
     @Body() body: any,
   ) {
-    return this.announcements.update(courseId, id, user.id, body);
+    return this.announcements.update(courseId, id, user.id, body, user.role);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -56,7 +56,7 @@ export class AnnouncementsController {
     @Param('id') id: string,
     @CurrentUser() user: any,
   ) {
-    return this.announcements.remove(courseId, id, user.id);
+    return this.announcements.remove(courseId, id, user.id, user.role);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -1,3 +1,5 @@
+import { apiFetch, updateStoredUser } from './api';
+
 export interface ThemeDef {
   id: string;
   letter: string;
@@ -95,7 +97,8 @@ export function getTheme(): string {
   }
 }
 
-export function setTheme(id: string) {
+/** Đổi bảng màu. `sync` = lưu cả vào tài khoản (mặc định có) để máy khác dùng chung. */
+export function setTheme(id: string, sync = true) {
   const t = normalizeTheme(id);
   try {
     localStorage.setItem('lumimath-theme', t);
@@ -104,4 +107,15 @@ export function setTheme(id: string) {
   const meta = document.querySelector('meta[name="theme-color"]');
   const def = THEMES.find((x) => x.id === t);
   if (meta && def) meta.setAttribute('content', def.paper);
+  if (sync) syncThemeToAccount(t);
+}
+
+// Ghi bảng màu vào tài khoản (1 chuỗi ngắn ~10 byte, chạy nền, lỗi thì bỏ qua)
+function syncThemeToAccount(theme: string) {
+  try {
+    if (!localStorage.getItem('token')) return;
+    apiFetch('/auth/profile', { method: 'PATCH', body: JSON.stringify({ theme }) })
+      .then(() => updateStoredUser({ theme }))
+      .catch(() => {});
+  } catch {}
 }

@@ -551,7 +551,7 @@ export default function CourseAssignments() {
             paddingLeft: 8 + depth * 16,
             borderRadius: 6,
             border: 'none',
-            background: examFolderId === f.id ? '#fff3d6' : 'transparent',
+            background: examFolderId === f.id ? 'var(--color-track)' : 'transparent',
             cursor: 'pointer',
             fontSize: 13,
             fontWeight: examFolderId === f.id ? 800 : 500,
@@ -579,7 +579,7 @@ export default function CourseAssignments() {
             paddingLeft: 8 + depth * 16,
             borderRadius: 6,
             border: 'none',
-            background: topicId === t.id ? '#fff3d6' : 'transparent',
+            background: topicId === t.id ? 'var(--color-track)' : 'transparent',
             cursor: 'pointer',
             fontSize: 13,
             fontWeight: topicId === t.id ? 800 : 500,
@@ -703,7 +703,7 @@ export default function CourseAssignments() {
                           style={{
                             display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px',
                             borderRadius: 6, border: 'none',
-                            background: examFolderId === '' ? '#fff3d6' : 'transparent',
+                            background: examFolderId === '' ? 'var(--color-track)' : 'transparent',
                             cursor: 'pointer', fontSize: 13,
                             fontWeight: examFolderId === '' ? 800 : 500,
                             color: examFolderId === '' ? 'var(--lm-maroon)' : 'inherit',
@@ -728,7 +728,7 @@ export default function CourseAssignments() {
                                 padding: 10,
                                 borderRadius: 8,
                                 border: form.examId === ex.id ? '2px solid var(--lm-amber)' : '1px solid var(--color-rule)',
-                                background: form.examId === ex.id ? '#fff7e0' : '#fff',
+                                background: form.examId === ex.id ? 'var(--color-track)' : 'var(--color-surface)',
                                 cursor: 'pointer',
                                 fontSize: 12.5,
                               }}
@@ -772,7 +772,7 @@ export default function CourseAssignments() {
                             style={{
                               display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px',
                               borderRadius: 6, border: 'none',
-                              background: topicId === '' ? '#fff3d6' : 'transparent',
+                              background: topicId === '' ? 'var(--color-track)' : 'transparent',
                               cursor: 'pointer', fontSize: 13,
                               fontWeight: topicId === '' ? 800 : 500,
                               color: topicId === '' ? 'var(--lm-maroon)' : 'inherit',
@@ -794,7 +794,7 @@ export default function CourseAssignments() {
                                 style={{
                                   display: 'flex', gap: 8, alignItems: 'flex-start', padding: 8, borderRadius: 8,
                                   border: form.questionIds.includes(q.id) ? '1.5px solid var(--lm-amber)' : '1px solid var(--color-rule)',
-                                  background: form.questionIds.includes(q.id) ? '#fff7e0' : '#fff', cursor: 'pointer', fontSize: 13,
+                                  background: form.questionIds.includes(q.id) ? 'var(--color-track)' : 'var(--color-surface)', cursor: 'pointer', fontSize: 13,
                                 }}
                               >
                                 <input

@@ -220,6 +220,8 @@ export class AuthService {
         workplace: user.workplace,
         xp: user.xp,
         level: user.level,
+        avatarUrl: user.avatarUrl,
+        theme: user.theme ?? null,
       },
     };
   }

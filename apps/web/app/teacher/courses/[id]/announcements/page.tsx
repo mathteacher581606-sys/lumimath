@@ -289,7 +289,7 @@ export default function CourseAnnouncements() {
                       <div key={i} style={{ marginBottom: 6 }}>
                         <button
                           className="lm-filter-btn"
-                          style={{ width: 'auto', fontSize: 12.5, border: a.myVote === i ? '1.5px solid var(--lm-amber)' : undefined, background: a.myVote === i ? '#fff3d6' : undefined }}
+                          style={{ width: 'auto', fontSize: 12.5, border: a.myVote === i ? '1.5px solid var(--lm-amber)' : undefined, background: a.myVote === i ? 'var(--color-track)' : undefined }}
                           onClick={async () => {
                             await apiFetch(`/courses/${courseId}/announcements/${a.id}/vote`, {
                               method: 'POST',
@@ -300,7 +300,7 @@ export default function CourseAnnouncements() {
                         >
                           {a.myVote === i ? '✓ ' : ''}{opt} — {count} phiếu
                         </button>
-                        <div style={{ height: 6, background: '#f3e2bd', borderRadius: 3, marginTop: 4 }}>
+                        <div style={{ height: 6, background: 'var(--color-track)', borderRadius: 3, marginTop: 4 }}>
                           <div style={{ width: `${pct}%`, height: '100%', background: 'var(--lm-amber)', borderRadius: 3 }} />
                         </div>
                       </div>
@@ -315,7 +315,7 @@ export default function CourseAnnouncements() {
                   <button
                     key={em}
                     className="lm-filter-btn"
-                    style={{ padding: '3px 10px', fontSize: 14, background: a.myReaction === em ? '#fff3d6' : undefined }}
+                    style={{ padding: '3px 10px', fontSize: 14, background: a.myReaction === em ? 'var(--color-track)' : undefined }}
                     onClick={() => react(a.id, em)}
                   >
                     {em} {(a.reactionCounts || {})[em] || 0}

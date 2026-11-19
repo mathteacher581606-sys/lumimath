@@ -11,5 +11,12 @@
 - [ ] Build web + API trên VPS, `prisma db push`, smoke test (chưa chạy: môi trường soạn code không có mạng để cài dependency)
 
 ## Đợt 2
-- [ ] Trang giáo viên: thay ~400 mã màu cố định còn lại bằng token (ưu tiên matrix, grade, bank, teacher home)
-- [ ] Trang chủ giáo viên theo cùng ngôn ngữ thiết kế
+- [x] Bảng màu lưu theo tài khoản: cột `User.theme`, `PATCH /auth/profile {theme}`, đồng bộ khi đăng nhập
+- [x] `apps/api/src/announcements/*` — chỉ chủ khóa/trợ giảng quản lý; bài phải thuộc đúng khóa; bắt lỗi `notifyAll`; giới hạn độ dài; đếm bình luận đúng
+- [x] `GET /teacher/grading-summary` (`grading-summary.controller.ts`) + trang chủ giáo viên có khối "N bài đang chờ chấm"
+- [x] Đổi thêm ~100 mã màu cố định trong trang sang token (còn lại: bảng vẽ/chú thích ảnh cố ý dùng nền tối/trắng)
+- [x] Phòng thi `student/exams/[id]/take`: đồng hồ theo giờ thật + trừ thời gian khi làm tiếp; tự nộp không mất bài tự luận;
+      tự lưu cả chữ tự luận; luyện tập không bị cảnh báo chuyển tab; Đúng/Sai chấm đúng lựa chọn mới;
+      cảnh báo trong trang thay `alert`; hộp xác nhận nộp bài (liệt kê câu chưa làm); bảng câu dạng cột phải / ngăn kéo trên điện thoại
+- [x] `student/exams` — nội quy trước khi thi, "Làm tiếp bài dở", đếm lượt theo bài đã nộp (`listAvailableForStudent`)
+- [ ] Build + smoke test trên VPS

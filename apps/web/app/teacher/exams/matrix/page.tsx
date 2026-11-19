@@ -155,8 +155,8 @@ function TopicMultiPicker({
           width: '100%',
           padding: '7px 6px',
           borderRadius: 6,
-          border: '1.5px solid #e8c585',
-          background: value.length ? '#fff3d6' : '#fff7e6',
+          border: '1.5px solid var(--color-rule-2)',
+          background: value.length ? 'var(--color-track)' : 'var(--color-paper-2)',
           fontSize: 12,
           fontWeight: 700,
           color: 'var(--color-warning)',
@@ -187,7 +187,7 @@ function TopicMultiPicker({
             maxHeight: 320,
             overflowY: 'auto',
             background: 'var(--color-surface)',
-            border: '1px solid var(--lm-line-2, #ddd)',
+            border: '1px solid var(--lm-line-2, var(--color-rule-2))',
             borderRadius: 8,
             boxShadow: '0 8px 24px rgba(0,0,0,.18)',
           }}
@@ -201,20 +201,20 @@ function TopicMultiPicker({
               justifyContent: 'space-between',
               alignItems: 'center',
               padding: '7px 10px',
-              borderBottom: '1px solid #eee',
+              borderBottom: '1px solid var(--color-rule-2)',
             }}
           >
             <b style={{ fontSize: 12 }}>Chọn chủ đề ({value.length})</b>
             <button
               type="button"
               onClick={() => onChange([])}
-              style={{ fontSize: 11.5, color: '#b91c1c', background: 'none', border: 'none', cursor: 'pointer' }}
+              style={{ fontSize: 11.5, color: 'var(--color-danger)', background: 'none', border: 'none', cursor: 'pointer' }}
             >
               Bỏ chọn
             </button>
           </div>
           {options.length === 0 ? (
-            <div style={{ padding: 10, fontSize: 12, color: '#888' }}>Chưa có chủ đề.</div>
+            <div style={{ padding: 10, fontSize: 12, color: 'var(--color-muted)' }}>Chưa có chủ đề.</div>
           ) : (
             options.map((t) =>
               t.header ? (
@@ -968,7 +968,7 @@ export default function ExamMatrixPage() {
           <button
             type="button"
             className="toolbar-btn"
-            style={{ background: 'var(--lm-amber)', borderColor: 'var(--lm-amber)', color: '#5c3404', fontWeight: 800 }}
+            style={{ background: 'var(--lm-amber)', borderColor: 'var(--lm-amber)', color: 'var(--color-warning)', fontWeight: 800 }}
             onClick={openQuick}
             title="Tạo nhanh đề theo dạng bài: tick dạng + số câu, hoặc tổng ôn cả chương"
           >
@@ -1121,7 +1121,7 @@ export default function ExamMatrixPage() {
         {parts.map((part, pi) => (
           <div key={pi}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', background: 'var(--color-paper-2)', borderTop: '1px solid var(--lm-line)', borderBottom: '1px solid #f0dcb4', flexWrap: 'wrap' }}>
-              <span style={{ background: 'var(--lm-amber)', color: '#4a2a06', fontWeight: 800, fontSize: 12.5, borderRadius: 6, padding: '4px 12px' }}>
+              <span style={{ background: 'var(--lm-amber)', color: 'var(--color-warning)', fontWeight: 800, fontSize: 12.5, borderRadius: 6, padding: '4px 12px' }}>
                 {TYPE_LABEL[part.type] || part.type}
               </span>
               <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--color-warning)' }}>{part.count} câu</span>
@@ -1138,7 +1138,7 @@ export default function ExamMatrixPage() {
                     e.currentTarget.value = '';
                   }}
                   title="Áp dụng lớp này cho TẤT CẢ câu trong nhóm"
-                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: 'var(--color-surface)', fontSize: 11.5, fontWeight: 700 }}
+                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid var(--color-rule-2)', background: 'var(--color-surface)', fontSize: 11.5, fontWeight: 700 }}
                 >
                   <option value="">—</option>
                   <option value="10">10</option>
@@ -1158,7 +1158,7 @@ export default function ExamMatrixPage() {
                     e.currentTarget.value = '';
                   }}
                   title="Áp dụng mức độ này cho TẤT CẢ câu trong nhóm"
-                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: 'var(--color-surface)', fontSize: 11.5, fontWeight: 700 }}
+                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid var(--color-rule-2)', background: 'var(--color-surface)', fontSize: 11.5, fontWeight: 700 }}
                 >
                   <option value="">—</option>
                   <option value="NHAN_BIET">Mức 1</option>
@@ -1177,7 +1177,7 @@ export default function ExamMatrixPage() {
                   onChange={(e) =>
                     setPartScores({ ...partScores, [part.type]: Number(e.target.value) || 0 })
                   }
-                  style={{ width: 62, padding: '4px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: 'var(--color-surface)', fontSize: 12 }}
+                  style={{ width: 62, padding: '4px 6px', borderRadius: 5, border: '1px solid var(--color-rule-2)', background: 'var(--color-surface)', fontSize: 12 }}
                 />
               </label>
             </div>
@@ -1195,7 +1195,7 @@ export default function ExamMatrixPage() {
                       gridTemplateColumns: '44px 118px 96px 160px 140px 1.25fr 1.45fr 46px',
                       alignItems: 'center',
                       borderBottom: '1px solid var(--lm-line)',
-                      background: i % 2 ? '#fffdf7' : '#fff',
+                      background: i % 2 ? 'var(--color-paper-2)' : 'var(--color-surface)',
                     }}
                   >
                     <div style={{ padding: '8px 12px', fontWeight: 800, fontSize: 13 }}>{i + 1}</div>
@@ -1203,7 +1203,7 @@ export default function ExamMatrixPage() {
                       <select
                         value={s.type}
                         onChange={(e) => updateSlot(i, { type: e.target.value, question: null })}
-                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: 'var(--color-paper-2)', fontSize: 12.5, fontWeight: 700, color: 'var(--color-warning)' }}
+                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid var(--color-rule-2)', background: 'var(--color-paper-2)', fontSize: 12.5, fontWeight: 700, color: 'var(--color-warning)' }}
                       >
                         <option value="MCQ">Trắc nghiệm</option>
                         <option value="TRUE_FALSE">Đúng/Sai</option>
@@ -1218,7 +1218,7 @@ export default function ExamMatrixPage() {
                           updateSlot(i, { grade: e.target.value, topicId: '', topicIds: [], question: null });
                           ensureFormOptions(e.target.value);
                         }}
-                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: 'var(--color-paper-2)', fontSize: 12, fontWeight: 700, color: 'var(--color-warning)' }}
+                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid var(--color-rule-2)', background: 'var(--color-paper-2)', fontSize: 12, fontWeight: 700, color: 'var(--color-warning)' }}
                       >
                         <option value="">Lớp?</option>
                         <option value="10">Lớp 10</option>
@@ -1244,7 +1244,7 @@ export default function ExamMatrixPage() {
                       <select
                         value={s.difficulty}
                         onChange={(e) => updateSlot(i, { difficulty: e.target.value, question: null })}
-                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: 'var(--color-paper-2)', fontSize: 12, fontWeight: 700, color: 'var(--color-warning)' }}
+                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid var(--color-rule-2)', background: 'var(--color-paper-2)', fontSize: 12, fontWeight: 700, color: 'var(--color-warning)' }}
                       >
                         <option value="">Mức?</option>
                         <option value="NHAN_BIET">Mức 1 · Nhận biết</option>
@@ -1325,8 +1325,8 @@ export default function ExamMatrixPage() {
                           border: 'none',
                           cursor: 'pointer',
                           fontSize: 14,
-                          background: s.locked ? 'var(--lm-maroon)' : '#efe6d5',
-                          color: s.locked ? '#fff' : '#a39375',
+                          background: s.locked ? 'var(--lm-maroon)' : 'var(--color-track)',
+                          color: s.locked ? '#fff' : 'var(--color-muted)',
                         }}
                       >
                         ✓
@@ -1499,7 +1499,7 @@ export default function ExamMatrixPage() {
         <button
           type="button"
           className="toolbar-btn"
-          style={{ background: 'var(--lm-amber)', borderColor: 'var(--lm-amber)', color: '#5c3404', fontWeight: 800 }}
+          style={{ background: 'var(--lm-amber)', borderColor: 'var(--lm-amber)', color: 'var(--color-warning)', fontWeight: 800 }}
           disabled={busy}
           onClick={() => fillFromBank(mode === 'random')}
           title="Tạo đề ngẫu nhiên theo ma trận — dạng bài/lớp/chủ đề để trống thì không lọc theo tiêu chí đó"
@@ -1538,7 +1538,7 @@ export default function ExamMatrixPage() {
             onClick={createExam}
             style={{
               background: 'linear-gradient(135deg, #b91c1c, #7b1113)',
-              borderColor: '#7b1113',
+              borderColor: 'var(--color-accent)',
               color: '#fff',
               fontWeight: 800,
               padding: '10px 20px',
@@ -1793,7 +1793,7 @@ export default function ExamMatrixPage() {
                             gap: 8,
                             padding: '7px 10px',
                             borderBottom: '1px solid var(--lm-line)',
-                            background: sel.on ? '#fdf1dc' : '#fff',
+                            background: sel.on ? 'var(--color-track)' : 'var(--color-surface)',
                           }}
                         >
                           <input
@@ -1824,7 +1824,7 @@ export default function ExamMatrixPage() {
                                 [f.name]: { on: true, count: Math.max(1, Number(e.target.value) || 1) },
                               }))
                             }
-                            style={{ width: 64, padding: '5px 6px', borderRadius: 6, border: '1px solid #e0c48c', fontSize: 13 }}
+                            style={{ width: 64, padding: '5px 6px', borderRadius: 6, border: '1px solid var(--color-rule-2)', fontSize: 13 }}
                           />
                         </div>
                       );
@@ -1842,7 +1842,7 @@ export default function ExamMatrixPage() {
                     <button
                       type="button"
                       className="toolbar-btn"
-                      style={{ background: 'var(--lm-amber)', borderColor: 'var(--lm-amber)', color: '#5c3404', flex: 1, justifyContent: 'center', fontWeight: 800 }}
+                      style={{ background: 'var(--lm-amber)', borderColor: 'var(--lm-amber)', color: 'var(--color-warning)', flex: 1, justifyContent: 'center', fontWeight: 800 }}
                       onClick={() => buildQuick(true)}
                       disabled={!quickTopicId && !quickGrade}
                       title="Tổng ôn: tự lấy mỗi dạng bài 2 câu, mức độ phân bố 70/30"

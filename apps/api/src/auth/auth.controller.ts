@@ -83,6 +83,7 @@ export class AuthController {
     level: true,
     streakDays: true,
     emailNotify: true,
+    theme: true,
   } as const;
 
   // Lấy hồ sơ đầy đủ của chính mình
@@ -156,6 +157,13 @@ export class AuthController {
         }
         data.birthDate = d;
       }
+    }
+    if (b.theme !== undefined) {
+      const THEMES = ['paper', 'chalk', 'garden', 'blueprint', 'notebook'];
+      if (b.theme !== null && !THEMES.includes(String(b.theme))) {
+        throw new BadRequestException('Bảng màu không hợp lệ');
+      }
+      data.theme = b.theme;
     }
     if (b.avatarUrl !== undefined) {
       const v = text(b.avatarUrl, 500, 'Ảnh đại diện');

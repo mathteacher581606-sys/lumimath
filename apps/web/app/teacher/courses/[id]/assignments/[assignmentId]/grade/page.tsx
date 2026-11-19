@@ -992,7 +992,7 @@ export default function GradeAssignmentPage() {
                           {r.type === 'TRUE_FALSE' && Array.isArray(r.options) && r.options.length > 0 && (
                             <table style={{ width: '100%', borderCollapse: 'collapse', margin: '4px 0 8px', fontSize: 12.5 }}>
                               <thead>
-                                <tr style={{ background: '#f1f5f9' }}>
+                                <tr style={{ background: 'var(--color-track)' }}>
                                   <th style={{ padding: '6px 8px', textAlign: 'left' }}>Mệnh đề</th>
                                   <th style={{ padding: '6px 8px', width: 72 }}>HS chọn</th>
                                   <th style={{ padding: '6px 8px', width: 72 }}>Đáp án</th>
@@ -1008,7 +1008,7 @@ export default function GradeAssignmentPage() {
                                     <tr
                                       key={opt.id}
                                       style={{
-                                        borderTop: '1px solid #e2e8f0',
+                                        borderTop: '1px solid var(--color-rule-2)',
                                         background: ok
                                           ? 'color-mix(in oklch, var(--color-success) 8%, transparent)'
                                           : picked !== undefined
@@ -1196,7 +1196,7 @@ export default function GradeAssignmentPage() {
                 );
               }
               return (
-                <div style={{ padding: 20, color: '#999', textAlign: 'center' }}>
+                <div style={{ padding: 20, color: 'var(--color-muted)', textAlign: 'center' }}>
                   Bài nộp không có ảnh hoặc PDF.
                 </div>
               );
@@ -1501,7 +1501,7 @@ export default function GradeAssignmentPage() {
                           textAlign: 'left',
                           padding: '7px 12px',
                           border: 'none',
-                          borderBottom: '1px solid #f1f5f9',
+                          borderBottom: '1px solid var(--color-rule)',
                           background: 'var(--color-surface)',
                           cursor: 'pointer',
                           fontSize: 12.5,
@@ -1539,7 +1539,7 @@ export default function GradeAssignmentPage() {
                         </p>
                       ) : (
                         templates.map((t) => (
-                          <div key={t.id} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #f1f5f9' }}>
+                          <div key={t.id} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '4px 0', borderBottom: '1px solid var(--color-rule)' }}>
                             <button
                               type="button"
                               onClick={() => insertTemplate(t.text)}
@@ -1578,7 +1578,7 @@ export default function GradeAssignmentPage() {
                 <div style={{ padding: 10, borderRadius: 8, background: 'var(--color-paper-2)', fontSize: 12.5, marginBottom: 12 }}>
                   <div style={{ fontWeight: 800, color: 'var(--color-warning)', marginBottom: 4 }}>🤖 AI chấm thô: {submission.aiScore}đ</div>
                   {submission.aiFeedback && (
-                    <div style={{ color: '#7a5a1a', whiteSpace: 'pre-wrap' }}>{String(submission.aiFeedback).slice(0, 300)}</div>
+                    <div style={{ color: 'var(--color-warning)', whiteSpace: 'pre-wrap' }}>{String(submission.aiFeedback).slice(0, 300)}</div>
                   )}
                 </div>
               )}
@@ -1595,7 +1595,7 @@ export default function GradeAssignmentPage() {
                 <button className="btn" style={{ width: '100%', background: 'var(--lm-maroon)', color: '#fff' }} disabled={aiBusy} onClick={runAi}>
                   {aiBusy ? '⏳ AI đang chấm tự luận…' : '🤖 Chấm bằng AI (câu tự luận)'}
                 </button>
-                <button className="btn btn-outline" style={{ width: '100%', color: '#b45309', borderColor: '#f0b355' }} onClick={requestReturn}>
+                <button className="btn btn-outline" style={{ width: '100%', color: 'var(--color-warning)', borderColor: 'var(--color-rule-2)' }} onClick={requestReturn}>
                   🔁 Yêu cầu nộp lại
                 </button>
                 <Link href={`/teacher/courses/${courseId}/assignments`} className="btn btn-outline" style={{ width: '100%', textDecoration: 'none' }}>
@@ -1646,8 +1646,8 @@ export default function GradeAssignmentPage() {
                   fontSize: 13,
                   fontWeight: 700,
                   cursor: 'pointer',
-                  background: tool === t ? 'var(--lm-amber)' : '#fff',
-                  color: tool === t ? '#fff' : '#1c1917',
+                  background: tool === t ? 'var(--lm-amber)' : 'var(--color-surface)',
+                  color: tool === t ? '#fff' : 'var(--color-ink)',
                 }}
               >
                 {label}

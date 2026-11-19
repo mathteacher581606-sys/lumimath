@@ -3325,18 +3325,31 @@ export class ExamsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    // Kèm số lần đã làm của học sinh này
-    const attempts = await this.prisma.examAttempt.findMany({
-      where: { studentId, examId: { in: exams.map((e) => e.id) } },
-    });
+    // Kèm số lần ĐÃ NỘP + có bài đang làm dở không (đếm bằng groupBy, không tải từng bài)
+    const ids = exams.map((e) => e.id);
+    const [submitted, inProgress] = ids.length
+      ? await Promise.all([
+          this.prisma.examAttempt.groupBy({
+            by: ['examId'],
+            where: { studentId, examId: { in: ids }, submittedAt: { not: null } },
+            _count: { _all: true },
+          }),
+          this.prisma.examAttempt.groupBy({
+            by: ['examId'],
+            where: { studentId, examId: { in: ids }, submittedAt: null },
+            _count: { _all: true },
+          }),
+        ])
+      : [[], []];
     const countByExam: Record<string, number> = {};
-    for (const a of attempts) {
-      countByExam[a.examId] = (countByExam[a.examId] || 0) + 1;
-    }
+    for (const g of submitted) countByExam[g.examId] = g._count._all;
+    const openByExam = new Set(inProgress.map((g) => g.examId));
 
     return exams.map((e) => ({
       ...e,
+      maxAttempts: e.maxAttempts ?? 3, // cùng mặc định với lúc bắt đầu thi
       myAttempts: countByExam[e.id] || 0,
+      inProgress: openByExam.has(e.id),
     }));
   }
 

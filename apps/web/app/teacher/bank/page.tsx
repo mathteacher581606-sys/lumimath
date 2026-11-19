@@ -90,7 +90,7 @@ function AddPillButton({ label, onClick }: { label: string; onClick: () => void 
         cursor: 'pointer',
         border: '1.5px dashed var(--lm-amber)',
         background: 'transparent',
-        color: '#a35c07',
+        color: 'var(--color-warning)',
         transition: 'all .15s ease',
       }}
     >
@@ -2066,7 +2066,7 @@ export default function BankPage() {
               onDrop={(e) => handleContentDrop(e, 'solution')}
               rows={2}
               placeholder="Lời giải... (kéo-thả ảnh / Ctrl+V để chèn ảnh)"
-              style={{ width: '100%', padding: 10, border: '1px solid #ddd', borderRadius: 8 }}
+              style={{ width: '100%', padding: 10, border: '1px solid var(--color-rule-2)', borderRadius: 8 }}
             />
           </div>
 
@@ -2440,7 +2440,7 @@ export default function BankPage() {
                         fontSize: 11.5,
                         color: 'var(--color-warning)',
                         background: 'var(--color-paper-2)',
-                        border: '1px dashed #e0c48c',
+                        border: '1px dashed var(--color-rule-2)',
                         borderRadius: 6,
                         padding: '4px 8px',
                         marginBottom: 8,
@@ -3303,7 +3303,7 @@ export default function BankPage() {
                         padding: 12,
                         borderRadius: 8,
                         background: 'var(--color-paper-2)',
-                        border: '1px solid #e7d9b8',
+                        border: '1px solid var(--color-rule-2)',
                         fontSize: 14,
                       }}
                     >
@@ -3740,7 +3740,7 @@ export default function BankPage() {
                   <div
                     style={{
                       marginBottom: 12,
-                      border: '1px dashed #e0c48c',
+                      border: '1px dashed var(--color-rule-2)',
                       background: 'var(--color-paper-2)',
                       borderRadius: 8,
                       padding: 10,
@@ -4004,7 +4004,7 @@ export default function BankPage() {
                               fontSize: 11.5,
                               color: 'var(--color-warning)',
                               background: 'var(--color-paper-2)',
-                              border: '1px dashed #e0c48c',
+                              border: '1px dashed var(--color-rule-2)',
                               borderRadius: 6,
                               padding: '4px 8px',
                               marginTop: 6,
@@ -4041,7 +4041,7 @@ export default function BankPage() {
                     </label>
                   ))}
                   {docxPreview.warnings?.length > 0 && (
-                    <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--color-warning, #d97706)' }}>
+                    <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--color-warning, var(--color-warning))' }}>
                       ⚠️ {docxPreview.warnings.map((w: string, i: number) => (
                         <div key={i}>• {w}</div>
                       ))}

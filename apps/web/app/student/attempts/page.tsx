@@ -365,7 +365,7 @@ export default function AttemptHistoryPage() {
                               {r.type === 'TRUE_FALSE' && Array.isArray(r.options) && r.options.length > 0 && (
                                 <table style={{ width: '100%', borderCollapse: 'collapse', margin: '4px 0 8px', fontSize: 12.5 }}>
                                   <thead>
-                                    <tr style={{ background: '#f1f5f9' }}>
+                                    <tr style={{ background: 'var(--color-track)' }}>
                                       <th style={{ padding: '6px 8px', textAlign: 'left' }}>Mệnh đề</th>
                                       <th style={{ padding: '6px 8px', width: 72 }}>Bạn chọn</th>
                                       <th style={{ padding: '6px 8px', width: 72 }}>Đáp án</th>
@@ -381,7 +381,7 @@ export default function AttemptHistoryPage() {
                                         <tr
                                           key={opt.id}
                                           style={{
-                                            borderTop: '1px solid #e2e8f0',
+                                            borderTop: '1px solid var(--color-rule-2)',
                                             background: ok
                                               ? 'color-mix(in oklch, var(--color-success) 8%, transparent)'
                                               : picked !== undefined

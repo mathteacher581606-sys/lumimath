@@ -58,6 +58,7 @@ model User {
   birthDate     DateTime?
   phone         String?
   parentPhone   String?
+  theme         String?   // bảng màu chọn trong Cài đặt (paper|chalk|garden|blueprint|notebook)
   teacherCode   String?  @unique
   studentCode   String?  @unique
   xp            Int      @default(0)

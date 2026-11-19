@@ -356,7 +356,7 @@ export default function StudentCourseAssignments() {
 
               {/* ===== KẾT QUẢ (sau khi GV chốt) ===== */}
               {mySub && !canSubmit && (
-                <div style={{ padding: 14, borderRadius: 10, background: mySub.published ? '#eefaf0' : '#fdf1dc', marginBottom: 14 }}>
+                <div style={{ padding: 14, borderRadius: 10, background: mySub.published ? 'color-mix(in srgb, var(--color-success) 14%, var(--color-surface))' : 'var(--color-track)', marginBottom: 14 }}>
                   {mySub.published ? (
                     <>
                       <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--color-success)' }}>
@@ -472,7 +472,7 @@ export default function StudentCourseAssignments() {
                       <div className="lm-sub-imgs">
                         {images.map((u, i) => (
                           <div key={`${i}-${u.slice(-20)}`} className="lm-sub-img-card">
-                            <div style={{ position: 'relative', background: '#f7f7f7' }}>
+                            <div style={{ position: 'relative', background: 'var(--color-track)' }}>
                               <img src={u} alt={`Ảnh ${i + 1}`} loading="lazy" />
                               <button
                                 type="button"
@@ -552,10 +552,10 @@ export default function StudentCourseAssignments() {
                         marginTop: 12,
                         padding: '9px 12px',
                         borderRadius: 8,
-                        background: '#eef6ff',
-                        border: '1px solid #bcd8f7',
+                        background: 'var(--color-track)',
+                        border: '1px solid var(--color-rule-2)',
                         fontSize: 12.5,
-                        color: '#1e40af',
+                        color: 'var(--color-accent)',
                       }}
                     >
                       ✏️ Bạn đã nộp bài — vẫn có thể <b>sửa và nộp lại</b>.{' '}
@@ -576,9 +576,9 @@ export default function StudentCourseAssignments() {
                         padding: '9px 12px',
                         borderRadius: 8,
                         background: 'var(--color-danger-wash)',
-                        border: '1px solid #fecaca',
+                        border: '1px solid var(--color-danger)',
                         fontSize: 12.5,
-                        color: '#b91c1c',
+                        color: 'var(--color-danger)',
                       }}
                     >
                       🔒 {lockReason} Hãy liên hệ giáo viên nếu cần nộp lại.

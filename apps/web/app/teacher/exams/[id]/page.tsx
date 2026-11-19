@@ -147,7 +147,7 @@ export default function ExamDetailPage() {
     padding: '8px 10px',
     textAlign: 'left',
     fontWeight: 700,
-    borderBottom: '2px solid #e2e8f0',
+    borderBottom: '2px solid var(--color-rule-2)',
   };
   const tdStyle: React.CSSProperties = { padding: '8px 10px', verticalAlign: 'top' };
 
@@ -538,7 +538,7 @@ export default function ExamDetailPage() {
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
                     <thead>
-                      <tr style={{ background: '#f1f5f9' }}>
+                      <tr style={{ background: 'var(--color-track)' }}>
                         <th style={thStyle}>Câu</th>
                         <th style={thStyle}>Độ khó (% đúng)</th>
                         <th style={thStyle}>Phân biệt (top−đáy 27%)</th>
@@ -548,11 +548,11 @@ export default function ExamDetailPage() {
                     </thead>
                     <tbody>
                       {statData.items.map((it: any) => (
-                        <tr key={it.itemId} style={{ borderTop: '1px solid #e2e8f0' }}>
+                        <tr key={it.itemId} style={{ borderTop: '1px solid var(--color-rule-2)' }}>
                           <td style={tdStyle}>Câu {it.order}</td>
                           <td style={tdStyle}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <div style={{ flex: 1, height: 8, borderRadius: 4, background: '#e2e8f0' }}>
+                              <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'var(--color-track)' }}>
                                 <div style={{ width: `${it.difficultyIndex * 100}%`, height: 8, borderRadius: 4, background: it.difficultyIndex >= 0.6 ? 'var(--color-success)' : it.difficultyIndex >= 0.3 ? '#f59e0b' : 'var(--color-danger)' }} />
                               </div>
                               <span className="mono">{(it.difficultyIndex * 100).toFixed(0)}%</span>

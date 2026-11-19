@@ -1625,7 +1625,7 @@ export default function TeacherCourseDetail() {
               border: form.quizOn ? '1.5px solid var(--lm-amber)' : '1px dashed var(--color-rule)',
               borderRadius: 8,
               padding: 12,
-              background: form.quizOn ? '#fdf1dc' : 'transparent',
+              background: form.quizOn ? 'var(--color-track)' : 'transparent',
             }}
           >
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, color: 'var(--color-warning)' }}>

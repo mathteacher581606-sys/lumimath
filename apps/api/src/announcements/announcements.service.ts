@@ -1,10 +1,15 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { GamificationService } from '../gamification/gamification.service';
+
+const CONTENT_MAX = 10000;
+const COMMENT_MAX = 2000;
+const COMMENT_LIMIT = 100;
 
 @Injectable()
 export class AnnouncementsService {
@@ -13,20 +18,49 @@ export class AnnouncementsService {
     private gamification: GamificationService,
   ) {}
 
+  /**
+   * Quyền truy cập Bảng tin của 1 khóa học:
+   * - Chủ khóa hoặc trợ giảng (CourseAssistant): quản lý (đăng/sửa/xoá) + tương tác.
+   * - Học sinh đã đăng ký: xem + bình luận / cảm xúc / biểu quyết.
+   * - Còn lại (kể cả giáo viên khác): bị chặn.
+   * Trả về true nếu người này được quản lý.
+   */
   private async ensureAccess(courseId: string, userId: string, role: string) {
     const course = await this.prisma.course.findUnique({
       where: { id: courseId },
       select: { id: true, teacherId: true },
     });
     if (!course) throw new NotFoundException('Không tìm thấy khóa học');
-    const isOwner = course.teacherId === userId;
-    if (!isOwner && role === 'STUDENT') {
-      const en = await this.prisma.enrollment.findUnique({
-        where: { courseId_studentId: { courseId, studentId: userId } },
+    if (course.teacherId === userId) return true;
+    if (role === 'TEACHER' || role === 'ADMIN') {
+      const assistant = await this.prisma.courseAssistant.findUnique({
+        where: { courseId_userId: { courseId, userId } },
       });
-      if (!en) throw new ForbiddenException('Chưa đăng ký khóa học');
+      if (assistant) return true;
+      throw new ForbiddenException('Bạn không quản lý khóa học này');
     }
-    return isOwner;
+    const en = await this.prisma.enrollment.findUnique({
+      where: { courseId_studentId: { courseId, studentId: userId } },
+    });
+    if (!en) throw new ForbiddenException('Chưa đăng ký khóa học');
+    return false;
+  }
+
+  private async ensureManager(courseId: string, userId: string, role: string) {
+    const canManage = await this.ensureAccess(courseId, userId, role);
+    if (!canManage) throw new ForbiddenException('Chỉ giáo viên của khóa học được làm việc này');
+  }
+
+  // Bài đăng phải thuộc đúng khóa học trên URL (chống sửa/xoá bài của khóa khác)
+  private async ensureInCourse(courseId: string, announcementId: string) {
+    const ann = await this.prisma.announcement.findUnique({
+      where: { id: announcementId },
+      select: { id: true, courseId: true, voteOptions: true, voteDeadline: true },
+    });
+    if (!ann || ann.courseId !== courseId) {
+      throw new NotFoundException('Không tìm thấy bài đăng');
+    }
+    return ann;
   }
 
   // Thông báo in-app cho toàn bộ học sinh đã đăng ký khóa học
@@ -57,7 +91,8 @@ export class AnnouncementsService {
       where: { courseId },
       orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }],
       include: {
-        comments: { orderBy: { createdAt: 'asc' }, take: 50 },
+        comments: { orderBy: { createdAt: 'desc' }, take: COMMENT_LIMIT },
+        _count: { select: { comments: true } },
         reactions: true,
         votes: true,
       },
@@ -69,10 +104,11 @@ export class AnnouncementsService {
       }
       return {
         ...a,
-        comments: a.comments,
+        // Lấy 100 bình luận mới nhất rồi trả lại theo thứ tự cũ → mới
+        comments: [...a.comments].reverse(),
         reactions: a.reactions,
         votes: a.votes,
-        commentCount: a.comments.length,
+        commentCount: a._count.comments,
         reactionCounts,
         voteCounts: (a.voteOptions || []).map(
           (_, i) => a.votes.filter((v) => v.optionIndex === i).length,
@@ -84,14 +120,21 @@ export class AnnouncementsService {
     });
   }
 
-  async create(courseId: string, teacherId: string, body: any) {
-    await this.ensureAccess(courseId, teacherId, 'TEACHER');
+  async create(courseId: string, teacherId: string, body: any, role = 'TEACHER') {
+    await this.ensureManager(courseId, teacherId, role);
+    const content = String(body?.content || '').trim();
+    if (!content && !(Array.isArray(body?.images) && body.images.length)) {
+      throw new BadRequestException('Bài đăng cần có nội dung hoặc ảnh');
+    }
+    if (content.length > CONTENT_MAX) {
+      throw new BadRequestException(`Bài đăng dài quá ${CONTENT_MAX} ký tự`);
+    }
     const ann = await this.prisma.announcement.create({
       data: {
         courseId,
         teacherId,
-        content: String(body?.content || '').trim(),
-        images: Array.isArray(body?.images) ? body.images.slice(0, 20) : [],
+        content,
+        images: Array.isArray(body?.images) ? body.images.slice(0, 20).map(String) : [],
         pinned: !!body?.pinned,
         allowVote: !!body?.allowVote,
         voteOptions: Array.isArray(body?.voteOptions)
@@ -100,13 +143,14 @@ export class AnnouncementsService {
         voteDeadline: body?.voteDeadline ? new Date(body.voteDeadline) : null,
       },
     });
+    // Gửi thông báo chạy nền; lỗi ở đây không được làm sập tiến trình API
     this.notifyAll(
       courseId,
       teacherId,
       '📣 Thông báo mới từ khóa học',
-      (body?.content || '').slice(0, 120),
+      content.slice(0, 120),
       `/student/courses/${courseId}?tab=announcements`,
-    );
+    ).catch((e) => console.error('[announcements] notifyAll lỗi:', e?.message || e));
     return ann;
   }
 
@@ -115,16 +159,23 @@ export class AnnouncementsService {
     announcementId: string,
     teacherId: string,
     body: any,
+    role = 'TEACHER',
   ) {
-    await this.ensureAccess(courseId, teacherId, 'TEACHER');
+    await this.ensureManager(courseId, teacherId, role);
+    await this.ensureInCourse(courseId, announcementId);
+    if (typeof body?.content === 'string' && body.content.length > CONTENT_MAX) {
+      throw new BadRequestException(`Bài đăng dài quá ${CONTENT_MAX} ký tự`);
+    }
     return this.prisma.announcement.update({
       where: { id: announcementId },
       data: {
-        content: body?.content,
-        images: body?.images,
-        pinned: body?.pinned,
-        allowVote: body?.allowVote,
-        voteOptions: body?.voteOptions,
+        content: typeof body?.content === 'string' ? body.content.trim() : undefined,
+        images: Array.isArray(body?.images) ? body.images.slice(0, 20).map(String) : undefined,
+        pinned: typeof body?.pinned === 'boolean' ? body.pinned : undefined,
+        allowVote: typeof body?.allowVote === 'boolean' ? body.allowVote : undefined,
+        voteOptions: Array.isArray(body?.voteOptions)
+          ? body.voteOptions.slice(0, 10).map(String)
+          : undefined,
         voteDeadline: body?.voteDeadline
           ? new Date(body.voteDeadline)
           : undefined,
@@ -132,8 +183,9 @@ export class AnnouncementsService {
     });
   }
 
-  async remove(courseId: string, announcementId: string, teacherId: string) {
-    await this.ensureAccess(courseId, teacherId, 'TEACHER');
+  async remove(courseId: string, announcementId: string, teacherId: string, role = 'TEACHER') {
+    await this.ensureManager(courseId, teacherId, role);
+    await this.ensureInCourse(courseId, announcementId);
     await this.prisma.announcement.delete({
       where: { id: announcementId },
     });
@@ -148,11 +200,14 @@ export class AnnouncementsService {
     content: string,
   ) {
     await this.ensureAccess(courseId, userId, role);
-    if (!String(content || '').trim()) {
-      throw new ForbiddenException('Nội dung bình luận trống');
+    await this.ensureInCourse(courseId, announcementId);
+    const text = String(content || '').trim();
+    if (!text) throw new BadRequestException('Nội dung bình luận trống');
+    if (text.length > COMMENT_MAX) {
+      throw new BadRequestException(`Bình luận dài quá ${COMMENT_MAX} ký tự`);
     }
     return this.prisma.announcementComment.create({
-      data: { announcementId, authorId: userId, content },
+      data: { announcementId, authorId: userId, content: text },
     });
   }
 
@@ -164,6 +219,9 @@ export class AnnouncementsService {
     emoji: string,
   ) {
     await this.ensureAccess(courseId, userId, role);
+    await this.ensureInCourse(courseId, announcementId);
+    emoji = String(emoji || '').slice(0, 16);
+    if (!emoji) throw new BadRequestException('Thiếu biểu tượng cảm xúc');
     const current = await this.prisma.announcementReaction.findUnique({
       where: { announcementId_userId: { announcementId, userId } },
     });
@@ -189,11 +247,9 @@ export class AnnouncementsService {
     optionIndex: number,
   ) {
     await this.ensureAccess(courseId, userId, role);
-    const ann = await this.prisma.announcement.findUnique({
-      where: { id: announcementId },
-      select: { voteOptions: true, voteDeadline: true },
-    });
-    if (!ann || !ann.voteOptions.length) {
+    const ann = await this.ensureInCourse(courseId, announcementId);
+    optionIndex = Number(optionIndex);
+    if (!ann.voteOptions.length) {
       throw new ForbiddenException('Bài đăng không có biểu quyết');
     }
     if (
@@ -202,7 +258,7 @@ export class AnnouncementsService {
     ) {
       throw new ForbiddenException('Biểu quyết đã hết hạn');
     }
-    if (optionIndex < 0 || optionIndex >= ann.voteOptions.length) {
+    if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= ann.voteOptions.length) {
       throw new ForbiddenException('Lựa chọn không hợp lệ');
     }
     await this.prisma.announcementVote.upsert({

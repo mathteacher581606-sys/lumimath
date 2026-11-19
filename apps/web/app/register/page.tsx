@@ -171,7 +171,7 @@ export default function RegisterPage() {
                   </button>
                 </div>
                 {otpMsg && (
-                  <p style={{ fontSize: 12.5, color: 'var(--color-success, #15803d)', marginTop: 6 }}>{otpMsg}</p>
+                  <p style={{ fontSize: 12.5, color: 'var(--color-success, var(--color-success))', marginTop: 6 }}>{otpMsg}</p>
                 )}
                 <p style={{ fontSize: 11.5, color: 'var(--color-muted)', marginTop: 6 }}>
                   Bấm "Gửi mã" → mở email → nhập mã 6 số (hiệu lực 5 phút). Không thấy mã? Kiểm tra mục Spam.

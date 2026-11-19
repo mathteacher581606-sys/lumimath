@@ -97,7 +97,18 @@ export default function SettingsPage() {
 
 function ThemePanel({ isStudent }: { isStudent: boolean }) {
   const [current, setCurrent] = useState('paper');
-  useEffect(() => setCurrent(getTheme()), []);
+  useEffect(() => {
+    setCurrent(getTheme());
+    // Nếu đã đổi màu ở máy khác, lấy màu đang lưu trong tài khoản
+    apiFetch('/auth/profile')
+      .then((p) => {
+        if (p?.theme && p.theme !== getTheme()) {
+          setTheme(p.theme, false);
+          setCurrent(p.theme);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   function choose(id: string) {
     setTheme(id);
@@ -108,7 +119,7 @@ function ThemePanel({ isStudent }: { isStudent: boolean }) {
     <section className="st-panel" aria-labelledby="st-theme-h">
       <h2 id="st-theme-h">Bảng màu</h2>
       <p className="st-panel-sub">
-        Chọn màu {isStudent ? 'em' : 'bạn'} thích. Thay đổi áp dụng ngay và được nhớ trên trình duyệt này.
+        Chọn màu {isStudent ? 'em' : 'bạn'} thích. Thay đổi áp dụng ngay và được lưu vào tài khoản, đăng nhập máy nào cũng giữ màu này.
       </p>
       <div role="radiogroup" aria-label="Bảng màu" className="st-themes">
         {THEMES.map((t) => {

@@ -33,6 +33,14 @@ export default function TakeExam() {
   // Phòng thi: câu đang xem + câu đánh dấu (flag)
   const [current, setCurrent] = useState(0);
   const [marked, setMarked] = useState<Set<string>>(new Set());
+  // Hạn nộp tính theo đồng hồ thật (không trôi khi tab bị trình duyệt làm chậm)
+  const deadlineRef = useRef<number>(0);
+  // Cảnh báo chống gian lận hiển thị ngay trong trang (không dùng alert chặn màn hình)
+  const [warnMsg, setWarnMsg] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [submitError, setSubmitError] = useState('');
 
   function toggleMark(itemId: string) {
     setMarked((prev) => {
@@ -44,6 +52,8 @@ export default function TakeExam() {
   }
 
   answersRef.current = answers;
+  const examRef = useRef<any>(null);
+  examRef.current = exam;
 
   useEffect(() => {
     startExam();
@@ -54,7 +64,12 @@ export default function TakeExam() {
     try {
       const data = await apiFetch(`/exams/${examId}/start`, { method: 'POST' });
       setExam(data);
-      setTimeLeft((data.duration || 45) * 60);
+      // Làm tiếp bài dở: chỉ còn phần thời gian chưa dùng
+      const totalSec = (data.duration || 45) * 60;
+      const usedSec = data.resume ? Math.max(0, data.savedTimeSpent || 0) : 0;
+      const remain = Math.max(0, totalSec - usedSec);
+      deadlineRef.current = Date.now() + remain * 1000;
+      setTimeLeft(remain);
       // RESUME: khôi phục đáp án + thời gian đã làm dở
       if (data.resume && data.savedAnswers) {
         setAnswers(data.savedAnswers);
@@ -76,8 +91,7 @@ export default function TakeExam() {
         }
       }
     } catch (e: any) {
-      alert(e.message);
-      router.push('/student/exams');
+      setLoadError(e.message || 'Không mở được đề thi');
     }
   }
 
@@ -90,7 +104,7 @@ export default function TakeExam() {
         await apiFetch(`/exams/${exam.examId}/attempts/${exam.attemptId}/autosave`, {
           method: 'POST',
           body: JSON.stringify({
-            answers: answersRef.current,
+            answers: withEssayText(answersRef.current),
             timeSpent: Math.round((Date.now() - startTimeRef.current) / 1000),
           }),
         });
@@ -99,27 +113,7 @@ export default function TakeExam() {
       }
     };
     const t = setInterval(autosave, 15000);
-    const onUnload = () => {
-      // autosave cuối khi rời trang (fire-and-forget)
-      const token = localStorage.getItem('token');
-      navigator.sendBeacon?.(
-        `/api/exams/${exam.examId}/attempts/${exam.attemptId}/autosave`,
-        new Blob(
-          [
-            JSON.stringify({
-              answers: answersRef.current,
-              timeSpent: Math.round((Date.now() - startTimeRef.current) / 1000),
-            }),
-          ],
-          { type: 'application/json' },
-        ),
-      );
-    };
-    window.addEventListener('beforeunload', onUnload);
-    return () => {
-      clearInterval(t);
-      window.removeEventListener('beforeunload', onUnload);
-    };
+    return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exam, result]);
 
@@ -140,56 +134,46 @@ export default function TakeExam() {
   // Đồng hồ đếm ngược
   useEffect(() => {
     if (!exam || result) return;
-    const t = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(t);
-          doSubmit();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((deadlineRef.current - Date.now()) / 1000));
+      setTimeLeft(left);
+      if (left <= 0) {
+        clearInterval(t);
+        doSubmitRef.current();
+      }
+    };
+    const t = setInterval(tick, 1000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exam, result]);
 
-  // Chống gian lận: phát hiện chuyển tab + thoát toàn màn hình
+  // Chống gian lận: phát hiện chuyển tab + thoát toàn màn hình (không áp dụng khi luyện tập)
   useEffect(() => {
-    if (!exam || result) return;
+    if (!exam || result || exam.practiceMode) return;
+    const strike = (reason: string) => {
+      if (submittedRef.current) return; // đã nộp (vd. thoát toàn màn hình sau khi nộp)
+      setWarnings((w) => {
+        const nw = w + 1;
+        if (nw >= 3) {
+          setWarnMsg(`${reason} quá 3 lần — bài thi đang được tự động nộp.`);
+          doSubmitRef.current();
+        } else {
+          setWarnMsg(`Cảnh báo ${nw}/3: ${reason}. Lần thứ 3 bài sẽ tự nộp.`);
+        }
+        return nw;
+      });
+    };
     const onVisibility = () => {
-      if (document.hidden) {
-        setWarnings((w) => {
-          const nw = w + 1;
-          if (nw >= 3) {
-            alert('Bạn đã chuyển tab quá 3 lần. Bài thi sẽ tự động nộp!');
-            doSubmit();
-          } else {
-            alert(`⚠️ Cảnh báo ${nw}/3: Không được chuyển tab khi đang làm bài!`);
-          }
-          return nw;
-        });
-      }
+      if (document.hidden) strike('Em đã rời khỏi trang làm bài');
     };
     const onFullscreenChange = () => {
-      if (!document.fullscreenElement) {
-        setWarnings((w) => {
-          const nw = w + 1;
-          if (nw >= 3) {
-            alert('Bạn đã thoát chế độ toàn màn hình quá 3 lần. Bài thi sẽ tự động nộp!');
-            doSubmit();
-          } else {
-            alert(`⚠️ Cảnh báo ${nw}/3: Đã thoát toàn màn hình! Hãy quay lại chế độ làm bài (F11 hoặc nút phía dưới).`);
-            // Thử bật lại fullscreen
-            document.documentElement.requestFullscreen?.().catch(() => {});
-          }
-          return nw;
-        });
+      if (!document.fullscreenElement && document.fullscreenEnabled) {
+        strike('Em đã thoát chế độ toàn màn hình');
       }
     };
     const onCopy = (e: ClipboardEvent) => {
       e.preventDefault();
-      alert('⚠️ Không được sao chép khi đang làm bài!');
+      setWarnMsg('Không được sao chép nội dung đề khi đang làm bài.');
     };
     document.addEventListener('visibilitychange', onVisibility);
     document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -221,19 +205,31 @@ export default function TakeExam() {
   }
 
   function setTrueFalse(itemId: string, key: string, value: boolean) {
-    setAnswers((prev: any) => {
-      const current = { ...(prev[itemId] || {}) };
-      current[key] = value;
-      return { ...prev, [itemId]: current };
-    });
-    // Chấm ngay cho câu Đúng/Sai khi bật xem đáp án từng câu
-    checkItem(itemId, answersRef.current[itemId]);
+    const next = { ...(answersRef.current[itemId] || {}), [key]: value };
+    answersRef.current = { ...answersRef.current, [itemId]: next };
+    setAnswers((prev: any) => ({ ...prev, [itemId]: next }));
+    // Chấm ngay cho câu Đúng/Sai khi bật xem đáp án từng câu (gửi đúng lựa chọn MỚI)
+    checkItem(itemId, next);
   }
 
   // Ảnh cho câu tự luận (giữ file + xem trước, nộp mới tải lên)
   const [essayTexts, setEssayTexts] = useState<Record<string, string>>({});
   const [essayFiles, setEssayFiles] = useState<Record<string, UpImage[]>>({});
   const [uploadingItem, setUploadingItem] = useState<string | null>(null);
+  // Ref luôn giữ bản mới nhất — tránh mất bài tự luận khi tự nộp lúc hết giờ
+  const essayTextsRef = useRef<Record<string, string>>({});
+  const essayFilesRef = useRef<Record<string, UpImage[]>>({});
+  essayTextsRef.current = essayTexts;
+  essayFilesRef.current = essayFiles;
+
+  // Gộp chữ tự luận vào đáp án (để tự lưu và khôi phục được cả bài tự luận)
+  function withEssayText(base: any) {
+    const out: any = { ...base };
+    for (const [itemId, text] of Object.entries(essayTextsRef.current)) {
+      if (text) out[itemId] = { text, images: [] };
+    }
+    return out;
+  }
 
   async function doSubmit() {
     if (submittedRef.current) return;
@@ -244,7 +240,8 @@ export default function TakeExam() {
       // Câu tự luận: tải ảnh (đúng thứ tự) + gộp chữ thành object { text, images }
       const finalAnswers: any = { ...answersRef.current };
       const token = localStorage.getItem('token');
-      for (const [itemId, files] of Object.entries(essayFiles)) {
+      const essayTextsNow = essayTextsRef.current;
+      for (const [itemId, files] of Object.entries(essayFilesRef.current)) {
         if (files.length === 0) continue;
         setUploadingItem(itemId);
         const images: string[] = [];
@@ -265,11 +262,11 @@ export default function TakeExam() {
           images.push(data.url);
         }
         finalAnswers[itemId] = {
-          text: essayTexts[itemId] || '',
+          text: essayTextsNow[itemId] || '',
           images,
         };
       }
-      for (const [itemId, text] of Object.entries(essayTexts)) {
+      for (const [itemId, text] of Object.entries(essayTextsNow)) {
         if (!finalAnswers[itemId]) {
           finalAnswers[itemId] = { text, images: [] };
         }
@@ -277,12 +274,14 @@ export default function TakeExam() {
       const data = await apiFetch(`/exams/${examId}/submit`, {
         method: 'POST',
         body: JSON.stringify({
-          attemptId: exam.attemptId,
+          attemptId: examRef.current.attemptId,
           answers: finalAnswers,
           timeSpent,
         }),
       });
       setResult(data);
+      // Nộp xong thì thoát toàn màn hình để học sinh xem kết quả thoải mái
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
 
       // ===== TỰ ĐỘNG NỘP ĐIỂM vào bài tập (nếu đề được giao trong khóa học) =====
       // Học sinh không cần bấm "Nộp kết quả" nữa — điểm tự đồng bộ lên web.
@@ -292,12 +291,15 @@ export default function TakeExam() {
         /* đề không thuộc bài giao nào → bỏ qua */
       }
     } catch (e: any) {
-      alert(e.message);
+      setSubmitError(e.message || 'Nộp bài không thành công, em thử lại nhé');
       submittedRef.current = false;
     } finally {
       setSubmitting(false);
+      setUploadingItem(null);
     }
   }
+  const doSubmitRef = useRef(doSubmit);
+  doSubmitRef.current = doSubmit;
 
   // ===== TỰ ĐỘNG NỘP BÀI khi học sinh THỰC SỰ thoát ra (đóng tab / rời trang) =====
   // KHÔNG nộp khi chỉ chuyển tab (học sinh thường mở máy tính/ghi chú) — tránh nộp non.
@@ -310,7 +312,7 @@ export default function TakeExam() {
       const timeSpent = Math.round((Date.now() - startTimeRef.current) / 1000);
       const body = JSON.stringify({
         attemptId: exam.attemptId,
-        answers: answersRef.current,
+        answers: withEssayText(answersRef.current),
         timeSpent,
       });
       try {
@@ -398,13 +400,19 @@ export default function TakeExam() {
   if (result) {
     return (
       <div className="page-container" style={{ maxWidth: 900 }}>
-        <div className="card" style={{ textAlign: 'center', marginBottom: 20 }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>
-            {result.passed ? '🎉' : '😅'}
+        <div className="card ex-result" style={{ textAlign: 'center', marginBottom: 20 }}>
+          <div
+            className="sh-ring ex-result-ring"
+            role="img"
+            aria-label={`Đạt ${result.score} trên ${result.totalScore} điểm`}
+            style={{ ['--p' as any]: `${result.totalScore ? Math.round((result.score / result.totalScore) * 100) : 0}%` }}
+          >
+            <div className="sh-ring-inner">
+              <span className="ex-result-score">{result.score}</span>
+              <span className="sh-ring-cap">/ {result.totalScore}</span>
+            </div>
           </div>
-          <h1 style={{ fontSize: 28 }}>
-            {result.score} / {result.totalScore} điểm
-          </h1>
+          <h1 style={{ fontSize: 26 }}>{result.passed ? 'Hoàn thành tốt!' : 'Đã nộp bài'}</h1>
           {result.passMark != null && (
             <p
               style={{
@@ -414,11 +422,11 @@ export default function TakeExam() {
                 color: result.passed ? 'var(--color-success)' : 'var(--color-danger)',
               }}
             >
-              {result.passed ? '✅ ĐẠT' : '❌ CHƯA ĐẠT'} — điểm chuẩn {result.passMark}/{result.totalScore}
+              {result.passed ? 'ĐẠT' : 'CHƯA ĐẠT'} · điểm chuẩn {result.passMark}/{result.totalScore}
             </p>
           )}
           {result.late && (
-            <p style={{ fontSize: 12.5, color: '#b45309', marginTop: 4 }}>⏰ Đã nộp sau hạn</p>
+            <p style={{ fontSize: 12.5, color: 'var(--color-warning)', marginTop: 4 }}>Đã nộp sau hạn</p>
           )}
 
           {/* Thưởng XP + level */}
@@ -478,7 +486,7 @@ export default function TakeExam() {
             style={{ width: 'auto', marginTop: 16 }}
             onClick={() => router.push('/student/exams')}
           >
-            ← Về danh sách đề thi
+            Về danh sách đề thi
           </button>
           <button
             className="btn btn-outline"
@@ -654,430 +662,419 @@ export default function TakeExam() {
   }
 
   // ============ LÀM BÀI ============
+  if (loadError) {
+    return (
+      <div className="page-container ex-msg-page">
+        <div className="sh-box">
+          <h1 style={{ fontSize: 22 }}>Không mở được đề thi</h1>
+          <p className="sh-muted">{loadError}</p>
+          <button type="button" className="btn" style={{ width: 'auto' }} onClick={() => router.push('/student/exams')}>
+            Về danh sách đề thi
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (!exam) {
     return (
-      <div style={{ padding: 60, textAlign: 'center', color: 'var(--color-muted)' }}>
-        Đang tải đề thi...
+      <div className="page-container ex-msg-page" aria-busy="true">
+        <div className="skeleton" style={{ height: 72, borderRadius: 'var(--radius-card)' }} />
+        <div className="skeleton" style={{ height: 260, borderRadius: 'var(--radius-card)' }} />
+        <span className="sr-only">Đang tải đề thi…</span>
       </div>
     );
   }
 
-  return (
-    <div className="page-container" style={{ maxWidth: 900 }}>
-      {/* Thanh thông tin + timer */}
-      <div
-        className="card"
-        style={{
-          position: 'sticky',
-          top: 16,
-          zIndex: 100,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: 16,
-          marginBottom: 20,
-        }}
-      >
-        <div>
-          <strong>{exam.title}</strong>
-          <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>
-            {exam.questions.length} câu · {exam.totalScore} điểm
-            {warnings > 0 && (
-              <span style={{ color: '#d97706', marginLeft: 8 }}>
-                ⚠️ {warnings}/3 cảnh báo chuyển tab
-              </span>
-            )}
-          </div>
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          {/* Đồng hồ thi: chữ số đều (tabular-nums) + đổi màu theo mốc thời gian */}
-          <div
-            className={timeLeft < 60 ? 'exam-timer is-danger' : timeLeft < 300 ? 'exam-timer is-warn' : 'exam-timer'}
-            style={{
-              fontSize: 24,
-              fontWeight: 800,
-              color: timeLeft < 60 ? '#dc2626' : timeLeft < 300 ? '#d97706' : '#4f46e5',
-              fontVariantNumeric: 'tabular-nums',
-              letterSpacing: '0.01em',
-            }}
-            aria-live="off"
-          >
-            ⏱ {formatTime(timeLeft)}
-          </div>
-          {timeLeft > 0 && timeLeft < 300 && (
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: timeLeft < 60 ? '#dc2626' : '#d97706' }}>
-              {timeLeft < 60 ? 'Sắp hết giờ!' : 'Còn dưới 5 phút'}
-            </div>
-          )}
-        </div>
-      </div>
+  const isAnswered = (qq: any) => {
+    const a = answers[qq.itemId];
+    if (qq.type === 'ESSAY') {
+      return !!(essayTexts[qq.itemId] || '').trim() || (essayFiles[qq.itemId] || []).length > 0;
+    }
+    if (qq.type === 'TRUE_FALSE') {
+      return !!a && (qq.options || []).every((o: any) => typeof a[o.id] === 'boolean');
+    }
+    return a !== undefined && a !== '' && !(Array.isArray(a) && a.length === 0);
+  };
+  const total = exam.questions.length;
+  const doneCount = exam.questions.filter(isAnswered).length;
+  const unanswered = exam.questions
+    .map((qq: any, i: number) => ({ n: i + 1, qq }))
+    .filter((x: any) => !isAnswered(x.qq));
+  const timerCls = timeLeft < 60 ? 'is-danger' : timeLeft < 300 ? 'is-warn' : '';
 
+  function goTo(i: number) {
+    setCurrent(i);
+    setNavOpen(false);
+    document
+      .getElementById(`q-${exam.questions[i].itemId}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  const navGrid = (
+    <div className="ex-nav-grid" role="list">
+      {exam.questions.map((qq: any, i: number) => {
+        const done = isAnswered(qq);
+        const isMarked = marked.has(qq.itemId);
+        const state = `${done ? 'đã làm' : 'chưa làm'}${isMarked ? ', đánh dấu xem lại' : ''}`;
+        return (
+          <button
+            key={qq.itemId}
+            type="button"
+            role="listitem"
+            onClick={() => goTo(i)}
+            aria-label={`Câu ${i + 1}: ${state}`}
+            aria-current={current === i ? 'true' : undefined}
+            className={`ex-nav-btn${done ? ' is-done' : ''}${isMarked ? ' is-marked' : ''}${current === i ? ' is-current' : ''}`}
+          >
+            {i + 1}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div className="page-container ex">
+      {/* ===== Thanh trên cùng: tên đề, tiến độ, đồng hồ, nộp bài ===== */}
+      <header className="ex-bar">
+        <div className="ex-bar-info">
+          <strong className="ex-bar-title">{exam.title}</strong>
+          <span className="ex-bar-sub">
+            {doneCount}/{total} câu đã làm · {exam.totalScore} điểm
+          </span>
+          <div className="ex-progress" aria-hidden="true">
+            <span style={{ width: `${total ? (doneCount / total) * 100 : 0}%` }} />
+          </div>
+        </div>
+        <div className={`ex-timer ${timerCls}`} role="timer" aria-label={`Thời gian còn lại ${formatTime(timeLeft)}`}>
+          <span className="ex-timer-num">{formatTime(timeLeft)}</span>
+          <span className="ex-timer-cap">
+            {timeLeft < 60 ? 'Sắp hết giờ' : timeLeft < 300 ? 'Còn dưới 5 phút' : 'Còn lại'}
+          </span>
+        </div>
+        <button type="button" className="btn sh-btn-accent ex-submit-top" onClick={() => setConfirmOpen(true)} disabled={submitting}>
+          Nộp bài
+        </button>
+      </header>
+
+      {warnMsg && (
+        <div className="ex-alert is-warn" role="alert">
+          <span>{warnMsg}</span>
+          <button type="button" className="ex-alert-x" aria-label="Đóng cảnh báo" onClick={() => setWarnMsg('')}>
+            ×
+          </button>
+        </div>
+      )}
+      {submitError && (
+        <div className="ex-alert is-danger" role="alert">
+          <span>{submitError}</span>
+          <button type="button" className="ex-alert-x" aria-label="Đóng thông báo lỗi" onClick={() => setSubmitError('')}>
+            ×
+          </button>
+        </div>
+      )}
       {exam.resume && (
-        <div className="card" style={{ marginBottom: 16, padding: 12, borderLeft: '4px solid var(--color-success)', background: '#ecfdf3' }}>
-          <strong style={{ color: 'var(--color-success)' }}>💾 Đã khôi phục bài làm dở</strong>{' '}
-          <span style={{ fontSize: 13 }}>— đáp án đã gõ và thời gian đã làm được giữ nguyên. Hệ thống tự lưu mỗi 15 giây.</span>
+        <div className="ex-alert is-ok">
+          <span>
+            <strong>Đã khôi phục bài làm dở.</strong> Đáp án và thời gian đã làm được giữ nguyên, bài được tự lưu mỗi 15 giây.
+          </span>
         </div>
       )}
       {exam.practiceMode && (
-        <div className="card" style={{ marginBottom: 16, padding: 12, borderLeft: '4px solid var(--lm-amber)', background: 'var(--color-paper-2)' }}>
-          <strong>🎯 Chế độ LUYỆN TẬP</strong>{' '}
-          <span style={{ fontSize: 13 }}>— chọn đáp án là biết đúng/sai + xem lời giải ngay. Làm lại thoải mái, không tính điểm.</span>
+        <div className="ex-alert">
+          <span>
+            <strong>Chế độ luyện tập:</strong> chọn đáp án là biết đúng/sai và xem lời giải ngay. Làm lại thoải mái, không tính điểm.
+          </span>
         </div>
       )}
       {!exam.practiceMode && exam.answersAtEnd === false && (
-        <div className="card" style={{ marginBottom: 16, padding: 12, borderLeft: '4px solid var(--lm-amber)', background: 'var(--color-paper-2)' }}>
-          <strong>👀 Xem đáp án từng câu</strong>{' '}
-          <span style={{ fontSize: 13 }}>— giáo viên cho phép biết đúng/sai ngay khi chọn.</span>
+        <div className="ex-alert">
+          <span>
+            <strong>Xem đáp án từng câu:</strong> giáo viên cho phép biết đúng/sai ngay khi chọn.
+          </span>
         </div>
       )}
 
-      {/* Bảng điều hướng câu hỏi (phòng thi) */}
-      <div
-        style={{
-          position: 'fixed',
-          right: 16,
-          top: 88,
-          width: 192,
-          zIndex: 50,
-          background: 'var(--color-paper)',
-          border: '1px solid var(--color-rule)',
-          borderRadius: 12,
-          padding: 12,
-          boxShadow: '0 6px 20px rgba(0,0,0,0.14)',
-          maxHeight: '70vh',
-          overflow: 'auto',
-        }}
-      >
-        <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 8 }}>📋 Điều hướng câu hỏi</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 5 }}>
-          {exam.questions.map((qq: any, i: number) => {
-            const a = answers[qq.itemId];
-            const done =
-              a !== undefined &&
-              a !== '' &&
-              !(Array.isArray(a) && a.length === 0);
-            const isMarked = marked.has(qq.itemId);
+      <div className="ex-layout">
+        {/* ===== Câu hỏi ===== */}
+        <div className="ex-questions">
+          {exam.questions.map((q: any, idx: number) => {
+            const ck = checks[q.itemId];
             return (
-              <button
-                key={qq.itemId}
-                type="button"
-                onClick={() => {
-                  setCurrent(i);
-                  document
-                    .getElementById(`q-${qq.itemId}`)
-                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }}
-                title={`Câu ${i + 1}${isMarked ? ' (đã đánh dấu)' : ''}`}
-                style={{
-                  height: 30,
-                  borderRadius: 6,
-                  border: current === i ? '2px solid var(--lm-maroon)' : '1px solid var(--color-rule)',
-                  background: done ? 'var(--color-success)' : isMarked ? 'var(--lm-amber)' : '#fff',
-                  color: done || isMarked ? '#fff' : 'var(--color-ink)',
-                  fontWeight: 700,
-                  fontSize: 12,
-                  cursor: 'pointer',
-                }}
+              <section
+                key={q.itemId}
+                id={`q-${q.itemId}`}
+                className={`ex-q${marked.has(q.itemId) ? ' is-marked' : ''}`}
+                aria-labelledby={`q-h-${q.itemId}`}
+                onFocusCapture={() => setCurrent(idx)}
               >
-                {i + 1}
-              </button>
+                <div className="ex-q-head">
+                  <h2 id={`q-h-${q.itemId}`} className="ex-q-num">
+                    Câu {idx + 1}
+                  </h2>
+                  <span className="chip">{PART_LABEL[q.part] || 'Phần'}</span>
+                  <span className="ex-q-score">{q.score} điểm</span>
+                  <button
+                    type="button"
+                    className={`ex-flag${marked.has(q.itemId) ? ' is-on' : ''}`}
+                    aria-pressed={marked.has(q.itemId)}
+                    onClick={() => toggleMark(q.itemId)}
+                  >
+                    <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M5 21V4h11l-1.5 4L16 12H5" />
+                    </svg>
+                    {marked.has(q.itemId) ? 'Đã đánh dấu' : 'Xem lại sau'}
+                  </button>
+                </div>
+
+                <div className="ex-q-content">
+                  <LatexRenderer content={q.content} />
+                </div>
+
+                {q.type === 'MCQ' && q.options && (
+                  <div className="ex-opts" role="radiogroup" aria-labelledby={`q-h-${q.itemId}`}>
+                    {q.options.map((opt: any) => {
+                      const sel = answers[q.itemId] === opt.id;
+                      const right = ck && ck.answer === opt.id;
+                      const wrong = ck && sel && !ck.correct;
+                      return (
+                        <label
+                          key={opt.id}
+                          className={`ex-opt${sel ? ' is-sel' : ''}${right ? ' is-right' : ''}${wrong ? ' is-wrong' : ''}`}
+                        >
+                          <input
+                            type="radio"
+                            className="sr-only"
+                            name={`q-${q.itemId}`}
+                            checked={sel}
+                            onChange={() => setAnswer(q.itemId, opt.id)}
+                          />
+                          <span className="ex-opt-key" aria-hidden="true">
+                            {opt.id}
+                          </span>
+                          <span className="ex-opt-text">
+                            <span className="sr-only">{opt.id}. </span>
+                            <LatexRenderer content={opt.text} />
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {q.type === 'MULTI_ANSWER' && q.options && (
+                  <div className="ex-opts">
+                    <p className="ex-hint">Chọn tất cả các đáp án đúng (có thể chọn nhiều)</p>
+                    {q.options.map((opt: any) => {
+                      const selected = Array.isArray(answers[q.itemId])
+                        ? answers[q.itemId].includes(opt.id)
+                        : answers[q.itemId] === opt.id;
+                      return (
+                        <label key={opt.id} className={`ex-opt is-multi${selected ? ' is-sel' : ''}`}>
+                          <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={selected}
+                            onChange={() => toggleMulti(q.itemId, opt.id)}
+                          />
+                          <span className="ex-opt-key" aria-hidden="true">
+                            {opt.id}
+                          </span>
+                          <span className="ex-opt-text">
+                            <span className="sr-only">{opt.id}. </span>
+                            <LatexRenderer content={opt.text} />
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {q.type === 'TRUE_FALSE' && q.options && (
+                  <div className="ex-tf">
+                    {q.options.map((opt: any) => {
+                      const cur = answers[q.itemId] || {};
+                      const val: boolean | undefined = cur[opt.id];
+                      return (
+                        <div key={opt.id} className="ex-tf-row" role="group" aria-label={`Mệnh đề ${opt.id}`}>
+                          <div className="ex-tf-text">
+                            <strong>{opt.id})</strong> <LatexRenderer content={opt.text} />
+                          </div>
+                          <div className="ex-tf-btns">
+                            <button
+                              type="button"
+                              className={`ex-tf-btn is-true${val === true ? ' is-on' : ''}`}
+                              aria-pressed={val === true}
+                              onClick={() => setTrueFalse(q.itemId, opt.id, true)}
+                            >
+                              Đúng
+                            </button>
+                            <button
+                              type="button"
+                              className={`ex-tf-btn is-false${val === false ? ' is-on' : ''}`}
+                              aria-pressed={val === false}
+                              onClick={() => setTrueFalse(q.itemId, opt.id, false)}
+                            >
+                              Sai
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <p className="ex-hint">
+                      Chấm bậc thang: đúng 4/4 ý = trọn điểm, 3/4 = 50%, 2/4 = 25%, 1/4 = 10%
+                    </p>
+                  </div>
+                )}
+
+                {q.type === 'SHORT_ANSWER' && (
+                  <div className="st-field">
+                    <label htmlFor={`sa-${q.itemId}`} className="sr-only">
+                      Đáp án câu {idx + 1}
+                    </label>
+                    <input
+                      id={`sa-${q.itemId}`}
+                      className="ex-input"
+                      value={answers[q.itemId] || ''}
+                      onChange={(e) => setAnswer(q.itemId, e.target.value)}
+                      placeholder="Nhập đáp án…"
+                      inputMode="decimal"
+                      autoComplete="off"
+                    />
+                  </div>
+                )}
+
+                {q.type === 'ESSAY' && (
+                  <div className="ex-essay">
+                    <label htmlFor={`es-${q.itemId}`} className="sr-only">
+                      Bài làm câu {idx + 1}
+                    </label>
+                    <textarea
+                      id={`es-${q.itemId}`}
+                      className="ex-input"
+                      value={essayTexts[q.itemId] || ''}
+                      onChange={(e) => setEssayTexts((prev) => ({ ...prev, [q.itemId]: e.target.value }))}
+                      rows={6}
+                      placeholder="Viết bài làm (hoặc chụp ảnh bài làm và tải lên bên dưới)…"
+                    />
+                    <ImageUploader
+                      images={essayFiles[q.itemId] || []}
+                      onChange={(next) => setEssayFiles((prev) => ({ ...prev, [q.itemId]: next }))}
+                      disabled={uploadingItem === q.itemId || submitting}
+                    />
+                  </div>
+                )}
+
+                {ck && (
+                  <div className={`ex-check ${ck.correct ? 'is-right' : 'is-wrong'}`} role="status">
+                    <strong>{ck.correct ? 'Chính xác!' : 'Chưa đúng'}</strong>
+                    <span className="mono"> · Đáp án: {formatAnswer(ck.answer)}</span>
+                    {ck.solution && (
+                      <div className="ex-check-sol">
+                        <LatexRenderer content={ck.solution} />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
             );
           })}
-        </div>
-        <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--color-muted)', lineHeight: 1.6 }}>
-          {(() => {
-            const done = exam.questions.filter((qq: any) => {
-              const a = answers[qq.itemId];
-              return a !== undefined && a !== '' && !(Array.isArray(a) && a.length === 0);
-            }).length;
-            return (
-              <>
-                {done}/{exam.questions.length} đã trả lời
-                <br />🚩 {marked.size} đánh dấu
-              </>
-            );
-          })()}
-        </div>
-      </div>
 
-      {/* Câu hỏi */}
-      {exam.questions.map((q: any, idx: number) => (
-        <div key={q.itemId} id={`q-${q.itemId}`} className="card" style={{ marginBottom: 16, padding: 20 }}>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span className="badge badge-accent">Câu {idx + 1}</span>
-            <span className="badge">{PART_LABEL[q.part] || 'Phần'}</span>
-            <span className="mono" style={{ fontSize: 12, color: 'var(--color-muted)', alignSelf: 'center' }}>
-              +{q.score} điểm
-            </span>
-            <button
-              type="button"
-              onClick={() => toggleMark(q.itemId)}
-              title="Đánh dấu câu này để xem lại"
-              style={{
-                marginLeft: 'auto',
-                border: '1px solid var(--color-rule)',
-                background: marked.has(q.itemId) ? 'var(--lm-amber)' : 'transparent',
-                color: marked.has(q.itemId) ? '#fff' : 'var(--color-muted)',
-                borderRadius: 8,
-                padding: '4px 10px',
-                fontSize: 12.5,
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-            >
-              🚩 {marked.has(q.itemId) ? 'Đã đánh dấu' : 'Đánh dấu'}
+          <div className="ex-end">
+            <p className="sh-muted">
+              Em đã làm {doneCount}/{total} câu{marked.size ? ` · ${marked.size} câu đánh dấu xem lại` : ''}.
+            </p>
+            <button type="button" className="sh-cta" onClick={() => setConfirmOpen(true)} disabled={submitting}>
+              {submitting ? 'Đang nộp bài…' : 'Nộp bài'}
             </button>
           </div>
+        </div>
 
-          <div style={{ marginBottom: 12 }}>
-            <LatexRenderer content={q.content} />
+        {/* ===== Bảng điều hướng: cột phải trên máy tính, ngăn kéo dưới trên điện thoại ===== */}
+        <aside className={`ex-nav${navOpen ? ' is-open' : ''}`} aria-label="Danh sách câu hỏi">
+          <div className="ex-nav-head">
+            <strong>Danh sách câu</strong>
+            <span className="sh-muted sh-small">
+              {doneCount}/{total} đã làm · {marked.size} đánh dấu
+            </span>
           </div>
+          {navGrid}
+          <ul className="ex-legend" aria-hidden="true">
+            <li><span className="ex-nav-btn is-done" />Đã làm</li>
+            <li><span className="ex-nav-btn is-marked" />Xem lại</li>
+            <li><span className="ex-nav-btn" />Chưa làm</li>
+          </ul>
+        </aside>
+      </div>
 
-          {q.type === 'MCQ' && q.options && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {q.options.map((opt: any) => (
-                <label
-                  key={opt.id}
-                  style={{
-                    display: 'flex',
-                    gap: 10,
-                    alignItems: 'flex-start',
-                    padding: '10px 14px',
-                    border: '1.5px solid var(--color-rule)',
-                    borderRadius: 10,
-                    cursor: 'pointer',
-                    background:
-                      answers[q.itemId] === opt.id
-                        ? 'color-mix(in oklch, var(--color-accent) 12%, var(--color-paper))'
-                        : checks[q.itemId]?.answer === opt.id
-                          ? '#ecfdf3'
-                          : 'transparent',
-                    borderColor:
-                      checks[q.itemId]?.answer === opt.id
-                        ? 'var(--color-success)'
-                        : undefined,
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name={`q-${q.itemId}`}
-                    checked={answers[q.itemId] === opt.id}
-                    onChange={() => setAnswer(q.itemId, opt.id)}
-                    style={{ marginTop: 4 }}
-                  />
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <strong>{opt.id}.</strong> <LatexRenderer content={opt.text} />
+      {/* Thanh dưới cho điện thoại */}
+      <div className="ex-mobilebar">
+        <button type="button" className="btn btn-outline" aria-expanded={navOpen} onClick={() => setNavOpen(!navOpen)}>
+          Câu {current + 1}/{total}
+        </button>
+        <button type="button" className="btn sh-btn-accent" onClick={() => setConfirmOpen(true)} disabled={submitting}>
+          Nộp bài
+        </button>
+      </div>
+
+      {/* ===== Hộp xác nhận nộp bài ===== */}
+      {confirmOpen && (
+        <div className="ex-modal-backdrop" onClick={() => !submitting && setConfirmOpen(false)}>
+          <div
+            className="ex-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ex-confirm-h"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && !submitting) setConfirmOpen(false);
+            }}
+          >
+            <h2 id="ex-confirm-h">Nộp bài ngay?</h2>
+            {unanswered.length > 0 ? (
+              <p>
+                Em còn <strong>{unanswered.length} câu chưa làm</strong>:{' '}
+                {unanswered.slice(0, 12).map((x: any, k: number) => (
+                  <span key={x.n}>
+                    {k > 0 && ', '}
+                    <button
+                      type="button"
+                      className="ex-link"
+                      onClick={() => {
+                        setConfirmOpen(false);
+                        goTo(x.n - 1);
+                      }}
+                    >
+                      {x.n}
+                    </button>
                   </span>
-                </label>
-              ))}
-            </div>
-          )}
-          {checks[q.itemId] && (
-            <div
-              style={{
-                marginTop: 10,
-                padding: 10,
-                borderRadius: 8,
-                background: checks[q.itemId].correct ? '#ecfdf3' : '#fef2f2',
-                border: `1.5px solid ${checks[q.itemId].correct ? 'var(--color-success)' : 'var(--color-danger)'}`,
-              }}
-            >
-              <div style={{ fontWeight: 800, fontSize: 13.5, color: checks[q.itemId].correct ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                {checks[q.itemId].correct ? '✅ Chính xác!' : '❌ Chưa đúng'}
-                <span className="mono" style={{ marginLeft: 8 }}>
-                  Đáp án: {formatAnswer(checks[q.itemId].answer)}
-                </span>
-              </div>
-              {checks[q.itemId].solution && (
-                <div style={{ marginTop: 6, fontSize: 13 }}>
-                  💡 <LatexRenderer content={checks[q.itemId].solution} />
-                </div>
-              )}
-            </div>
-          )}
-
-          {q.type === 'TRUE_FALSE' && q.options && (
-            <div>
-              <table
-                style={{
-                  width: '100%',
-                  borderCollapse: 'collapse',
-                  fontSize: 14,
-                  border: '1.5px solid #e2e8f0',
-                  borderRadius: 10,
-                  overflow: 'hidden',
+                ))}
+                {unanswered.length > 12 ? '…' : ''}
+              </p>
+            ) : (
+              <p>Em đã làm đủ {total} câu.</p>
+            )}
+            {marked.size > 0 && <p className="sh-muted">{marked.size} câu đang được đánh dấu xem lại.</p>}
+            <p className="sh-muted">Sau khi nộp, em không sửa được bài nữa.</p>
+            <div className="st-actions">
+              <button type="button" className="btn btn-outline" autoFocus disabled={submitting} onClick={() => setConfirmOpen(false)}>
+                Làm tiếp
+              </button>
+              <button
+                type="button"
+                className="btn sh-btn-accent"
+                disabled={submitting}
+                onClick={async () => {
+                  await doSubmit();
+                  setConfirmOpen(false);
                 }}
               >
-                <thead>
-                  <tr style={{ background: '#f1f5f9' }}>
-                    <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600 }}>
-                      Mệnh đề
-                    </th>
-                    <th style={{ padding: '8px 12px', width: 90, textAlign: 'center', fontWeight: 600 }}>
-                      Đúng
-                    </th>
-                    <th style={{ padding: '8px 12px', width: 90, textAlign: 'center', fontWeight: 600 }}>
-                      Sai
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {q.options.map((opt: any) => {
-                    const cur = answers[q.itemId] || {};
-                    const val: boolean | undefined = cur[opt.id];
-                    return (
-                      <tr key={opt.id} style={{ borderTop: '1px solid #e2e8f0' }}>
-                        <td style={{ padding: '10px 12px' }}>
-                          <strong>{opt.id}.</strong> <LatexRenderer content={opt.text} />
-                        </td>
-                        <td style={{ padding: 8, textAlign: 'center' }}>
-                          <button
-                            type="button"
-                            onClick={() => setTrueFalse(q.itemId, opt.id, true)}
-                            style={{
-                              width: 34,
-                              height: 34,
-                              borderRadius: '50%',
-                              border: val === true ? '2.5px solid var(--color-success)' : '2px solid #cbd5e1',
-                              background: val === true ? 'var(--color-success)' : '#fff',
-                              color: val === true ? '#fff' : 'transparent',
-                              cursor: 'pointer',
-                              fontSize: 16,
-                              fontWeight: 700,
-                              lineHeight: 1,
-                            }}
-                            title="Tích chọn Đúng"
-                          >
-                            ✓
-                          </button>
-                        </td>
-                        <td style={{ padding: 8, textAlign: 'center' }}>
-                          <button
-                            type="button"
-                            onClick={() => setTrueFalse(q.itemId, opt.id, false)}
-                            style={{
-                              width: 34,
-                              height: 34,
-                              borderRadius: '50%',
-                              border: val === false ? '2.5px solid var(--color-danger)' : '2px solid #cbd5e1',
-                              background: val === false ? 'var(--color-danger)' : '#fff',
-                              color: val === false ? '#fff' : 'transparent',
-                              cursor: 'pointer',
-                              fontSize: 16,
-                              fontWeight: 700,
-                              lineHeight: 1,
-                            }}
-                            title="Tích chọn Sai"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <p style={{ fontSize: 12, color: 'var(--color-muted)', marginTop: 6 }}>
-                Tích chọn Đúng (✓ xanh) hoặc Sai (✕ đỏ) cho từng mệnh đề · Chấm bậc thang: đúng 4/4 = trọn điểm, 3/4 = 50%, 2/4 = 25%, 1/4 = 10%
-              </p>
+                {submitting ? (uploadingItem ? 'Đang tải ảnh…' : 'Đang nộp…') : 'Nộp bài'}
+              </button>
             </div>
-          )}
-
-          {q.type === 'SHORT_ANSWER' && (
-            <input
-              value={answers[q.itemId] || ''}
-              onChange={(e) => setAnswer(q.itemId, e.target.value)}
-              placeholder="Nhập đáp án..."
-              style={{
-                width: '100%',
-                padding: 12,
-                border: '1.5px solid #e2e8f0',
-                borderRadius: 10,
-                fontSize: 15,
-              }}
-            />
-          )}
-
-          {q.type === 'MULTI_ANSWER' && q.options && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <p style={{ fontSize: 12, color: 'var(--color-muted)', margin: 0 }}>
-                ☑️ Chọn TẤT CẢ các đáp án đúng (có thể chọn nhiều)
-              </p>
-              {q.options.map((opt: any) => {
-                const selected = Array.isArray(answers[q.itemId])
-                  ? answers[q.itemId].includes(opt.id)
-                  : answers[q.itemId] === opt.id;
-                return (
-                  <label
-                    key={opt.id}
-                    style={{
-                      display: 'flex',
-                      gap: 10,
-                      alignItems: 'flex-start',
-                      padding: '10px 14px',
-                      border: '1.5px solid var(--color-rule)',
-                      borderRadius: 10,
-                      cursor: 'pointer',
-                      background: selected
-                        ? 'color-mix(in oklch, var(--color-accent) 12%, var(--color-paper))'
-                        : 'transparent',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={() => toggleMulti(q.itemId, opt.id)}
-                      style={{ marginTop: 4 }}
-                    />
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <strong>{opt.id}.</strong> <LatexRenderer content={opt.text} />
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          )}
-
-          {q.type === 'ESSAY' && (
-            <div>
-              <textarea
-                value={essayTexts[q.itemId] || ''}
-                onChange={(e) =>
-                  setEssayTexts((prev) => ({ ...prev, [q.itemId]: e.target.value }))
-                }
-                rows={5}
-                placeholder="Viết bài làm của bạn (hoặc tải ảnh bài làm bên dưới)..."
-                style={{
-                  width: '100%',
-                  padding: 12,
-                  border: '1.5px solid #e2e8f0',
-                  borderRadius: 10,
-                  fontSize: 15,
-                  fontFamily: 'inherit',
-                }}
-              />
-              <div style={{ marginTop: 8 }}>
-                <ImageUploader
-                  images={essayFiles[q.itemId] || []}
-                  onChange={(next) =>
-                    setEssayFiles((prev) => ({ ...prev, [q.itemId]: next }))
-                  }
-                  disabled={uploadingItem === q.itemId || submitting}
-                />
-              </div>
-            </div>
-          )}
+          </div>
         </div>
-      ))}
-
-      <button
-        className="btn"
-        style={{ padding: 14, fontSize: 16 }}
-        onClick={doSubmit}
-        disabled={submitting}
-      >
-        {submitting ? 'Đang nộp bài...' : '📤 Nộp bài'}
-      </button>
+      )}
     </div>
   );
 }

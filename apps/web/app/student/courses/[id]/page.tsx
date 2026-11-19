@@ -844,7 +844,7 @@ export default function CourseDetailPage() {
                           <span style={{ fontSize: 13 }}>{quizData.questionCount} câu trắc nghiệm · trộn ngẫu nhiên</span>
                           <span style={{ fontSize: 13 }}>· Đạt ≥ {quizData.passingPercent}%</span>
                           {quizData.negativeMarking && (
-                            <span className="badge" style={{ background: 'var(--color-danger-wash)', color: '#b91c1c' }}>
+                            <span className="badge" style={{ background: 'var(--color-danger-wash)', color: 'var(--color-danger)' }}>
                               🔴 Trừ {quizData.negativeWeight} điểm/câu sai
                             </span>
                           )}
@@ -852,11 +852,11 @@ export default function CourseDetailPage() {
                             <span className="badge badge-success">Điểm cao nhất: {quizData.bestScore}%</span>
                           )}
                           {quizData.maxAttempts > 0 ? (
-                            <span className="badge" style={{ background: '#eef2ff', color: '#3730a3' }}>
+                            <span className="badge" style={{ background: 'var(--color-track)', color: 'var(--color-accent)' }}>
                               🔁 Còn {quizData.remaining} / {quizData.maxAttempts} lượt
                             </span>
                           ) : (
-                            <span className="badge" style={{ background: '#eef2ff', color: '#3730a3' }}>🔁 Không giới hạn lượt</span>
+                            <span className="badge" style={{ background: 'var(--color-track)', color: 'var(--color-accent)' }}>🔁 Không giới hạn lượt</span>
                           )}
                         </div>
 
@@ -882,7 +882,7 @@ export default function CourseDetailPage() {
                             {quizAnswers && Object.keys(quizAnswers).length > 0 && !quizBusy ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                                 {quizData.questions.map((q: any, qi: number) => (
-                                  <div key={q.id} style={{ background: 'var(--color-surface)', borderRadius: 8, padding: 10, border: '1px solid #e8d5a8' }}>
+                                  <div key={q.id} style={{ background: 'var(--color-surface)', borderRadius: 8, padding: 10, border: '1px solid var(--color-rule-2)' }}>
                                     <div style={{ fontSize: 13.5, marginBottom: 6 }}>
                                       <b>Câu {qi + 1}.</b> <LatexRenderer content={q.content} />
                                     </div>
@@ -1202,7 +1202,7 @@ export default function CourseDetailPage() {
                     <div
                       style={{
                         marginBottom: 12,
-                        border: '1px dashed #e0c48c',
+                        border: '1px dashed var(--color-rule-2)',
                         borderRadius: 8,
                         padding: 10,
                         background: 'var(--color-paper-2)',
@@ -1216,7 +1216,7 @@ export default function CourseDetailPage() {
                         value={note}
                         onChange={(e) => setNote(e.target.value)}
                         placeholder="Ghi lại công thức cần nhớ, ý chưa hiểu…"
-                        style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid #e0c48c', fontSize: 13 }}
+                        style={{ width: '100%', padding: 8, borderRadius: 6, border: '1px solid var(--color-rule-2)', fontSize: 13 }}
                       />
                       <button
                         className="btn btn-outline"
@@ -1283,7 +1283,7 @@ export default function CourseDetailPage() {
                 {reviews.avg ?? '—'}
               </span>
               <div>
-                <div style={{ color: 'var(--color-warning, #d97706)', fontSize: 16 }}>
+                <div style={{ color: 'var(--color-warning, var(--color-warning))', fontSize: 16 }}>
                   {'★'.repeat(Math.round(reviews.avg ?? 0))}
                   {'☆'.repeat(5 - Math.round(reviews.avg ?? 0))}
                 </div>
@@ -1341,7 +1341,7 @@ export default function CourseDetailPage() {
                   <div key={r.id} style={{ fontSize: 13, padding: '8px 0', borderBottom: '1px solid var(--color-rule)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                       <strong>{r.student.fullName}</strong>
-                      <span style={{ color: 'var(--color-warning, #d97706)' }}>
+                      <span style={{ color: 'var(--color-warning, var(--color-warning))' }}>
                         {'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}
                       </span>
                     </div>

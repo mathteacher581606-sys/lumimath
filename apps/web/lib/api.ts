@@ -44,6 +44,13 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 export function saveAuth(token: string, user: any) {
   localStorage.setItem('token', token);
   localStorage.setItem('user', JSON.stringify(user));
+  // Bảng màu lưu theo tài khoản: đăng nhập máy nào cũng giữ đúng màu đã chọn
+  if (user?.theme) {
+    try {
+      localStorage.setItem('lumimath-theme', user.theme);
+      document.documentElement.setAttribute('data-theme', user.theme);
+    } catch {}
+  }
 }
 
 export function getToken() {
