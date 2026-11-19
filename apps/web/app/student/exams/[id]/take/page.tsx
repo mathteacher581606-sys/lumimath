@@ -118,8 +118,12 @@ export default function TakeExam() {
   }, [exam, result]);
 
   // Chấm ngay 1 câu (chế độ luyện tập): gọi API rồi lưu kết quả hiển thị
+  // Chỉ câu trắc nghiệm 1 đáp án được chấm ngay; Đúng/Sai, nhiều đáp án, trả lời ngắn
+  // chấm sau khi nộp bài (chấm giữa chừng sẽ lộ đáp án các ý còn lại).
   async function checkItem(itemId: string, value: any) {
     if (!exam || !(exam.practiceMode || exam.answersAtEnd === false)) return;
+    const q = exam.questions.find((x: any) => x.itemId === itemId);
+    if (!q || q.type !== 'MCQ') return;
     try {
       const r = await apiFetch(`/exams/${exam.examId}/check`, {
         method: 'POST',
@@ -208,8 +212,6 @@ export default function TakeExam() {
     const next = { ...(answersRef.current[itemId] || {}), [key]: value };
     answersRef.current = { ...answersRef.current, [itemId]: next };
     setAnswers((prev: any) => ({ ...prev, [itemId]: next }));
-    // Chấm ngay cho câu Đúng/Sai khi bật xem đáp án từng câu (gửi đúng lựa chọn MỚI)
-    checkItem(itemId, next);
   }
 
   // Ảnh cho câu tự luận (giữ file + xem trước, nộp mới tải lên)
@@ -783,14 +785,14 @@ export default function TakeExam() {
       {exam.practiceMode && (
         <div className="ex-alert">
           <span>
-            <strong>Chế độ luyện tập:</strong> chọn đáp án là biết đúng/sai và xem lời giải ngay. Làm lại thoải mái, không tính điểm.
+            <strong>Chế độ luyện tập:</strong> câu trắc nghiệm chọn xong là biết đúng/sai và xem lời giải ngay; câu Đúng/Sai, trả lời ngắn được chấm khi nộp bài. Không tính điểm.
           </span>
         </div>
       )}
       {!exam.practiceMode && exam.answersAtEnd === false && (
         <div className="ex-alert">
           <span>
-            <strong>Xem đáp án từng câu:</strong> giáo viên cho phép biết đúng/sai ngay khi chọn.
+            <strong>Xem đáp án từng câu:</strong> câu trắc nghiệm biết đúng/sai ngay khi chọn; câu Đúng/Sai, trả lời ngắn được chấm khi nộp bài.
           </span>
         </div>
       )}

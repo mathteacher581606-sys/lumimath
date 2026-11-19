@@ -3433,7 +3433,9 @@ export class ExamsService {
       type: item.question.type,
       content: item.question.content,
       options: item.question.options,
-      ...(practice
+      // Chỉ câu trắc nghiệm 1 đáp án mới gửi kèm đáp án (để chấm ngay khi luyện tập);
+      // các dạng khác chấm sau khi nộp nên không gửi đáp án xuống trình duyệt.
+      ...(practice && item.question.type === QuestionType.MCQ
         ? {
             answer: item.question.answer,
             solution: item.question.solution,
@@ -3511,6 +3513,11 @@ export class ExamsService {
     }
     const item = exam.items[0];
     const q: any = item.question;
+    // Chỉ câu trắc nghiệm 1 đáp án được chấm ngay. Đúng/Sai, nhiều đáp án, trả lời ngắn
+    // và tự luận phải NỘP BÀI xong mới chấm — chấm giữa chừng sẽ lộ đáp án các ý còn lại.
+    if (q.type !== QuestionType.MCQ) {
+      throw new ForbiddenException('Câu này chỉ được chấm sau khi nộp bài');
+    }
     let correct: boolean;
     let earned: number;
     if (q.type === QuestionType.TRUE_FALSE) {
