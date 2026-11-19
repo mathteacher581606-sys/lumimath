@@ -78,6 +78,7 @@ export class AdminController {
         studentCode: true,
         school: true,
         className: true,
+        grade: true,
         workplace: true,
         xp: true,
         level: true,
@@ -116,6 +117,9 @@ export class AdminController {
     if (typeof body.school === 'string') data.school = body.school;
     if (typeof body.className === 'string') data.className = body.className;
     if (typeof body.workplace === 'string') data.workplace = body.workplace;
+    if (typeof body.grade === 'number' && Number.isFinite(body.grade)) {
+      data.grade = body.grade >= 1 && body.grade <= 12 ? Math.round(body.grade) : null;
+    }
 
     return this.prisma.user.update({
       where: { id },
@@ -185,6 +189,50 @@ export class AdminController {
       .replace(/[^a-z0-9]/g, '');
   }
 
+  // Tải file mẫu nhập học sinh (Excel) — đúng cột mà hệ thống đọc được
+  @Get('import-students/template')
+  async importTemplate(@Res() res: Response) {
+    const sample = [
+      {
+        'Họ tên': 'Nguyễn Văn A',
+        Email: 'nguyenvana@example.com',
+        'Khối': 12,
+        'Lớp': '12A1',
+        'Mật khẩu': 'Abc12345',
+        'Trường': 'THPT Chuyên Trần Phú',
+      },
+      {
+        'Họ tên': 'Trần Thị B',
+        Email: 'tranthib@example.com',
+        'Khối': 12,
+        'Lớp': '12A1',
+        'Mật khẩu': '',
+        'Trường': '',
+      },
+      {
+        'Họ tên': 'Lê Văn C',
+        Email: 'levanc@example.com',
+        'Khối': 11,
+        'Lớp': '11A2',
+        'Mật khẩu': '',
+        'Trường': '',
+      },
+    ];
+    const ws = XLSX.utils.json_to_sheet(sample);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Học sinh');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent('mau-nhap-hoc-sinh.xlsx')}`,
+    );
+    res.send(buffer);
+  }
+
   // Nhận file Excel (.xlsx) → tạo tài khoản học sinh hàng loạt
   @Post('import-students')
   async importStudents(@Req() req: any, @Res() res: Response) {
@@ -220,6 +268,7 @@ export class AdminController {
       name: ['hoten', 'hovaten', 'ten', 'name', 'fullname', 'hosinh'],
       email: ['email', 'mail'],
       className: ['lop', 'class', 'classname'],
+      grade: ['khoi', 'grade'],
       password: ['matkhau', 'password', 'mk'],
       school: ['truong', 'school'],
     };
@@ -249,6 +298,11 @@ export class AdminController {
       const school = colMap.school
         ? String(r[colMap.school] || '').trim()
         : '';
+      let grade: number | null = null;
+      if (colMap.grade) {
+        const g = parseInt(String(r[colMap.grade] || '').trim(), 10);
+        if (!isNaN(g) && g >= 1 && g <= 12) grade = g;
+      }
       // Mật khẩu: dùng mật khẩu trong file nếu có; ô trống → tự cấp ngẫu nhiên
       let password = this.randomPassword();
       if (colMap.password) {
@@ -287,6 +341,7 @@ export class AdminController {
           role: Role.STUDENT,
           fullName,
           className: className || null,
+          grade,
           school: school || null,
           studentCode: this.randomStudentCode(),
         },
@@ -295,11 +350,95 @@ export class AdminController {
         fullName,
         email,
         className: className || '',
+        grade,
         studentCode: user.studentCode,
         password,
       });
     }
 
     return res.json({ created, skipped, total: rows.length });
+  }
+
+  // ============ KHÓA HỌC (THÊM NHIỀU TÀI KHOẢN VÀO KHÓA HỌC) ============
+
+  // Danh sách khóa học (tất cả giáo viên)
+  @Get('courses')
+  async courses() {
+    const courses = await this.prisma.course.findMany({
+      select: {
+        id: true,
+        title: true,
+        grade: true,
+        teacher: { select: { fullName: true } },
+        _count: { select: { enrollments: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return courses.map((c) => ({
+      id: c.id,
+      title: c.title,
+      grade: c.grade,
+      teacher: c.teacher?.fullName || '',
+      studentCount: c._count?.enrollments ?? 0,
+    }));
+  }
+
+  // Thêm nhiều tài khoản (theo email) vào một khóa học.
+  // Tài khoản chưa tồn tại sẽ được tạo tự động (học sinh, mật khẩu ngẫu nhiên).
+  @Post('courses/:courseId/enroll')
+  async enrollMany(
+    @Param('courseId') courseId: string,
+    @Body() body: any,
+  ) {
+    const course = await this.prisma.course.findUnique({
+      where: { id: courseId },
+    });
+    if (!course) throw new NotFoundException('Không tìm thấy khóa học');
+
+    const rawEmails: any[] = Array.isArray(body?.emails) ? body.emails : [];
+    const emails: string[] = rawEmails
+      .map((e: any) => String(e).trim().toLowerCase())
+      .filter((e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+    const unique: string[] = [...new Set(emails)];
+
+    const enrolled: string[] = [];
+    const created: { email: string; password: string }[] = [];
+    const already: string[] = [];
+    const notStudent: string[] = [];
+
+    for (const email of unique) {
+      let user = await this.prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        const pwd = this.randomPassword();
+        const hash = await bcrypt.hash(pwd, 10);
+        user = await this.prisma.user.create({
+          data: {
+            email,
+            passwordHash: hash,
+            role: Role.STUDENT,
+            fullName: email.split('@')[0],
+            studentCode: this.randomStudentCode(),
+          },
+        });
+        created.push({ email, password: pwd });
+      }
+      if (user.role !== Role.STUDENT) {
+        notStudent.push(email);
+        continue;
+      }
+      const existing = await this.prisma.enrollment.findUnique({
+        where: { courseId_studentId: { courseId, studentId: user.id } },
+      });
+      if (existing) {
+        already.push(email);
+        continue;
+      }
+      await this.prisma.enrollment.create({
+        data: { courseId, studentId: user.id },
+      });
+      enrolled.push(email);
+    }
+
+    return { enrolled, created, already, notStudent, total: unique.length };
   }
 }

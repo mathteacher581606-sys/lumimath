@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getUser } from '@/lib/api';
 import BackButton from '@/components/BackButton';
 import LatexRenderer from '@/components/LatexRenderer';
+import { SkeletonCards } from '@/components/Skeleton';
 
 export default function StudentCourseAssignments() {
   const params = useParams();
@@ -22,6 +23,11 @@ export default function StudentCourseAssignments() {
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [leaderboard, setLeaderboard] = useState<any[] | null>(null);
+  const [me, setMe] = useState<any>(null);
+
+  useEffect(() => {
+    setMe(getUser());
+  }, []);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -110,6 +116,17 @@ export default function StudentCourseAssignments() {
     }
   }
 
+  // Đổi thứ tự ảnh bài làm (ảnh 1 là trang đầu)
+  function moveImage(from: number, to: number) {
+    setImages((prev) => {
+      if (to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      const [it] = next.splice(from, 1);
+      next.splice(to, 0, it);
+      return next;
+    });
+  }
+
   async function submit() {
     if (!detail) return;
     setSubmitting(true);
@@ -118,7 +135,9 @@ export default function StudentCourseAssignments() {
         method: 'POST',
         body: JSON.stringify({ content, imageUrls: images, pdfUrl: pdfUrl || null, answers }),
       });
-      showToast('✅ Đã nộp bài! AI đang chấm thô…');
+      showToast(
+        detail?.mySubmission ? '✅ Đã cập nhật bài nộp!' : '✅ Đã nộp bài! AI đang chấm thô…',
+      );
       openDetail(detail.id);
       load();
     } catch (e: any) {
@@ -128,12 +147,36 @@ export default function StudentCourseAssignments() {
     }
   }
 
-  const canSubmit =
+  // Hạn nộp (đã tính theo lớp). Còn hạn ⇒ học sinh được SỬA/NỘP LẠI bài tự luận.
+  const dueTs = detail?.dueDate ? new Date(detail.dueDate).getTime() : null;
+  const pastDue = dueTs != null && Date.now() > dueTs;
+  const isEssayKind = detail && detail.kind !== 'EXAM';
+  const rz = detail?.resubmit;
+  const canEditBeforeDue = Boolean(isEssayKind && !pastDue);
+  // Server là nguồn chân lý (tính cả giới hạn lượt sửa + khoá sau khi chấm)
+  const serverCanEdit = rz ? Boolean(rz.canEdit) : canEditBeforeDue;
+  const canSubmit = Boolean(
     detail &&
-    (!detail.mySubmission ||
-      detail.mySubmission.status === 'RETURNED' ||
-      detail.allowResubmit);
+      (!detail.mySubmission ||
+        detail.mySubmission.status === 'RETURNED' ||
+        detail.allowResubmit ||
+        serverCanEdit),
+  );
+  const isResubmit = Boolean(detail?.mySubmission && canSubmit);
   const mySub = detail?.mySubmission;
+
+  // Lý do bị khoá (hiển thị cho học sinh)
+  const lockReason = (() => {
+    if (!mySub || canSubmit) return '';
+    if (rz?.pastDue || pastDue) return 'Đã hết hạn nộp nên không thể sửa bài.';
+    if (rz?.lockedAfterGraded && rz?.graded)
+      return 'Giáo viên đã chấm bài nên không thể sửa.';
+    if (rz?.editsLeft === 0)
+      return rz?.maxResubmit === 0
+        ? 'Bài giao này không cho phép sửa lại sau khi đã nộp.'
+        : `Bạn đã dùng hết ${rz?.maxResubmit} lượt sửa bài.`;
+    return '';
+  })();
 
   return (
     <div className="page-container" data-theme="maroon" style={{ maxWidth: 1100 }}>
@@ -149,7 +192,9 @@ export default function StudentCourseAssignments() {
       </div>
 
       {data === null ? (
-        <p style={{ marginTop: 20, color: 'var(--color-muted)' }}>Đang tải…</p>
+        <div style={{ marginTop: 20 }}>
+          <SkeletonCards count={6} height={132} />
+        </div>
       ) : data.assignments.length === 0 ? (
         <div className="card" style={{ marginTop: 20, textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>🎉</div>
@@ -189,15 +234,36 @@ export default function StudentCourseAssignments() {
       {/* ===== MODAL CHI TIẾT BÀI GIAO ===== */}
       {detail && (
         <div className="lm-detail-backdrop" onClick={() => setDetail(null)}>
-          <div className="lm-detail" style={{ maxWidth: 860 }} onClick={(e) => e.stopPropagation()}>
-            <div className="lm-detail-head">
-              <strong>📚 {detail.title}</strong>
+          <div className="lm-detail" style={{ maxWidth: 960 }} onClick={(e) => e.stopPropagation()}>
+            <div className="lm-detail-head" style={{ alignItems: 'flex-start' }}>
+              <strong style={{ fontSize: 19, lineHeight: 1.35, wordBreak: 'break-word' }}>{detail.title}</strong>
               <button className="lm-detail-close" onClick={() => setDetail(null)}>✕</button>
             </div>
-            <div className="lm-detail-body" style={{ maxHeight: '80vh', overflowY: 'auto' }}>
-              <div style={{ fontSize: 13, color: 'var(--color-muted)', marginBottom: 10 }}>
+            <div className="lm-detail-body" style={{ maxHeight: '84vh', overflowY: 'auto' }}>
+              {/* Thông tin bài nộp — các dòng có icon cho dễ đọc */}
+              <div className="lm-sub-meta">
+                <div>
+                  <span className="lm-sub-ico">🔖</span> Mã bài tập:{' '}
+                  <b className="mono">{String(detail.id || '').slice(-8)}</b>
+                </div>
+                <div>
+                  <span className="lm-sub-ico">🏫</span> Lớp: <b>{me?.className || '—'}</b>
+                </div>
+                <div>
+                  <span className="lm-sub-ico">👤</span> Tên học sinh:{' '}
+                  <b>{me?.fullName || '—'}</b>
+                </div>
+                <div>
+                  <span className="lm-sub-ico">📅</span> Hạn nộp:{' '}
+                  <b>
+                    {detail.dueDate
+                      ? new Date(detail.dueDate).toLocaleString('vi-VN')
+                      : 'Không thời hạn'}
+                  </b>
+                </div>
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--color-muted)', marginBottom: 12 }}>
                 {detail.kind === 'EXAM' ? '📝 Đề thi' : detail.kind === 'TULUAN' ? '✍️ Tự luận' : '🖊 Tự gõ đề'}
-                {detail.dueDate ? ` · Hạn nộp: ${new Date(detail.dueDate).toLocaleString('vi-VN')}` : ' · Không giới hạn thời gian'}
                 {detail.exam ? ` · ${detail.exam.totalScore}đ` : ''}
               </div>
               {detail.description && (
@@ -205,6 +271,67 @@ export default function StudentCourseAssignments() {
                   {detail.description}
                 </div>
               )}
+              {detail.questions?.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--lm-maroon)' }}>
+                      📄 ĐỀ BÀI
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--color-muted)' }}>
+                      ({detail.questions.length} câu)
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {detail.questions.map((q: any, i: number) => {
+                      const TypeLabel: Record<string, string> = {
+                        MCQ: 'Trắc nghiệm',
+                        TRUE_FALSE: 'Đúng/Sai',
+                        SHORT_ANSWER: 'Trả lời ngắn',
+                        ESSAY: 'Tự luận',
+                      };
+                      const Letters = 'ABCDEFGH';
+                      const opts: any[] = Array.isArray(q.options) ? q.options : [];
+                      return (
+                        <div
+                          key={q.id || i}
+                          style={{
+                            background: '#fff',
+                            border: '1px solid var(--color-rule)',
+                            borderRadius: 10,
+                            padding: 14,
+                          }}
+                        >
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 6, flexWrap: 'wrap' }}>
+                            <b style={{ fontSize: 13.5, color: 'var(--lm-maroon)' }}>Câu {i + 1}.</b>
+                            {q.type && (
+                              <span style={{ fontSize: 11.5, color: 'var(--color-muted)' }}>
+                                {TypeLabel[q.type] || q.type}
+                              </span>
+                            )}
+                            {q.code && (
+                              <span style={{ fontSize: 11.5, color: 'var(--color-muted)' }}>· {q.code}</span>
+                            )}
+                          </div>
+                          <LatexRenderer content={q.content || ''} />
+                          {opts.length > 0 && (
+                            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              {opts.map((o: any, k: number) => (
+                                <div key={k} style={{ fontSize: 13, display: 'flex', gap: 6 }}>
+                                  <b style={{ flexShrink: 0 }}>{Letters[k] || k + 1}.</b>
+                                  <div style={{ minWidth: 0 }}>
+                                    <LatexRenderer content={typeof o === 'string' ? o : o?.content || ''} />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {detail.customContent && (
                 <div style={{ padding: 12, background: '#fff', border: '1px solid var(--color-rule)', borderRadius: 8, marginBottom: 12 }}>
                   <LatexRenderer content={detail.customContent} />
@@ -264,65 +391,58 @@ export default function StudentCourseAssignments() {
                     </>
                   ) : (
                     <div style={{ fontSize: 13.5 }}>
-                      📥 Bài đã nộp — đang chờ giáo viên chốt điểm{mySub.aiScore != null ? ` (AI chấm thô: ${mySub.aiScore})` : ''}.
+                      📥 Bài đã nộp — đang chờ giáo viên chốt điểm
+                      {mySub.aiScore != null ? ` · Điểm cao nhất tạm tính: ${mySub.aiScore}` : ''}.
                     </div>
                   )}
                 </div>
               )}
 
-              {/* ===== NỘP BÀI ===== */}
+              {/* ===== LÀM BÀI ===== */}
               {canSubmit && (
                 <>
                   {detail.kind === 'EXAM' && detail.exam ? (
                     <div style={{ marginBottom: 14 }}>
-                      {/* Launcher làm bài như THI ONLINE */}
-                      <div style={{ padding: 16, borderRadius: 12, background: 'var(--lm-maroon)', color: '#fff', marginBottom: 12 }}>
+                      {/* Launcher làm bài */}
+                      <div style={{ padding: 18, borderRadius: 14, background: 'var(--lm-maroon)', color: '#fff', marginBottom: 12 }}>
                         <div style={{ fontWeight: 800, fontSize: 16 }}>📝 {detail.exam.title}</div>
                         <div style={{ fontSize: 13, marginTop: 4, opacity: 0.9 }}>
                           {detail.exam.totalScore} điểm · {detail.exam.duration} phút
                           {detail.dueDate ? ` · Hạn nộp: ${new Date(detail.dueDate).toLocaleString('vi-VN')}` : ''}
                         </div>
-                        <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        {mySub && (mySub.score != null || mySub.aiScore != null) && (
+                          <div style={{ marginTop: 8, fontSize: 14, fontWeight: 800, color: '#ffd27a' }}>
+                            🏆 Điểm cao nhất của bạn: {mySub.score ?? mySub.aiScore}/{detail.exam.totalScore}
+                          </div>
+                        )}
+                        <div style={{ marginTop: 14 }}>
                           <a
                             href={`/student/exams/${detail.exam.id}/take`}
                             target="_blank"
                             rel="noreferrer"
-                            className="btn-lm amber"
-                            style={{ textDecoration: 'none', padding: '10px 20px', fontWeight: 800 }}
-                          >
-                            ▶ Bắt đầu làm bài thi
-                          </a>
-                          <button
-                            type="button"
-                            className="btn-lm ghost"
-                            style={{ padding: '10px 20px' }}
-                            onClick={async () => {
-                              setSubmitting(true);
-                              try {
-                                await apiFetch(
-                                  `/courses/${courseId}/assignments/${detail.id}/submit-exam`,
-                                  { method: 'POST' },
-                                );
-                                showToast('✅ Đã nộp kết quả bài thi vào bài tập');
-                                openDetail(detail.id);
-                                load();
-                              } catch (e: any) {
-                                showToast('❌ ' + e.message);
-                              } finally {
-                                setSubmitting(false);
-                              }
+                            style={{
+                              display: 'inline-block',
+                              textDecoration: 'none',
+                              padding: '12px 28px',
+                              fontWeight: 800,
+                              fontSize: 15.5,
+                              borderRadius: 10,
+                              background: '#fff',
+                              color: 'var(--lm-maroon)',
+                              boxShadow: '0 4px 14px rgba(0,0,0,0.22)',
                             }}
                           >
-                            {submitting ? '⏳ Đang nộp…' : '📥 Nộp kết quả vừa làm'}
-                          </button>
+                            ▶ Bắt đầu làm bài
+                          </a>
                         </div>
-                        <div style={{ fontSize: 12, marginTop: 10, opacity: 0.85 }}>
-                          ⏱ Bài thi có bộ đếm ngược + chống gian lận. Làm xong quay lại đây bấm "📥 Nộp kết quả vừa làm".
+                        <div style={{ fontSize: 12, marginTop: 10, opacity: 0.92 }}>
+                          ⏱ Bài có bộ đếm ngược + chống gian lận. Điểm sẽ <strong>tự động lưu</strong> khi bạn nộp bài hoặc thoát ra.
                         </div>
                       </div>
                       {mySub && (
                         <div style={{ fontSize: 12.5, color: 'var(--color-muted)' }}>
                           Trạng thái: {mySub.status === 'RETURNED' ? '🔁 Cần nộp lại' : '📥 Đã nộp — chờ giáo viên chốt điểm'}
+                          {mySub.score != null ? ` · Điểm: ${mySub.score}` : mySub.aiScore != null ? ` · Điểm tạm tính: ${mySub.aiScore}` : ''}
                         </div>
                       )}
                     </div>
@@ -341,34 +461,74 @@ export default function StudentCourseAssignments() {
                   {detail.kind !== 'EXAM' && (
                     <>
                   <div className="form-group">
-                    <label>📷 Ảnh bài làm (không giới hạn số lượng, tự nén — hiện theo thứ tự tải lên)</label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      disabled={uploading}
-                      onChange={(e) => {
-                        const files = Array.from(e.target.files || []);
-                        files.forEach((f) => uploadImage(f));
-                      }}
-                    />
+                    <label style={{ fontSize: 14 }}>
+                      📷 Ảnh bài làm{' '}
+                      <span style={{ color: 'var(--color-muted)', fontWeight: 500, fontSize: 12.5 }}>
+                        — dùng ◀ ▶ để đổi thứ tự (ảnh 1 là trang đầu)
+                      </span>
+                    </label>
+
                     {images.length > 0 && (
-                      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                      <div className="lm-sub-imgs">
                         {images.map((u, i) => (
-                          <div key={i} style={{ position: 'relative' }}>
-                            <span className="mono" style={{ fontSize: 10, color: 'var(--color-muted)' }}>{i + 1}.</span>{' '}
-                            <img src={u} alt="" style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--color-rule)' }} />
-                            <button
-                              type="button"
-                              onClick={() => setImages((p) => p.filter((_, j) => j !== i))}
-                              style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: 10, border: 'none', background: 'var(--color-danger)', color: '#fff', fontSize: 11, cursor: 'pointer' }}
-                            >
-                              ✕
-                            </button>
+                          <div key={`${i}-${u.slice(-20)}`} className="lm-sub-img-card">
+                            <div style={{ position: 'relative', background: '#f7f7f7' }}>
+                              <img src={u} alt={`Ảnh ${i + 1}`} loading="lazy" />
+                              <button
+                                type="button"
+                                className="lm-sub-img-del"
+                                title="Xoá ảnh này"
+                                onClick={() => setImages((p) => p.filter((_, j) => j !== i))}
+                              >
+                                ✕
+                              </button>
+                              <span className="lm-sub-img-no">Trang {i + 1}</span>
+                            </div>
+                            <div className="lm-sub-img-bar">
+                              <button
+                                type="button"
+                                onClick={() => moveImage(i, i - 1)}
+                                disabled={i === 0}
+                                title="Đưa lên trước"
+                              >
+                                ◀
+                              </button>
+                              <span>{i + 1}</span>
+                              <button
+                                type="button"
+                                onClick={() => moveImage(i, i + 1)}
+                                disabled={i === images.length - 1}
+                                title="Đưa ra sau"
+                              >
+                                ▶
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
                     )}
+
+                    <label className="lm-sub-drop">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        disabled={uploading}
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          files.forEach((f) => uploadImage(f));
+                          e.currentTarget.value = '';
+                        }}
+                        style={{ display: 'none' }}
+                      />
+                      <span style={{ fontSize: 24, lineHeight: 1 }}>⬆️</span>
+                      <span className="lm-sub-drop-title">
+                        {uploading ? '⏳ Đang tải ảnh…' : 'Tải file lên'}
+                      </span>
+                      <span className="lm-sub-drop-hint">
+                        (Hỗ trợ Ảnh, Video, Excel, PPT, Audio hoặc File PDF)
+                      </span>
+                    </label>
                   </div>
 
                   <div className="form-group">
@@ -386,9 +546,55 @@ export default function StudentCourseAssignments() {
                     )}
                   </div>
 
-                  <button className="btn-lm amber" style={{ width: 'auto', padding: '9px 22px' }} disabled={submitting || uploading} onClick={submit}>
-                    {submitting ? '⏳ Đang nộp…' : uploading ? '⏳ Đang tải tệp…' : '📤 Nộp bài'}
-                  </button>
+                  {mySub && canSubmit && (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        background: '#eef6ff',
+                        border: '1px solid #bcd8f7',
+                        fontSize: 12.5,
+                        color: '#1e40af',
+                      }}
+                    >
+                      ✏️ Bạn đã nộp bài — vẫn có thể <b>sửa và nộp lại</b>.{' '}
+                      {rz && rz.editsLeft != null ? (
+                        <b>
+                          Còn {rz.editsLeft}/{rz.maxResubmit} lượt sửa.
+                        </b>
+                      ) : (
+                        <>(không giới hạn lượt sửa)</>
+                      )}{' '}
+                      Bài nộp mới sẽ thay thế bài cũ và cần giáo viên chấm lại.
+                    </div>
+                  )}
+                  {mySub && !canSubmit && lockReason && (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        background: '#fef2f2',
+                        border: '1px solid #fecaca',
+                        fontSize: 12.5,
+                        color: '#b91c1c',
+                      }}
+                    >
+                      🔒 {lockReason} Hãy liên hệ giáo viên nếu cần nộp lại.
+                    </div>
+                  )}
+                  <div className="lm-sticky-actions" style={{ display: 'flex', justifyContent: 'center', marginTop: 18, marginBottom: 4 }}>
+                    <button className="lm-submit-big" disabled={submitting || uploading} onClick={submit}>
+                      {submitting
+                        ? '⏳ Đang nộp…'
+                        : uploading
+                          ? '⏳ Đang tải tệp…'
+                          : isResubmit
+                            ? 'Cập nhật bài nộp'
+                            : 'Nộp bài'}
+                    </button>
+                  </div>
                     </>
                   )}
                 </>

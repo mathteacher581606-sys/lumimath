@@ -6,8 +6,11 @@ import {
   Param,
   Patch,
   Post,
+  Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Role } from '@prisma/client';
 import { AssignmentsService } from './assignments.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -104,6 +107,23 @@ export class AssignmentsController {
     @Body() body: any,
   ) {
     return this.assignments.grade(courseId, id, submissionId, user.id, body);
+  }
+
+  // Lịch sử các lần nộp/sửa (GV xem của HS, HS xem của chính mình)
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/submissions/:submissionId/history')
+  submissionHistory(
+    @Param('courseId') courseId: string,
+    @Param('id') id: string,
+    @Param('submissionId') submissionId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.assignments.submissionHistory(
+      courseId,
+      id,
+      submissionId,
+      user.id,
+    );
   }
 
   // GV xem bài làm đề thi của học sinh (trắc nghiệm + tự luận) để chấm
@@ -215,5 +235,41 @@ export class AssignmentsController {
     @CurrentUser() user: any,
   ) {
     return this.assignments.regradeAssignment(courseId, id, user.id);
+  }
+
+  // Xuất bảng điểm của bài tập (PDF / Excel)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get(':id/scores/export')
+  async exportScores(
+    @Param('courseId') courseId: string,
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Query('format') format: string,
+    @Query('className') className: string,
+    @Res() res: Response,
+  ) {
+    const f = format === 'xlsx' ? 'xlsx' : 'pdf';
+    const { buffer, filename, contentType } =
+      await this.assignments.exportScores(courseId, id, user.id, f, className);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    res.send(buffer);
+  }
+}
+
+// Tự động đồng bộ điểm thi vào các bài giao (gọi ngay sau khi HS nộp bài thi)
+@Controller('exam-assignments')
+export class ExamAssignmentsController {
+  constructor(private readonly assignments: AssignmentsService) {}
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.STUDENT)
+  @Post(':examId/sync')
+  sync(@Param('examId') examId: string, @CurrentUser() user: any) {
+    return this.assignments.autoSyncExam(user.id, examId);
   }
 }

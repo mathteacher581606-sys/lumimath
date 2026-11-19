@@ -14,7 +14,7 @@ export default function AdminUsersPage() {
   const [roleFilter, setRoleFilter] = useState('');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<any | null>(null);
-  const [form, setForm] = useState({ fullName: '', email: '', school: '', className: '', workplace: '' });
+  const [form, setForm] = useState({ fullName: '', email: '', school: '', className: '', grade: '', workplace: '' });
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -71,11 +71,34 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function downloadTemplate() {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/admin/import-students/template', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.message || 'Không tải được file mẫu');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mau-nhap-hoc-sinh.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert('Lỗi: ' + e.message);
+    }
+  }
+
   function downloadAccountList() {
     if (!importResult?.created?.length) return;
-    const header = ['Họ tên', 'Email', 'Lớp', 'Mã HS', 'Mật khẩu'];
+    const header = ['Họ tên', 'Email', 'Khối', 'Lớp', 'Mã HS', 'Mật khẩu'];
     const lines = importResult.created.map((a: any) =>
-      [a.fullName, a.email, a.className, a.studentCode, a.password]
+      [a.fullName, a.email, a.grade != null ? a.grade : '', a.className, a.studentCode, a.password]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
         .join(','),
     );
@@ -110,6 +133,7 @@ export default function AdminUsersPage() {
       email: u.email || '',
       school: u.school || '',
       className: u.className || '',
+      grade: u.grade != null ? String(u.grade) : '',
       workplace: u.workplace || '',
     });
   }
@@ -120,7 +144,10 @@ export default function AdminUsersPage() {
     try {
       await apiFetch(`/admin/users/${editing.id}`, {
         method: 'PATCH',
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          grade: form.grade === '' ? null : Number(form.grade),
+        }),
       });
       showToast('Đã cập nhật thông tin');
       setEditing(null);
@@ -189,6 +216,14 @@ export default function AdminUsersPage() {
           Tìm
         </button>
         <button
+          className="btn btn-outline"
+          style={{ width: 'auto', padding: '9px 14px', fontSize: 13 }}
+          onClick={downloadTemplate}
+          title="Tải file Excel mẫu đúng định dạng để nhập hàng loạt"
+        >
+          📄 File mẫu
+        </button>
+        <button
           className="btn"
           style={{ width: 'auto', marginLeft: 'auto', background: 'var(--color-accent)', color: '#fff' }}
           disabled={importing}
@@ -230,6 +265,7 @@ export default function AdminUsersPage() {
                     <tr style={{ borderBottom: '1px solid var(--color-rule)' }}>
                       <th style={{ padding: '6px 8px', textAlign: 'left' }}>Họ tên</th>
                       <th style={{ padding: '6px 8px', textAlign: 'left' }}>Email</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'left' }}>Khối</th>
                       <th style={{ padding: '6px 8px', textAlign: 'left' }}>Lớp</th>
                       <th style={{ padding: '6px 8px', textAlign: 'left' }}>Mã HS</th>
                       <th style={{ padding: '6px 8px', textAlign: 'left' }}>Mật khẩu</th>
@@ -240,6 +276,7 @@ export default function AdminUsersPage() {
                       <tr key={i} style={{ borderBottom: '1px solid var(--color-rule)' }}>
                         <td style={{ padding: '6px 8px' }}>{a.fullName}</td>
                         <td style={{ padding: '6px 8px' }}>{a.email}</td>
+                        <td style={{ padding: '6px 8px' }}>{a.grade != null ? a.grade : '—'}</td>
                         <td style={{ padding: '6px 8px' }}>{a.className || '—'}</td>
                         <td className="mono" style={{ padding: '6px 8px' }}>{a.studentCode}</td>
                         <td className="mono" style={{ padding: '6px 8px' }}>{a.password}</td>
@@ -247,7 +284,7 @@ export default function AdminUsersPage() {
                     ))}
                     {importResult.created.length > 20 && (
                       <tr>
-                        <td colSpan={5} style={{ padding: '6px 8px', color: 'var(--color-muted)' }}>
+                        <td colSpan={6} style={{ padding: '6px 8px', color: 'var(--color-muted)' }}>
                           … còn {importResult.created.length - 20} tài khoản (tải file để xem đầy đủ)
                         </td>
                       </tr>
@@ -304,6 +341,8 @@ export default function AdminUsersPage() {
                     </span>
                   </td>
                   <td style={{ padding: '8px 10px', color: 'var(--color-muted)', fontSize: 13 }}>
+                    {u.grade != null ? `Khối ${u.grade}` : ''}
+                    {u.grade != null && (u.className || u.workplace) ? ' · ' : ''}
                     {u.className || u.workplace || '—'}
                   </td>
                   <td style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--color-muted)' }}>
@@ -353,6 +392,17 @@ export default function AdminUsersPage() {
             <div className="form-group">
               <label>Email</label>
               <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Khối (1–12)</label>
+              <input
+                value={form.grade}
+                onChange={(e) => setForm({ ...form, grade: e.target.value })}
+                placeholder="VD: 12"
+                type="number"
+                min={1}
+                max={12}
+              />
             </div>
             <div className="form-group">
               <label>Lớp (học sinh)</label>

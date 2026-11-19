@@ -1,10 +1,18 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/api';
 import LatexRenderer from '@/components/LatexRenderer';
 import { formatAnswer } from '@/lib/answer';
-import LatexEditor from '@/components/LatexEditor';
+
+// Trình soạn LaTeX (CodeMirror ≈ 200KB) chỉ cần khi mở khung sửa → nạp lười để giảm tải trang đầu
+const LatexEditor = dynamic(() => import('@/components/LatexEditor'), {
+  ssr: false,
+  loading: () => (
+    <div className="skeleton" style={{ height: 380, borderRadius: 10 }} aria-label="Đang tải trình soạn LaTeX" />
+  ),
+});
 
 const DIFFICULTY_LABEL: Record<string, string> = {
   NHAN_BIET: 'Nhận biết',
@@ -98,6 +106,7 @@ export default function BankPage() {
   const [showImport, setShowImport] = useState(false);
   const [texSource, setTexSource] = useState('');
   const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number; questions: number; failed: number } | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [reviewQuestions, setReviewQuestions] = useState<any[]>([]);
@@ -131,10 +140,10 @@ export default function BankPage() {
       }
       const data = await res.json();
       setDocxPreview(data);
-      // Câu trùng với kho → tự bỏ tick (hiển thị cảnh báo đỏ)
+      // Chỉ TRÙNG CHÍNH XÁC mới tự bỏ tick; "nghi trùng" (gần giống) chỉ cảnh báo đỏ, giữ câu mới
       setDocxChecked(
         Object.fromEntries(
-          data.questions.map((q: any, i: number) => [i, !q.duplicateOf]),
+          data.questions.map((q: any, i: number) => [i, !(q.duplicateOf && q.duplicateOf.exact)]),
         ),
       );
     } catch (e: any) {
@@ -422,6 +431,71 @@ export default function BankPage() {
       setTopics(data);
     } catch (e: any) {
       console.error(e);
+    }
+  }
+
+  // Cây mục lục 3 cấp: CHƯƠNG → Bài → Dạng
+  const [topicTree, setTopicTree] = useState<any[]>([]);
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [seeding, setSeeding] = useState(false);
+  const [reclassifying, setReclassifying] = useState(false);
+
+  async function reclassifyAll() {
+    if (
+      !confirm(
+        'AI sẽ phân loại lại TOÀN BỘ câu hỏi trong ngân hàng theo cây mục lục (chương → bài → dạng).\n\nViệc này có thể mất vài phút và tốn token AI. Tiếp tục?',
+      )
+    )
+      return;
+    setReclassifying(true);
+    try {
+      const r = await apiFetch('/bank/reclassify?limit=300', { method: 'POST' });
+      alert(
+        `✅ Đã phân loại lại ${r.updated}/${r.total} câu hỏi — ${r.matched} câu khớp đúng một dạng trong mục lục.\nCác câu còn lại AI không xác định được dạng phù hợp (giữ nguyên chủ đề cũ).`,
+      );
+      await loadQuestions();
+      await loadTopicTree();
+      await loadSummary();
+    } catch (e: any) {
+      alert('❌ ' + e.message);
+    } finally {
+      setReclassifying(false);
+    }
+  }
+
+  async function loadTopicTree() {
+    try {
+      const data = await apiFetch('/bank/topics/tree');
+      setTopicTree(data?.tree || []);
+    } catch (e: any) {
+      console.error(e);
+    }
+  }
+
+  function toggleNode(id: string) {
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function seedGrade10() {
+    if (!confirm('Cập nhật cây mục lục lớp 10 + 11 + 12 (CHƯƠNG → Bài → Dạng)? Chạy lại nhiều lần không bị nhân bản.')) return;
+    setSeeding(true);
+    try {
+      const r = await apiFetch('/bank/topics/seed', { method: 'POST' });
+      await loadTopicTree();
+      await loadTopics();
+      await loadSummary();
+      alert(
+        `✅ Đã cập nhật mục lục lớp ${(r.grades || []).join(', ')}: thêm ${r.created} mục, cập nhật ${r.updated} mục, chuyển ${r.migrated} câu hỏi vào chương`,
+      );
+    } catch (e: any) {
+      alert('❌ ' + e.message);
+    } finally {
+      setSeeding(false);
     }
   }
 
@@ -895,11 +969,26 @@ export default function BankPage() {
     setSearch(raw);
     const q = raw.trim();
     const overrides: any = {};
-    // Tìm theo ID/mã câu hỏi: A398335, a398335, hoặc chuỗi mã kiểu 2-4 chữ + 2-6 số
-    const codeHit = q.match(/^([a-zA-Z]{1,4}\d{2,6})$/);
+    // Tìm theo ID/mã câu hỏi: A398335, TSA-01, a398335... (chữ + tùy dấu gạch + số)
+    const codeHit = q.match(/^([A-Za-z]{1,4}-?\d{2,6})$/);
     if (codeHit) {
-      overrides.code = codeHit[1];
-      setFCode(codeHit[1]);
+      const code = codeHit[1].toUpperCase();
+      overrides.code = code;
+      // Xoá sạch từ khoá + mọi bộ lọc khác để kết quả khớp ĐÚNG mã (tránh lẫn bộ lọc cũ)
+      overrides.q = '';
+      overrides.grade = '';
+      overrides.difficulty = '';
+      overrides.topicId = '';
+      overrides.form = '';
+      overrides.source = '';
+      overrides.type = '';
+      setFCode(code);
+      setFGrade('');
+      setFDifficulty('');
+      setFTopic('');
+      setFForm('');
+      setFSource('');
+      setFType('');
       loadQuestions(overrides);
       return;
     }
@@ -1081,6 +1170,7 @@ export default function BankPage() {
     loadQuestions();
     loadExams();
     loadTopics();
+    loadTopicTree();
     loadForms();
     loadSummary();
     loadSources();
@@ -1203,6 +1293,25 @@ export default function BankPage() {
     }
   }
 
+  // Chia .tex thành từng nhóm ~100 câu để mỗi lần gọi không bị timeout (500+ câu vẫn chạy được)
+  function splitTexIntoChunks(tex: string, chunkSize = 100): string[] {
+    const normalized = String(tex || '')
+      .replace(/\\begin\{vd\}/g, '\\begin{ex}')
+      .replace(/\\end\{vd\}/g, '\\end{ex}')
+      .replace(/\\begin\{bt\}/g, '\\begin{ex}')
+      .replace(/\\end\{bt\}/g, '\\end{ex}');
+    const blocks: string[] = [];
+    const re = /\\begin\{ex\}[\s\S]*?\\end\{ex\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(normalized)) !== null) blocks.push(m[0]);
+    if (!blocks.length) return [tex]; // không nhận diện được block ex → gửi nguyên
+    const chunks: string[] = [];
+    for (let i = 0; i < blocks.length; i += chunkSize) {
+      chunks.push(blocks.slice(i, i + chunkSize).join('\n\n'));
+    }
+    return chunks;
+  }
+
   // Bước 1: tách câu hỏi + AI phân loại thô (chủ đề/lớp/độ khó)
   async function previewImport() {
     if (!texSource.trim()) {
@@ -1210,20 +1319,44 @@ export default function BankPage() {
       return;
     }
     setImporting(true);
+    setImportProgress(null);
     setReviewQuestions([]);
     try {
-      const result = await apiFetch('/bank/import-tex/preview', {
-        method: 'POST',
-        body: JSON.stringify({ texSource }),
-      });
-      if (!result.questions || result.questions.length === 0) {
-        alert('Không tìm thấy câu hỏi nào trong file .tex');
+      const chunks = splitTexIntoChunks(texSource, 100);
+      const all: any[] = [];
+      const allFailed: any[] = [];
+      for (let ci = 0; ci < chunks.length; ci++) {
+        setImportProgress({
+          done: ci + 1,
+          total: chunks.length,
+          questions: all.length,
+          failed: allFailed.length,
+        });
+        try {
+          const result = await apiFetch('/bank/import-tex/preview', {
+            method: 'POST',
+            body: JSON.stringify({ texSource: chunks[ci] }),
+          });
+          if (result.questions?.length) all.push(...result.questions);
+          if (result.failed?.length) allFailed.push(...result.failed);
+        } catch (e: any) {
+          allFailed.push({
+            index: `nhóm ${ci + 1}`,
+            reason: e?.message || 'Lỗi kết nối / quá tải',
+            preview: '',
+          });
+        }
+      }
+      if (all.length === 0) {
+        alert(
+          'Không tìm thấy câu hỏi nào trong file .tex' +
+            (allFailed.length ? ` (${allFailed.length} khối không phân tích được)` : ''),
+        );
         return;
       }
       // Khởi tạo giá trị phân loại: dùng gợi ý AI làm mặc định
-      // Câu nghi trùng: giữ lại hiển thị ĐỎ để so sánh, mặc định KHÔNG nhập (GV quyết định)
-      const all = result.questions;
-      const dupeCount = all.filter((q: any) => q.duplicateOf).length;
+      // Trùng CHÍNH XÁC → bôi đỏ + mặc định KHÔNG nhập; "nghi trùng" (gần giống) → vẫn nhập (GV quyết định)
+      const dupeCount = all.filter((q: any) => q.duplicateOf && q.duplicateOf.exact).length;
       setReviewQuestions(
         all.map((q: any) => ({
           ...q,
@@ -1231,19 +1364,29 @@ export default function BankPage() {
           grade: q.ai?.grade || '',
           difficulty: q.ai?.difficulty || '',
           form: q.ai?.form || '',
-          include: !q.duplicateOf,
+          include: !(q.duplicateOf && q.duplicateOf.exact),
         })),
       );
-      alert(
+      let msg =
         `Đã tách ${all.length} câu hỏi. AI đã phân loại thô — kiểm tra và chỉnh lại nếu cần, sau đó bấm "Lưu vào ngân hàng".` +
-          (dupeCount
-            ? `\n\n⚠️ ${dupeCount} câu NGHI TRÙNG với kho (bôi đỏ) — mặc định không nhập. Bấm ô "Vẫn nhập lên" nếu muốn giữ.`
-            : ''),
-      );
+        (dupeCount
+          ? `\n\n⚠️ ${dupeCount} câu TRÙNG CHÍNH XÁC với kho (bôi đỏ) — mặc định không nhập. Bấm ô "Vẫn nhập lên" nếu muốn giữ.`
+          : '');
+      if (allFailed.length) {
+        msg +=
+          `\n\n❌ ${allFailed.length} lỗi (không biên dịch được):` +
+          allFailed
+            .slice(0, 6)
+            .map((f: any) => `\n• ${f.index}: ${f.reason}` + (f.preview ? ` — "${f.preview}"` : ''))
+            .join('') +
+          (allFailed.length > 6 ? `\n… và ${allFailed.length - 6} lỗi khác` : '');
+      }
+      alert(msg);
     } catch (err: any) {
       alert(err.message);
     } finally {
       setImporting(false);
+      setImportProgress(null);
     }
   }
 
@@ -1273,6 +1416,50 @@ export default function BankPage() {
     }
   }
 
+  // Sửa code inline từng câu khi duyệt nhập đề vào ngân hàng
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editCode, setEditCode] = useState('');
+  const [parseBusy, setParseBusy] = useState(false);
+  const [parseErr, setParseErr] = useState('');
+
+  function openEditCode(i: number) {
+    setEditingIdx(i);
+    setEditCode(reviewQuestions[i]?.source || '');
+    setParseErr('');
+  }
+
+  async function reparseCode() {
+    if (editingIdx === null) return;
+    setParseBusy(true);
+    setParseErr('');
+    try {
+      const r = await apiFetch('/bank/parse-question', {
+        method: 'POST',
+        body: JSON.stringify({ tex: editCode }),
+      });
+      setReviewQuestions((prev) =>
+        prev.map((q, idx) =>
+          idx === editingIdx
+            ? {
+                ...q,
+                type: r.type,
+                content: r.content,
+                options: r.options,
+                answer: r.answer,
+                solution: r.solution,
+                source: editCode,
+              }
+            : q,
+        ),
+      );
+      setEditingIdx(null);
+    } catch (e: any) {
+      setParseErr(e.message);
+    } finally {
+      setParseBusy(false);
+    }
+  }
+
   function handleFileUpload(e: any) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1280,8 +1467,6 @@ export default function BankPage() {
     reader.onload = () => setTexSource(String(reader.result || ''));
     reader.readAsText(file);
   }
-
-  // Biên dịch thử LaTeX → xem PDF ngay trên web
   async function compilePreview() {
     if (!texSource.trim()) {
       alert('Vui lòng nhập code LaTeX trước');
@@ -1374,12 +1559,66 @@ export default function BankPage() {
     ESSAY: 'Tự luận',
   };
 
+  // Render đệ quy cây mục lục: CHƯƠNG → Bài → Dạng
+  function renderTopicNode(node: any, depth: number): any {
+    const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+    const expanded = expandedNodes.has(node.id);
+    const active = fTopic === node.id;
+    return (
+      <div key={node.id}>
+        <button
+          type="button"
+          className={`lm-tree-row${hasChildren ? '' : ' lm-topic-row'}${active ? ' active' : ''}`}
+          style={{ paddingLeft: 10 + depth * 16 }}
+          title={node.name}
+          onClick={() => {
+            if (hasChildren) toggleNode(node.id);
+            else selectTopic({ id: node.id, grade: node.grade });
+          }}
+        >
+          <span className="lm-tree-toggle">{hasChildren ? (expanded ? '∨' : '›') : '·'}</span>
+          <span className="lm-tree-label">
+            {hasChildren ? '📁' : '📄'} {node.name}
+          </span>
+          <span className="lm-tree-count">{node.count ?? 0}</span>
+        </button>
+        {hasChildren && expanded && (
+          <div className="lm-tree-children">
+            {node.children.map((c: any) => renderTopicNode(c, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="page-container lm-bank" data-theme="maroon">
       <div className="lm-layout">
         {/* ================= SIDEBAR: CÂY MỤC LỤC ================= */}
         <aside className="lm-sidebar">
-          <div className="lm-sidebar-head">Cây mục lục</div>
+          <div className="lm-sidebar-head" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ flex: 1 }}>Cây mục lục</span>
+            <button
+              type="button"
+              className="lm-filter-btn"
+              style={{ fontSize: 11, padding: '3px 8px' }}
+              title="Cập nhật cây mục lục lớp 10 + 11 + 12 (CHƯƠNG → Bài → Dạng)"
+              disabled={seeding}
+              onClick={seedGrade10}
+            >
+              {seeding ? '⏳' : '🔄'} Mục lục
+            </button>
+            <button
+              type="button"
+              className="lm-filter-btn"
+              style={{ fontSize: 11, padding: '3px 8px' }}
+              title="AI phân loại lại toàn bộ câu hỏi trong ngân hàng theo cây mục lục"
+              disabled={reclassifying}
+              onClick={reclassifyAll}
+            >
+              {reclassifying ? '⏳ AI…' : '🤖'} Phân loại lại
+            </button>
+          </div>
           <div className="lm-sidebar-search">
             <input
               value={folderQuery}
@@ -1494,19 +1733,25 @@ export default function BankPage() {
               );
             })()}
 
-            {/* Từng lớp → chủ đề */}
+            {/* Từng lớp → CÂY MỤC LỤC (CHƯƠNG → Bài → Dạng) */}
             {GRADE_ROWS.map(({ key, label }) => {
-              const list = (topicsByGrade[key] || []).filter((t) =>
-                folderQuery.trim()
-                  ? String(t.name).toLowerCase().includes(folderQuery.trim().toLowerCase())
-                  : true,
+              const q = folderQuery.trim().toLowerCase();
+              const subtreeMatches = (n: any): boolean =>
+                !q ||
+                String(n.name).toLowerCase().includes(q) ||
+                (n.children || []).some((c: any) => subtreeMatches(c));
+              const roots = topicTree.filter(
+                (t) =>
+                  String(t.grade ?? 'none') === key &&
+                  !t.parentId &&
+                  subtreeMatches(t),
               );
               const gradeCount =
                 key === 'none'
                   ? summary?.byGrade?.none ?? 0
                   : summary?.byGrade?.[key] ?? 0;
-              if (key !== 'none' && !list.length && !gradeCount) return null;
-              if (key === 'none' && !list.length) return null;
+              if (key !== 'none' && !roots.length && !gradeCount) return null;
+              if (key === 'none' && !roots.length) return null;
               const expanded = expandedGrades.has(key);
               const isGradeActive =
                 fGrade === (key === 'none' ? '' : key) && !fTopic && key !== 'none';
@@ -1536,40 +1781,9 @@ export default function BankPage() {
                       </span>
                     )}
                   </button>
-                  {expanded && list.length > 0 && (
+                  {expanded && roots.length > 0 && (
                     <div className="lm-tree-children">
-                      {list.map((t) => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          className={`lm-tree-row lm-topic-row${fTopic === t.id ? ' active' : ''}`}
-                          onClick={() => selectTopic(t)}
-                          title={t.name}
-                        >
-                          <span className="lm-tree-label">{t.name}</span>
-                          <span className="lm-tree-count">{t._count?.questions ?? 0}</span>
-                          <span
-                            className="lm-tree-action"
-                            title="Đổi tên chủ đề"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              renameTopic(t);
-                            }}
-                          >
-                            ✏️
-                          </span>
-                          <span
-                            className="lm-tree-action"
-                            title="Xóa chủ đề"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeTopic(t);
-                            }}
-                          >
-                            🗑️
-                          </span>
-                        </button>
-                      ))}
+                      {roots.map((node: any) => renderTopicNode(node, 0))}
                     </div>
                   )}
                 </div>
@@ -2038,9 +2252,33 @@ export default function BankPage() {
               {compiling ? '⏳ Đang biên dịch...' : '🧪 Biên dịch thử (xem PDF)'}
             </button>
             <button className="btn" style={{ width: 'auto' }} onClick={previewImport} disabled={importing}>
-              {importing ? 'Đang phân tích...' : 'AI phân loại & nạp vào ngân hàng'}
+              {importing ? '⏳ Đang phân loại…' : 'AI phân loại & nạp vào ngân hàng'}
             </button>
           </div>
+
+          {/* Thanh tiến trình nhập + đếm số câu + lỗi biên dịch */}
+          {importing && importProgress && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--color-muted)', marginBottom: 6 }}>
+                <span>
+                  Đang phân loại nhóm {importProgress.done}/{importProgress.total}
+                </span>
+                <span>
+                  ✅ {importProgress.questions} câu · ❌ {importProgress.failed} lỗi
+                </span>
+              </div>
+              <div style={{ height: 8, background: 'var(--color-rule)', borderRadius: 999, overflow: 'hidden' }}>
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${Math.round((importProgress.done / Math.max(1, importProgress.total)) * 100)}%`,
+                    background: 'var(--color-accent)',
+                    transition: 'width 0.3s ease',
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Bảng duyệt câu hỏi + phân loại AI (giáo viên chỉnh trước khi lưu) */}
           {reviewQuestions.length > 0 && (
@@ -2130,6 +2368,72 @@ export default function BankPage() {
                       ))}
                     </div>
                   )}
+
+                  {/* 💡 Lời giải (biên dịch) */}
+                  {q.solution && (
+                    <div
+                      style={{
+                        marginBottom: 8,
+                        fontSize: 12.5,
+                        background: 'color-mix(in oklch, var(--color-success) 8%, var(--color-paper))',
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid color-mix(in oklch, var(--color-success) 25%, transparent)',
+                      }}
+                    >
+                      <strong style={{ color: 'var(--color-success)' }}>💡 Lời giải:</strong>{' '}
+                      <LatexRenderer content={q.solution} />
+                    </div>
+                  )}
+
+                  {/* ✏️ Sửa code inline */}
+                  <button
+                    type="button"
+                    className="lm-filter-btn"
+                    style={{ fontSize: 12, padding: '3px 10px', marginBottom: 8 }}
+                    onClick={() => {
+                      if (editingIdx === i) setEditingIdx(null);
+                      else openEditCode(i);
+                    }}
+                  >
+                    {editingIdx === i ? '✕ Đóng sửa code' : '✏️ Sửa code câu này'}
+                  </button>
+                  {editingIdx === i && (
+                    <div style={{ marginBottom: 8 }}>
+                      <textarea
+                        value={editCode}
+                        onChange={(e) => setEditCode(e.target.value)}
+                        rows={5}
+                        spellCheck={false}
+                        style={{
+                          width: '100%',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 12,
+                          padding: 8,
+                          borderRadius: 6,
+                          border: '1px solid var(--color-rule)',
+                          background: 'var(--color-paper)',
+                          color: 'var(--color-ink)',
+                          lineHeight: 1.5,
+                        }}
+                      />
+                      {parseErr && (
+                        <div style={{ color: 'var(--color-danger)', fontSize: 12, marginTop: 4 }}>
+                          ⚠️ {parseErr}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ width: 'auto', marginTop: 6, fontSize: 12, padding: '5px 12px' }}
+                        disabled={parseBusy}
+                        onClick={reparseCode}
+                      >
+                        {parseBusy ? '⏳ Đang biên dịch…' : '✅ Biên dịch lại câu này'}
+                      </button>
+                    </div>
+                  )}
+
                   {q.ai && (q.ai.topic || q.ai.form) && (
                     <div
                       style={{
@@ -2146,6 +2450,34 @@ export default function BankPage() {
                     </div>
                   )}
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <div className="form-group" style={{ width: 160, marginBottom: 0 }}>
+                      <label style={{ fontSize: 12 }}>Phần</label>
+                      <select
+                        value={String(q.part ?? 1)}
+                        onChange={(e) => {
+                          const pt = Number(e.target.value);
+                          const newType =
+                            pt === 1
+                              ? 'MCQ'
+                              : pt === 2
+                                ? 'TRUE_FALSE'
+                                : pt === 3
+                                  ? 'SHORT_ANSWER'
+                                  : 'ESSAY';
+                          setReviewQuestions(
+                            reviewQuestions.map((r, idx) =>
+                              idx === i ? { ...r, part: pt, type: newType } : r,
+                            ),
+                          );
+                        }}
+                        style={{ padding: '7px 10px', fontSize: 13 }}
+                      >
+                        <option value="1">I — Trắc nghiệm</option>
+                        <option value="2">II — Đúng/Sai</option>
+                        <option value="3">III — Trả lời ngắn</option>
+                        <option value="4">IV — Tự luận</option>
+                      </select>
+                    </div>
                     <div className="form-group" style={{ flex: 1, minWidth: 160, marginBottom: 0 }}>
                       <label style={{ fontSize: 12 }}>Chủ đề</label>
                       <input
@@ -2735,7 +3067,7 @@ export default function BankPage() {
                   🎉 Không có câu hỏi bất thường nào (cần ≥ 5 lượt làm để đánh giá).
                 </p>
               ) : (
-                <div style={{ overflowX: 'auto' }}>
+                <div className="lm-table-sticky" style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--color-rule)' }}>
@@ -2844,7 +3176,11 @@ export default function BankPage() {
       )}
 
       {loading ? (
-        <p>Đang tải...</p>
+        <div className="skeleton-table">
+          {Array.from({ length: 8 }).map((_, si) => (
+            <div key={si} className="skeleton" />
+          ))}
+        </div>
       ) : questions.length === 0 ? (
         <div
           className="card"

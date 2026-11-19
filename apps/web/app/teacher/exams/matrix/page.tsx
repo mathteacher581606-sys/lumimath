@@ -20,12 +20,253 @@ const DIFF_LABEL: Record<string, string> = {
   VAN_DUNG_CAO: 'Vận dụng cao',
 };
 
+// ===== Phẳng hoá CÂY MỤC LỤC (Chương → Bài → Dạng) đúng thứ tự duyệt cây =====
+// Trước đây dropdown "Chủ đề" render mảng phẳng sắp theo alphabet nên Chương/Bài/Dạng
+// bị trộn lẫn. Hàm này dựng lại đúng thứ tự cây như trang Ngân hàng đề (DFS theo order).
+interface TopicFlat {
+  id: string;
+  name: string;
+  grade: number | null;
+  parentId: string | null;
+  order: number;
+}
+
+function buildTreeFor(list: TopicFlat[]): { id: string; label: string; depth: number; name: string; header?: boolean }[] {
+  const byParent = new Map<string, TopicFlat[]>();
+  for (const t of list) {
+    const key = t.parentId || '';
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key)!.push(t);
+  }
+  // Sắp mỗi cấp theo order rồi tên (tiếng Việt)
+  for (const arr of Array.from(byParent.values())) {
+    arr.sort(
+      (a, b) =>
+        (a.order ?? 0) - (b.order ?? 0) ||
+        String(a.name || '').localeCompare(String(b.name || ''), 'vi'),
+    );
+  }
+  const out: { id: string; label: string; depth: number; name: string }[] = [];
+  const seen = new Set<string>();
+  const walk = (parentId: string, depth: number) => {
+    for (const t of byParent.get(parentId) || []) {
+      if (seen.has(t.id)) continue;
+      seen.add(t.id);
+      // Thụt lề bằng ký tự full-width (U+3000) để <select> không nuốt khoảng trắng
+      const indent = '\u3000'.repeat(depth);
+      const branch = depth > 0 ? '└ ' : '';
+      out.push({ id: t.id, label: `${indent}${branch}${t.name}`, depth, name: t.name });
+      walk(t.id, depth + 1);
+    }
+  };
+  walk('', 0);
+  // Nút mồ côi (parentId trỏ tới topic không tồn tại trong tập đã lọc) → thêm cuối
+  for (const t of list) {
+    if (!seen.has(t.id)) {
+      seen.add(t.id);
+      out.push({ id: t.id, label: t.name, depth: 0, name: t.name });
+    }
+  }
+  return out;
+}
+
+function buildOrderedTopics(
+  flat: TopicFlat[],
+  grade?: string,
+): { id: string; label: string; depth: number; name: string; header?: boolean }[] {
+  const g = String(grade ?? '').trim();
+  if (g) return buildTreeFor(flat.filter((t) => String(t.grade ?? '') === g));
+  // Chưa chọn lớp → nhóm theo LỚP (10/11/12), mỗi lớp là một cây con đúng thứ tự mục lục
+  const grades = Array.from(
+    new Set(flat.map((t) => t.grade).filter((x): x is number => x !== null && x !== undefined)),
+  ).sort((a, b) => a - b);
+  const out: { id: string; label: string; depth: number; name: string; header?: boolean }[] = [];
+  for (const gr of grades) {
+    out.push({ id: `__grade_${gr}`, label: `── LỚP ${gr} ──`, depth: 0, name: `LỚP ${gr}`, header: true });
+    out.push(...buildTreeFor(flat.filter((t) => t.grade === gr)));
+  }
+  return out;
+}
+
+// Gắn tham số chủ đề (1 hoặc NHIỀU) vào query string
+function appendTopicParams(p: URLSearchParams, slot: any) {
+  const ids: string[] = (
+    slot?.topicIds && slot.topicIds.length ? slot.topicIds : slot?.topicId ? [slot.topicId] : []
+  ).filter(Boolean);
+  if (ids.length === 1) p.set('topicId', ids[0]);
+  else if (ids.length > 1) p.set('topicIds', ids.join(','));
+}
+
+// ===== Ô chọn NHIỀU chủ đề cho một dòng ma trận (checkbox theo cây mục lục) =====
+function TopicMultiPicker({
+  topics,
+  grade,
+  value,
+  onChange,
+  placeholder = 'Chủ đề?',
+}: {
+  topics: any[];
+  grade?: string;
+  value: string[];
+  onChange: (ids: string[]) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const options = buildOrderedTopics(topics, grade);
+  const selected = new Set(value || []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: any) => {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange(Array.from(next));
+  };
+
+  const firstName = value.length
+    ? topics.find((t) => t.id === value[0])?.name || ''
+    : '';
+  const label =
+    value.length === 0
+      ? placeholder
+      : value.length === 1
+        ? firstName.slice(0, 26) + (firstName.length > 26 ? '…' : '')
+        : `${value.length} chủ đề`;
+  const title = value.length
+    ? value.map((id) => topics.find((t) => t.id === id)?.name || id).join(' · ')
+    : 'Bấm để chọn (có thể chọn nhiều chủ đề)';
+
+  return (
+    <div ref={boxRef} style={{ position: 'relative', width: '100%' }}>
+      <button
+        type="button"
+        title={title}
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: '100%',
+          padding: '7px 6px',
+          borderRadius: 6,
+          border: '1.5px solid #e8c585',
+          background: value.length ? '#fff3d6' : '#fff7e6',
+          fontSize: 12,
+          fontWeight: 700,
+          color: '#8a5a1a',
+          textAlign: 'left',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 4,
+          cursor: 'pointer',
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {label}
+        </span>
+        <span style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 80,
+            top: '100%',
+            left: 0,
+            marginTop: 4,
+            minWidth: 330,
+            maxWidth: 460,
+            maxHeight: 320,
+            overflowY: 'auto',
+            background: '#fff',
+            border: '1px solid var(--lm-line-2, #ddd)',
+            borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(0,0,0,.18)',
+          }}
+        >
+          <div
+            style={{
+              position: 'sticky',
+              top: 0,
+              background: '#fff',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '7px 10px',
+              borderBottom: '1px solid #eee',
+            }}
+          >
+            <b style={{ fontSize: 12 }}>Chọn chủ đề ({value.length})</b>
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              style={{ fontSize: 11.5, color: '#b91c1c', background: 'none', border: 'none', cursor: 'pointer' }}
+            >
+              Bỏ chọn
+            </button>
+          </div>
+          {options.length === 0 ? (
+            <div style={{ padding: 10, fontSize: 12, color: '#888' }}>Chưa có chủ đề.</div>
+          ) : (
+            options.map((t) =>
+              t.header ? (
+                <div
+                  key={t.id}
+                  style={{
+                    padding: '6px 10px',
+                    fontSize: 11.5,
+                    fontWeight: 800,
+                    color: '#8a5a1a',
+                    background: '#fdf6e8',
+                  }}
+                >
+                  {t.label}
+                </div>
+              ) : (
+                <label
+                  key={t.id}
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    padding: '5px 10px',
+                    fontSize: 12.5,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(t.id)}
+                    onChange={() => toggle(t.id)}
+                  />
+                  <span style={{ whiteSpace: 'pre', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {t.label}
+                  </span>
+                </label>
+              ),
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Slot {
   type: string;
   form: string;
   difficulty: string;
   grade: string;
-  topicId: string;
+  topicId: string; // giá trị ĐẦU TIÊN (giữ tương thích dữ liệu cũ)
+  topicIds: string[]; // danh sách chủ đề được chọn (nhiều chủ đề / 1 dòng)
   question: any | null;
   locked: boolean;
 }
@@ -47,6 +288,7 @@ function makeSlots(parts: { type: string; count: number }[]): Slot[] {
         difficulty: '',
         grade: '',
         topicId: '',
+        topicIds: [],
         question: null,
         locked: false,
       });
@@ -86,6 +328,8 @@ export default function ExamMatrixPage() {
   const [examDifficulty, setExamDifficulty] = useState('');
   const [published, setPublished] = useState(false);
   const [topics, setTopics] = useState<any[]>([]);
+  // Gợi ý "Dạng bài" theo TỪNG LỚP (cache theo grade) — để khi chọn lớp chỉ hiện dạng của lớp đó
+  const [formOptionsByGrade, setFormOptionsByGrade] = useState<Record<string, { name: string; count: number }[]>>({});
   const [examFolders, setExamFolders] = useState<any[]>([]);
   const [examFolderId, setExamFolderId] = useState('');
   const [partScores, setPartScores] = useState<Record<string, number>>({
@@ -102,6 +346,19 @@ export default function ExamMatrixPage() {
   const [quickList, setQuickList] = useState<any[]>([]);
   const [quickSel, setQuickSel] = useState<Record<string, { on: boolean; count: number }>>({});
   const [quickBusy, setQuickBusy] = useState(false);
+
+  // Nạp (và cache) danh sách dạng bài theo lớp — chỉ gọi 1 lần cho mỗi lớp
+  async function ensureFormOptions(grade: string) {
+    const g = String(grade ?? '').trim();
+    if (!g) return;
+    if (formOptionsByGrade[g]) return;
+    try {
+      const list = await apiFetch(`/bank/forms-by-filter?grade=${encodeURIComponent(g)}`);
+      setFormOptionsByGrade((prev) => ({ ...prev, [g]: Array.isArray(list) ? list : [] }));
+    } catch {
+      setFormOptionsByGrade((prev) => ({ ...prev, [g]: [] }));
+    }
+  }
 
   async function loadQuickList(grade?: string, topicId?: string) {
     setQuickBusy(true);
@@ -153,6 +410,7 @@ export default function ExamMatrixPage() {
           difficulty,
           grade: quickGrade,
           topicId: quickTopicId,
+          topicIds: quickTopicId ? [quickTopicId] : [],
           question: null,
           locked: false,
         });
@@ -207,6 +465,23 @@ export default function ExamMatrixPage() {
 
   function updateSlot(i: number, patch: Partial<Slot>) {
     setSlots((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  }
+
+  // Áp dụng nhanh một thuộc tính cho TOÀN BỘ dòng của một nhóm (Trắc nghiệm / Đúng-Sai / …)
+  // Giúp giáo viên không phải chọn lặp 12 lần cùng một giá trị.
+  function applyToPart(type: string, patch: Partial<Slot> & { resetTopic?: boolean }) {
+    const { resetTopic, ...rest } = patch;
+    setSlots((prev) =>
+      prev.map((s) => {
+        if (s.type !== type) return s;
+        const next: any = { ...s, ...rest };
+        if (resetTopic) {
+          next.topicId = '';
+          next.topicIds = [];
+        }
+        return next;
+      }),
+    );
   }
 
   // ===== TẠO ĐỀ THI từ ma trận đã duyệt (gộp 2 tính năng) =====
@@ -294,6 +569,7 @@ export default function ExamMatrixPage() {
           difficulty: s.difficulty || '',
           grade: s.grade || '',
           topicId: s.topicId || '',
+          topicIds: Array.isArray(s.topicIds) ? s.topicIds : s.topicId ? [s.topicId] : [],
           question: s.questionId ? byId.get(s.questionId) || { id: s.questionId } : null,
           locked: false,
         })),
@@ -375,6 +651,7 @@ export default function ExamMatrixPage() {
     setBusy(true);
     try {
       const used: string[] = [];
+      const shortages: number[] = [];
       const next = [...slots];
       const n = next.length;
       const easy = ['NHAN_BIET', 'THONG_HIEU'];
@@ -402,7 +679,7 @@ export default function ExamMatrixPage() {
           if (!random) {
             if (s.form) p.set('form', s.form);
             if (s.grade) p.set('grade', s.grade);
-            if (s.topicId) p.set('topicId', s.topicId);
+            appendTopicParams(p, s);
           }
           return p;
         };
@@ -412,19 +689,23 @@ export default function ExamMatrixPage() {
           let params = buildParams(targetDiff);
           pool = await apiFetch(`/bank/questions-paged?${params.toString()}`);
           let candidates = (pool.items || []).filter((q: any) => !used.includes(q.id));
-          // Nới lọc mức nếu không đủ (chỉ ở chế độ ngẫu nhiên)
-          if (!candidates.length && random && targetDiff) {
+          // Nới lọc MỨC nếu không đủ (giữ nguyên lớp/chủ đề/dạng)
+          if (!candidates.length && targetDiff) {
             const params2 = buildParams('');
             pool = await apiFetch(`/bank/questions-paged?${params2.toString()}`);
             candidates = (pool.items || []).filter((q: any) => !used.includes(q.id));
           }
-          // Cuối cùng: chỉ theo đúng kiểu câu
-          if (!candidates.length && (targetDiff || (!random && (s.form || s.grade || s.topicId)))) {
+          // Chế độ NGẪU NHIÊN: cho phép nới tới "chỉ đúng kiểu câu" (để sinh đủ ma trận)
+          if (!candidates.length && random) {
             const params3 = new URLSearchParams({ type: s.type, limit: '30' });
             pool = await apiFetch(`/bank/questions-paged?${params3.toString()}`);
             candidates = (pool.items || []).filter((q: any) => !used.includes(q.id));
           }
-          if (!candidates.length) continue;
+          if (!candidates.length) {
+            // TỰ CHỌN: KHÔNG lấy câu ngoài chủ đề/lớp đã chọn — ghi nhận thiếu câu
+            shortages.push(i + 1);
+            continue;
+          }
           const pick = candidates[Math.floor(Math.random() * candidates.length)];
           used.push(pick.id);
           if (random) {
@@ -436,6 +717,7 @@ export default function ExamMatrixPage() {
               form: pick.form || '',
               grade: pick.grade ? String(pick.grade) : '',
               topicId: pick.topicId || '',
+              topicIds: pick.topicId ? [pick.topicId] : [],
             };
           } else {
             next[i] = { ...s, question: pick };
@@ -445,6 +727,13 @@ export default function ExamMatrixPage() {
         }
       }
       setSlots(next);
+      if (shortages.length) {
+        alert(
+          `⚠️ Không đủ câu phù hợp cho ${shortages.length} dòng: ${shortages.join(', ')}.\n\n` +
+            `Các dòng này được để trống để không lấy sai chủ đề/lớp.\n` +
+            `Gợi ý: chọn lại Chủ đề (Chương/Bài bao gồm cả các Dạng con), hoặc bỏ bớt điều kiện Mức/Dạng.`,
+        );
+      }
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -470,7 +759,7 @@ export default function ExamMatrixPage() {
       if (f.difficulty) params.set('difficulty', f.difficulty);
       if (f.form) params.set('form', f.form);
       if (s.grade) params.set('grade', s.grade);
-      if (s.topicId) params.set('topicId', s.topicId);
+      appendTopicParams(params, s);
       if (f.q && f.q.trim()) params.set('q', f.q.trim());
       const data = await apiFetch(`/bank/questions-paged?${params.toString()}`);
       setPickerPool(data.items || []);
@@ -497,7 +786,7 @@ export default function ExamMatrixPage() {
       if (s.difficulty) params.set('difficulty', s.difficulty);
       if (s.form) params.set('form', s.form);
       if (s.grade) params.set('grade', s.grade);
-      if (s.topicId) params.set('topicId', s.topicId);
+      appendTopicParams(params, s);
       const data = await apiFetch(`/bank/questions-paged?${params.toString()}`);
       const candidates = (data.items || []).filter((q: any) => !used.includes(q.id));
       if (!candidates.length) {
@@ -531,6 +820,9 @@ export default function ExamMatrixPage() {
           type: s.type,
           form: s.form,
           difficulty: s.difficulty,
+          grade: s.grade,
+          topicId: s.topicId || null,
+          topicIds: s.topicIds || [],
           questionId: s.question?.id || null,
         })),
       };
@@ -568,6 +860,13 @@ export default function ExamMatrixPage() {
           type: s.type || 'MCQ',
           form: s.form || '',
           difficulty: s.difficulty || '',
+          grade: s.grade ? String(s.grade) : '',
+          topicId: s.topicId || '',
+          topicIds: Array.isArray(s.topicIds)
+            ? s.topicIds
+            : s.topicId
+              ? [s.topicId]
+              : [],
           question: s.questionId ? byId.get(s.questionId) || { id: s.questionId } : null,
           locked: false,
         })),
@@ -807,7 +1106,7 @@ export default function ExamMatrixPage() {
       </div>
 
       {/* ================= BẢNG MA TRẬN ================= */}
-      <div className="card" style={{ padding: 0, marginBottom: 14, overflow: 'hidden' }}>
+      <div className="card matrix-scroll" style={{ padding: 0, marginBottom: 14, overflow: 'hidden' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '44px 118px 96px 160px 140px 1.25fr 1.45fr 46px', background: 'var(--lm-maroon)', color: '#fff', fontWeight: 800, fontSize: 12.5 }}>
           <div style={{ padding: '10px 12px' }}>Câu</div>
           <div style={{ padding: '10px 12px' }}>Kiểu</div>
@@ -821,11 +1120,53 @@ export default function ExamMatrixPage() {
 
         {parts.map((part, pi) => (
           <div key={pi}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', background: '#fdf1dc', borderTop: '1px solid var(--lm-line)', borderBottom: '1px solid #f0dcb4' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', background: '#fdf1dc', borderTop: '1px solid var(--lm-line)', borderBottom: '1px solid #f0dcb4', flexWrap: 'wrap' }}>
               <span style={{ background: 'var(--lm-amber)', color: '#4a2a06', fontWeight: 800, fontSize: 12.5, borderRadius: 6, padding: '4px 12px' }}>
                 {TYPE_LABEL[part.type] || part.type}
               </span>
               <span style={{ fontSize: 12.5, fontWeight: 700, color: '#8a5a1a' }}>{part.count} câu</span>
+
+              {/* Áp dụng nhanh cho cả nhóm — tránh chọn lặp 12 lần */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: '#8a5a1a' }}>
+                ⚡ Lớp:
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    applyToPart(part.type, { grade: v, resetTopic: true });
+                    e.currentTarget.value = '';
+                  }}
+                  title="Áp dụng lớp này cho TẤT CẢ câu trong nhóm"
+                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: '#fff', fontSize: 11.5, fontWeight: 700 }}
+                >
+                  <option value="">—</option>
+                  <option value="10">10</option>
+                  <option value="11">11</option>
+                  <option value="12">12</option>
+                </select>
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: '#8a5a1a' }}>
+                ⚡ Mức:
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    applyToPart(part.type, { difficulty: v });
+                    e.currentTarget.value = '';
+                  }}
+                  title="Áp dụng mức độ này cho TẤT CẢ câu trong nhóm"
+                  style={{ padding: '3px 6px', borderRadius: 5, border: '1px solid #e0c48c', background: '#fff', fontSize: 11.5, fontWeight: 700 }}
+                >
+                  <option value="">—</option>
+                  <option value="NHAN_BIET">Mức 1</option>
+                  <option value="THONG_HIEU">Mức 2</option>
+                  <option value="VAN_DUNG">Mức 3</option>
+                  <option value="VAN_DUNG_CAO">Mức 4</option>
+                </select>
+              </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: '#8a5a1a', marginLeft: 'auto' }}>
                 Điểm/câu:
                 <input
@@ -873,7 +1214,10 @@ export default function ExamMatrixPage() {
                     <div style={{ padding: '6px 6px' }}>
                       <select
                         value={s.grade}
-                        onChange={(e) => updateSlot(i, { grade: e.target.value, topicId: '', question: null })}
+                        onChange={(e) => {
+                          updateSlot(i, { grade: e.target.value, topicId: '', topicIds: [], question: null });
+                          ensureFormOptions(e.target.value);
+                        }}
                         style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: '#fff7e6', fontSize: 12, fontWeight: 700, color: '#8a5a1a' }}
                       >
                         <option value="">Lớp?</option>
@@ -883,20 +1227,18 @@ export default function ExamMatrixPage() {
                       </select>
                     </div>
                     <div style={{ padding: '6px 6px' }}>
-                      <select
-                        value={s.topicId}
-                        onChange={(e) => updateSlot(i, { topicId: e.target.value, question: null })}
-                        style={{ width: '100%', padding: '7px 6px', borderRadius: 6, border: '1.5px solid #e8c585', background: '#fff7e6', fontSize: 12, fontWeight: 700, color: '#8a5a1a' }}
-                      >
-                        <option value="">Chủ đề?</option>
-                        {topics
-                          .filter((t) => !s.grade || String(t.grade ?? '') === s.grade)
-                          .map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}
-                            </option>
-                          ))}
-                      </select>
+                      <TopicMultiPicker
+                        topics={topics}
+                        grade={s.grade}
+                        value={s.topicIds || (s.topicId ? [s.topicId] : [])}
+                        onChange={(ids) =>
+                          updateSlot(i, {
+                            topicIds: ids,
+                            topicId: ids[0] || '',
+                            question: null,
+                          })
+                        }
+                      />
                     </div>
                     <div style={{ padding: '6px 6px' }}>
                       <select
@@ -915,10 +1257,16 @@ export default function ExamMatrixPage() {
                       <input
                         value={s.form}
                         onChange={(e) => updateSlot(i, { form: e.target.value })}
+                        onFocus={() => ensureFormOptions(s.grade)}
                         placeholder="📄 Dạng bài (bỏ trống = không lọc)"
-                        list="matrix-form-list"
+                        list={`matrix-form-list-${i}`}
                         style={{ width: '100%', padding: '7px 10px', border: '1px dashed var(--lm-line-2)', borderRadius: 6, background: '#fff', fontSize: 13 }}
                       />
+                      <datalist id={`matrix-form-list-${i}`}>
+                        {(s.grade ? formOptionsByGrade[s.grade] || [] : forms).map((f: any) => (
+                          <option key={f.name} value={f.name} />
+                        ))}
+                      </datalist>
                     </div>
                     <div style={{ padding: '6px 8px', minWidth: 0 }}>
                       {s.question?.content ? (
@@ -1405,11 +1753,15 @@ export default function ExamMatrixPage() {
                     }}
                   >
                     <option value="">— Tất cả chủ đề —</option>
-                    {topics
-                      .filter((t) => !quickGrade || String(t.grade ?? '') === quickGrade)
-                      .map((t) => (
-                        <option key={t.id} value={t.id}>{t.name}</option>
-                      ))}
+                    {buildOrderedTopics(topics, quickGrade).map((t) =>
+                      t.header ? (
+                        <option key={t.id} value="" disabled>
+                          {t.label}
+                        </option>
+                      ) : (
+                        <option key={t.id} value={t.id}>{t.label}</option>
+                      ),
+                    )}
                   </select>
                 </div>
               </div>

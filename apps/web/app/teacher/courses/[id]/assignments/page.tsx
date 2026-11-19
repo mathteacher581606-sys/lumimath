@@ -7,6 +7,91 @@ import { apiFetch } from '@/lib/api';
 import BackButton from '@/components/BackButton';
 import LatexRenderer from '@/components/LatexRenderer';
 
+// Bảng "Chọn lớp → hạn nộp" có nút + để giao hạn cho nhiều lớp
+function ClassDeadlineEditor({
+  classes,
+  value,
+  onChange,
+}: {
+  classes: string[];
+  value: { className: string; dueDate: string }[];
+  onChange: (v: { className: string; dueDate: string }[]) => void;
+}) {
+  const rows = Array.isArray(value) ? value : [];
+  const used = new Set(rows.map((r) => r.className).filter(Boolean));
+  const availableFor = (current: string) =>
+    classes.filter((c) => c === current || !used.has(c));
+
+  const addRow = () => {
+    const free = classes.find((c) => !used.has(c));
+    onChange([...rows, { className: free || '', dueDate: '' }]);
+  };
+  const updateRow = (i: number, patch: Partial<{ className: string; dueDate: string }>) => {
+    onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  };
+  const removeRow = (i: number) => onChange(rows.filter((_, j) => j !== i));
+
+  return (
+    <div className="card" style={{ padding: 14, marginBottom: 14, background: '#fdf6e8', border: '1px solid var(--color-rule)' }}>
+      <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 8 }}>
+        🕐 Hạn nộp riêng theo lớp{' '}
+        <span style={{ fontWeight: 400, color: 'var(--color-muted)', fontSize: 12 }}>
+          (bỏ trống = dùng hạn chung)
+        </span>
+      </div>
+
+      {rows.length === 0 && (
+        <p style={{ fontSize: 12.5, color: 'var(--color-muted)', marginBottom: 8 }}>
+          Chưa có lớp nào được đặt hạn riêng.
+        </p>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <select
+              value={r.className}
+              onChange={(e) => updateRow(i, { className: e.target.value })}
+              style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid var(--color-rule)', background: 'var(--color-paper)', color: 'var(--color-ink)', fontSize: 13.5, minWidth: 120 }}
+            >
+              <option value="">— Chọn lớp —</option>
+              {availableFor(r.className).map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            <input
+              type="datetime-local"
+              value={r.dueDate || ''}
+              onChange={(e) => updateRow(i, { dueDate: e.target.value })}
+              style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid var(--color-rule)', background: 'var(--color-paper)', color: 'var(--color-ink)', fontSize: 13.5 }}
+            />
+            <button
+              type="button"
+              onClick={() => removeRow(i)}
+              title="Xoá dòng này"
+              style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--color-rule)', background: 'var(--color-paper)', color: 'var(--color-danger)', cursor: 'pointer', fontSize: 13 }}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 10 }}>
+        <button
+          type="button"
+          className="btn btn-outline"
+          style={{ width: 'auto', padding: '6px 12px', fontSize: 12.5 }}
+          onClick={addRow}
+          disabled={rows.length >= classes.length}
+        >
+          ＋ Thêm lớp
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function CourseAssignments() {
   const params = useParams();
   const courseId = params.id as string;
@@ -36,7 +121,11 @@ export default function CourseAssignments() {
     pdfUrl: '',
     assignDate: '',
     dueDate: '',
+    classDeadlines: [] as { className: string; dueDate: string }[],
     minScoreForAnswers: '',
+    maxAttempts: '',
+    maxResubmit: '',
+    lockAfterGraded: true,
     hideAnswers: true,
     revealAnswersAt: '',
     showLeaderboard: false,
@@ -48,10 +137,14 @@ export default function CourseAssignments() {
     postManually: false,
   });
   const [saving, setSaving] = useState(false);
+  // Danh sách lớp của khóa học (để đặt hạn riêng theo lớp)
+  const [classes, setClasses] = useState<string[]>([]);
 
   // Chi tiết bài giao
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // Lớp được chọn để xuất bảng điểm
+  const [scoreClass, setScoreClass] = useState('__all__');
 
   function showToast(msg: string) {
     setToast(msg);
@@ -62,8 +155,29 @@ export default function CourseAssignments() {
     try {
       setCourse(await apiFetch(`/courses/${courseId}`));
       setData(await apiFetch(`/courses/${courseId}/assignments`));
+      loadClasses();
     } catch (e: any) {
       showToast('❌ ' + e.message);
+    }
+  }
+
+  async function loadClasses() {
+    try {
+      const students = await apiFetch(`/courses/${courseId}/students`);
+      const seen = new Set<string>();
+      const cls: string[] = [];
+      for (const s of (students || []) as any[]) {
+        // API trả về enrollment lồng student: { student: { className } } (hỗ trợ cả dạng phẳng)
+        const c = String(s?.student?.className ?? s?.className ?? '').trim();
+        if (c && !seen.has(c)) {
+          seen.add(c);
+          cls.push(c);
+        }
+      }
+      cls.sort((a, b) => a.localeCompare(b, 'vi'));
+      setClasses(cls);
+    } catch {
+      /* bỏ qua */
     }
   }
 
@@ -145,9 +259,12 @@ export default function CourseAssignments() {
           questionIds: kind === 'TULUAN' ? form.questionIds : [],
           customContent: kind === 'CUSTOM' ? form.customContent : null,
           customQuestions: kind === 'TULUAN' ? customQuestions.filter((c) => c.trim()) : [],
-          assignDate: form.assignDate || null,
-          dueDate: form.dueDate || null,
-          revealAnswersAt: form.revealAnswersAt || null,
+          assignDate: toIso(form.assignDate),
+          dueDate: toIso(form.dueDate),
+          classDeadlines: (form.classDeadlines || [])
+            .filter((d: any) => d?.className && d?.dueDate)
+            .map((d: any) => ({ className: d.className, dueDate: toIso(d.dueDate) })),
+          revealAnswersAt: toIso(form.revealAnswersAt),
           minScoreForAnswers:
             form.minScoreForAnswers === '' ? null : Number(form.minScoreForAnswers),
         }),
@@ -155,7 +272,7 @@ export default function CourseAssignments() {
       setShowForm(false);
       setCustomQuestions([]);
       setTuluanMode('bank');
-      setForm({ ...form, title: '', description: '', examId: '', questionIds: [], customContent: '', pdfUrl: '', assignDate: '', dueDate: '', minScoreForAnswers: '', hideAnswers: true, revealAnswersAt: '', showLeaderboard: false, allowResubmit: false, lateDeductionPercent: '', lateIntervalHours: 24, lateMinPercent: '', postManually: false });
+      setForm({ ...form, title: '', description: '', examId: '', questionIds: [], customContent: '', pdfUrl: '', assignDate: '', dueDate: '', classDeadlines: [], minScoreForAnswers: '', hideAnswers: true, revealAnswersAt: '', showLeaderboard: false, allowResubmit: false, lateDeductionPercent: '', lateIntervalHours: 24, lateMinPercent: '', postManually: false });
       showToast('✅ Đã giao bài tập (học sinh đã nhận thông báo)');
       load();
     } catch (e: any) {
@@ -165,9 +282,160 @@ export default function CourseAssignments() {
     }
   }
 
+  // ===== SỬA BÀI TẬP ĐÃ GIAO =====
+  const [editing, setEditing] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState<any>({
+    title: '',
+    description: '',
+    assignDate: '',
+    dueDate: '',
+    classDeadlines: [] as { className: string; dueDate: string }[],
+    minScoreForAnswers: '',
+    maxAttempts: '',
+    maxResubmit: '',
+    lockAfterGraded: true,
+    hideAnswers: true,
+    revealAnswersAt: '',
+    showLeaderboard: false,
+    allowResubmit: false,
+    lateDeductionPercent: '',
+    lateIntervalHours: 24,
+    lateMinPercent: '',
+    missingDeductionPercent: '',
+    postManually: false,
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  function toLocalInput(v: string | null | undefined): string {
+    if (!v) return '';
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  // Chuyển chuỗi datetime-local (giờ địa phương) → ISO để gửi lên server đúng múi giờ
+  function toIso(v: string | null | undefined): string | null {
+    if (!v) return null;
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  function openEdit(a: any) {
+    // Đóng tab chi tiết để không che khuất giao diện sửa
+    setDetail(null);
+    setEditing(a);
+    setEditForm({
+      title: a.title || '',
+      description: a.description || '',
+      assignDate: toLocalInput(a.assignDate),
+      dueDate: toLocalInput(a.dueDate),
+      classDeadlines: (Array.isArray(a.classDeadlines) ? a.classDeadlines : []).map(
+        (d: any) => ({ className: d.className, dueDate: toLocalInput(d.dueDate) }),
+      ),
+      minScoreForAnswers:
+        a.minScoreForAnswers === null || a.minScoreForAnswers === undefined
+          ? ''
+          : String(a.minScoreForAnswers),
+      maxAttempts:
+        a.maxAttempts === null || a.maxAttempts === undefined
+          ? ''
+          : String(a.maxAttempts),
+      maxResubmit:
+        a.maxResubmit === null || a.maxResubmit === undefined
+          ? ''
+          : String(a.maxResubmit),
+      lockAfterGraded: a.lockAfterGraded !== false,
+      hideAnswers: !!a.hideAnswers,
+      revealAnswersAt: toLocalInput(a.revealAnswersAt),
+      showLeaderboard: !!a.showLeaderboard,
+      allowResubmit: !!a.allowResubmit,
+      lateDeductionPercent:
+        a.lateDeductionPercent === null || a.lateDeductionPercent === undefined
+          ? ''
+          : String(a.lateDeductionPercent),
+      lateIntervalHours: a.lateIntervalHours ?? 24,
+      lateMinPercent:
+        a.lateMinPercent === null || a.lateMinPercent === undefined
+          ? ''
+          : String(a.lateMinPercent),
+      missingDeductionPercent:
+        a.missingDeductionPercent === null ||
+        a.missingDeductionPercent === undefined
+          ? ''
+          : String(a.missingDeductionPercent),
+      postManually: !!a.postManually,
+    });
+  }
+
+  async function saveEdit(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!editing) return;
+    if (!editForm.title.trim()) {
+      showToast('⚠️ Vui lòng nhập tiêu đề');
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await apiFetch(`/courses/${courseId}/assignments/${editing.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          title: editForm.title,
+          description: editForm.description,
+          assignDate: toIso(editForm.assignDate),
+          dueDate: toIso(editForm.dueDate),
+          classDeadlines: (editForm.classDeadlines || [])
+            .filter((d: any) => d?.className && d?.dueDate)
+            .map((d: any) => ({ className: d.className, dueDate: toIso(d.dueDate) })),
+          revealAnswersAt: toIso(editForm.revealAnswersAt),
+          minScoreForAnswers:
+            editForm.minScoreForAnswers === ''
+              ? null
+              : Number(editForm.minScoreForAnswers),
+          maxAttempts:
+            editForm.maxAttempts === '' ? 0 : Number(editForm.maxAttempts),
+          maxResubmit:
+            editForm.maxResubmit === '' ? null : Number(editForm.maxResubmit),
+          lockAfterGraded: !!editForm.lockAfterGraded,
+          hideAnswers: editForm.hideAnswers,
+          showLeaderboard: editForm.showLeaderboard,
+          allowResubmit: editForm.allowResubmit,
+          lateDeductionPercent:
+            editForm.lateDeductionPercent === ''
+              ? null
+              : Number(editForm.lateDeductionPercent),
+          lateIntervalHours:
+            editForm.lateIntervalHours === ''
+              ? 24
+              : Number(editForm.lateIntervalHours),
+          lateMinPercent:
+            editForm.lateMinPercent === ''
+              ? null
+              : Number(editForm.lateMinPercent),
+          missingDeductionPercent:
+            editForm.missingDeductionPercent === ''
+              ? null
+              : Number(editForm.missingDeductionPercent),
+          postManually: editForm.postManually,
+        }),
+      });
+      showToast('✅ Đã cập nhật bài tập');
+      const editedId = editing.id;
+      setEditing(null);
+      await load();
+      // Mở lại chi tiết bài tập sau khi lưu
+      await openDetail(editedId);
+    } catch (e: any) {
+      showToast('❌ ' + e.message);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
   async function openDetail(id: string) {
     setDetailLoading(true);
     setDetail(null);
+    setScoreClass('__all__');
     try {
       setDetail(await apiFetch(`/courses/${courseId}/assignments/${id}`));
     } catch (e: any) {
@@ -198,6 +466,32 @@ export default function CourseAssignments() {
       load();
     } catch (e: any) {
       showToast('❌ ' + e.message);
+    }
+  }
+
+  async function exportScores(format: 'pdf' | 'xlsx') {
+    if (!detail) return;
+    try {
+      const token = localStorage.getItem('token');
+      const cls = scoreClass === '__all__' ? '' : scoreClass;
+      const res = await fetch(
+        `/api/courses/${courseId}/assignments/${detail.id}/scores/export?format=${format}${cls ? `&className=${encodeURIComponent(cls)}` : ''}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert('❌ ' + (err.message || 'Không xuất được'));
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bang-diem-${detail.title || 'bai-tap'}${cls ? '-' + cls : ''}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert('❌ ' + e.message);
     }
   }
 
@@ -589,10 +883,19 @@ export default function CourseAssignments() {
                     <input type="datetime-local" value={form.assignDate} onChange={(e) => setForm({ ...form, assignDate: e.target.value })} />
                   </div>
                   <div className="form-group">
-                    <label>Hạn nộp</label>
+                    <label>Hạn nộp (chung)</label>
                     <input type="datetime-local" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
                   </div>
                 </div>
+
+                {/* Hạn nộp riêng theo lớp */}
+                {classes.length > 0 && (
+                  <ClassDeadlineEditor
+                    classes={classes}
+                    value={form.classDeadlines || []}
+                    onChange={(v) => setForm({ ...form, classDeadlines: v })}
+                  />
+                )}
 
                 <div className="card" style={{ padding: 14, marginBottom: 14, background: '#fdf6e8' }}>
                   <div style={{ fontWeight: 800, fontSize: 13.5, color: '#8a5a1a', marginBottom: 10 }}>🔐 Cài đặt đáp án & kết quả</div>
@@ -600,6 +903,21 @@ export default function CourseAssignments() {
                     <div className="form-group">
                       <label>Điểm tối thiểu đạt để xem đáp án</label>
                       <input type="number" min={0} step={0.5} value={form.minScoreForAnswers} onChange={(e) => setForm({ ...form, minScoreForAnswers: e.target.value })} placeholder="VD: 5 (để trống = không yêu cầu)" />
+                    </div>
+                    <div className="form-group">
+                      <label>🔁 Số lần nộp tối đa</label>
+                      <input type="number" min={0} step={1} value={form.maxAttempts} onChange={(e) => setForm({ ...form, maxAttempts: e.target.value })} placeholder="VD: 1 (0 = không giới hạn)" />
+                    </div>
+                    <div className="form-group">
+                      <label>✏️ Số lần được SỬA tối đa</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={form.maxResubmit}
+                        onChange={(e) => setForm({ ...form, maxResubmit: e.target.value })}
+                        placeholder="VD: 3 (để trống = không giới hạn, 0 = không cho sửa)"
+                      />
                     </div>
                     <div className="form-group">
                       <label>Thời điểm công bố đáp án</label>
@@ -618,6 +936,10 @@ export default function CourseAssignments() {
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input type="checkbox" checked={form.allowResubmit} onChange={(e) => setForm({ ...form, allowResubmit: e.target.checked })} style={{ width: 'auto' }} />
                       🔁 Cho nộp lại
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input type="checkbox" checked={form.lockAfterGraded} onChange={(e) => setForm({ ...form, lockAfterGraded: e.target.checked })} style={{ width: 'auto' }} />
+                      🔒 Khoá sửa sau khi đã chấm
                     </label>
                   </div>
 
@@ -679,6 +1001,52 @@ export default function CourseAssignments() {
                 <button className="btn btn-outline" style={{ width: 'auto', padding: '6px 12px', fontSize: 12.5 }} onClick={sendEmail} title="Gửi email thông báo (chỉ gửi khi bạn bấm nút này)">
                   📧 Gửi email
                 </button>
+                <button
+                  className="btn btn-outline"
+                  style={{ width: 'auto', padding: '6px 12px', fontSize: 12.5 }}
+                  onClick={() => openEdit(detail)}
+                  title="Sửa thông tin bài tập đã giao (tiêu đề, hạn nộp, cài đặt...)"
+                >
+                  ✏️ Sửa bài tập
+                </button>
+                <button
+                  className="btn btn-outline"
+                  style={{ width: 'auto', padding: '6px 12px', fontSize: 12.5 }}
+                  onClick={() => exportScores('pdf')}
+                  title="Xuất bảng điểm học sinh của bài tập này (PDF) — xếp từ cao xuống thấp"
+                >
+                  📄 Điểm PDF
+                </button>
+                <button
+                  className="btn btn-outline"
+                  style={{ width: 'auto', padding: '6px 12px', fontSize: 12.5 }}
+                  onClick={() => exportScores('xlsx')}
+                  title="Xuất bảng điểm học sinh của bài tập này (Excel) — xếp từ cao xuống thấp"
+                >
+                  📊 Điểm Excel
+                </button>
+                <select
+                  value={scoreClass}
+                  onChange={(e) => setScoreClass(e.target.value)}
+                  title="Xuất bảng điểm theo lớp"
+                  style={{ padding: '6px 8px', fontSize: 12.5, borderRadius: 8, border: '1px solid var(--color-rule)', background: 'var(--color-paper)', color: 'var(--color-ink)' }}
+                >
+                  <option value="__all__">Tất cả lớp</option>
+                  {(() => {
+                    const classes: string[] = [];
+                    const seen = new Set<string>();
+                    for (const s of (detail.students || []) as any[]) {
+                      const c = String(s?.className || '');
+                      if (c && !seen.has(c)) {
+                        seen.add(c);
+                        classes.push(c);
+                      }
+                    }
+                    return classes.map((c: string) => (
+                      <option key={c} value={c}>{c}</option>
+                    ));
+                  })()}
+                </select>
                 <Link href={`/teacher/courses/${courseId}/assignments/${detail.id}/grade`} className="btn-lm ghost" style={{ width: 'auto', padding: '6px 12px', fontSize: 12.5 }}>
                   🖊 Vào chấm bài →
                 </Link>
@@ -699,6 +1067,18 @@ export default function CourseAssignments() {
                     {detail.exam?.title && <p><strong>Đề:</strong> {detail.exam.title} ({detail.exam.totalScore}đ)</p>}
                     <p><strong>Ngày giao:</strong> {detail.assignDate ? new Date(detail.assignDate).toLocaleString('vi-VN') : '—'}</p>
                     <p><strong>Hạn nộp:</strong> {detail.dueDate ? new Date(detail.dueDate).toLocaleString('vi-VN') : 'Không giới hạn'}</p>
+                    {Array.isArray(detail.classDeadlines) && detail.classDeadlines.length > 0 && (
+                      <div style={{ margin: '4px 0 4px 0' }}>
+                        <strong>Hạn riêng theo lớp:</strong>
+                        <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                          {detail.classDeadlines.map((d: any, i: number) => (
+                            <li key={i}>
+                              <b>{d.className}</b> → {new Date(d.dueDate).toLocaleString('vi-VN')}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     <p><strong>Điểm tối thiểu xem đáp án:</strong> {detail.minScoreForAnswers ?? '—'}</p>
                     <p><strong>Đáp án:</strong> {detail.hideAnswers ? `🙈 Ẩn${detail.revealAnswersAt ? ` đến ${new Date(detail.revealAnswersAt).toLocaleString('vi-VN')}` : ''}` : 'Hiện'}</p>
                     <p><strong>Bảng xếp hạng:</strong> {detail.showLeaderboard ? '🏆 Hiện' : 'Ẩn'}</p>
@@ -776,6 +1156,149 @@ export default function CourseAssignments() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal sửa bài tập đã giao */}
+      {editing && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'color-mix(in oklch, var(--color-ink) 45%, transparent)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000,
+            padding: 20,
+          }}
+          onClick={() => setEditing(null)}
+        >
+          <div
+            className="card"
+            style={{ width: '100%', maxWidth: 760, maxHeight: '90vh', overflowY: 'auto', padding: 22 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <strong style={{ fontSize: 17 }}>✏️ Sửa bài tập</strong>
+              <button className="lm-detail-close" onClick={() => setEditing(null)}>✕</button>
+            </div>
+            <form onSubmit={saveEdit}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div className="form-group" style={{ gridColumn: '1 / -1', marginBottom: 0 }}>
+                  <label>Tiêu đề</label>
+                  <input value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} required />
+                </div>
+                <div className="form-group" style={{ gridColumn: '1 / -1', marginBottom: 0 }}>
+                  <label>Mô tả / Ghi chú</label>
+                  <textarea rows={2} value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Ngày giao</label>
+                  <input type="datetime-local" value={editForm.assignDate} onChange={(e) => setEditForm({ ...editForm, assignDate: e.target.value })} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Hạn nộp (chung)</label>
+                  <input type="datetime-local" value={editForm.dueDate} onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })} />
+                </div>
+                {classes.length > 0 && (
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <ClassDeadlineEditor
+                      classes={classes}
+                      value={editForm.classDeadlines || []}
+                      onChange={(v) => setEditForm({ ...editForm, classDeadlines: v })}
+                    />
+                  </div>
+                )}
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>⭐ Điểm tối thiểu được xem đáp án</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={editForm.minScoreForAnswers}
+                    onChange={(e) => setEditForm({ ...editForm, minScoreForAnswers: e.target.value })}
+                    placeholder="VD: 5 (để trống = không yêu cầu)"
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>🔁 Số lần nộp tối đa</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={editForm.maxAttempts}
+                    onChange={(e) => setEditForm({ ...editForm, maxAttempts: e.target.value })}
+                    placeholder="VD: 1 (0 = không giới hạn)"
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>✏️ Số lần được SỬA tối đa</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={editForm.maxResubmit}
+                    onChange={(e) => setEditForm({ ...editForm, maxResubmit: e.target.value })}
+                    placeholder="VD: 3 (trống = không giới hạn, 0 = không cho sửa)"
+                  />
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5 }}>
+                  <input
+                    type="checkbox"
+                    checked={editForm.lockAfterGraded}
+                    onChange={(e) => setEditForm({ ...editForm, lockAfterGraded: e.target.checked })}
+                    style={{ width: 'auto' }}
+                  />
+                  🔒 Khoá sửa sau khi đã chấm
+                </label>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Ẩn đáp án đến thời điểm</label>
+                  <input type="datetime-local" value={editForm.revealAnswersAt} onChange={(e) => setEditForm({ ...editForm, revealAnswersAt: e.target.value })} />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Trừ điểm nộp muộn (%/khoảng giờ)</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input type="number" min={0} max={100} value={editForm.lateDeductionPercent} onChange={(e) => setEditForm({ ...editForm, lateDeductionPercent: e.target.value })} placeholder="VD: 10" />
+                    <input type="number" min={1} max={720} value={editForm.lateIntervalHours} onChange={(e) => setEditForm({ ...editForm, lateIntervalHours: e.target.value })} placeholder="24" style={{ width: 90 }} />
+                  </div>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Mức trừ tối đa (%)</label>
+                  <input type="number" min={0} max={100} value={editForm.lateMinPercent} onChange={(e) => setEditForm({ ...editForm, lateMinPercent: e.target.value })} placeholder="VD: 50" />
+                </div>
+                <div style={{ gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap', gap: 18, marginTop: 6 }}>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13.5 }}>
+                    <input type="checkbox" checked={editForm.hideAnswers} onChange={(e) => setEditForm({ ...editForm, hideAnswers: e.target.checked })} style={{ width: 'auto' }} />
+                    Ẩn đáp án
+                  </label>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13.5 }}>
+                    <input type="checkbox" checked={editForm.showLeaderboard} onChange={(e) => setEditForm({ ...editForm, showLeaderboard: e.target.checked })} style={{ width: 'auto' }} />
+                    Bảng xếp hạng
+                  </label>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13.5 }}>
+                    <input type="checkbox" checked={editForm.allowResubmit} onChange={(e) => setEditForm({ ...editForm, allowResubmit: e.target.checked })} style={{ width: 'auto' }} />
+                    Cho nộp lại
+                  </label>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13.5 }}>
+                    <input type="checkbox" checked={editForm.postManually} onChange={(e) => setEditForm({ ...editForm, postManually: e.target.checked })} style={{ width: 'auto' }} />
+                    Chấm ẩn điểm
+                  </label>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 12, marginTop: 18 }}>
+                <button className="btn" type="submit" style={{ flex: 1 }} disabled={savingEdit}>
+                  {savingEdit ? 'Đang lưu…' : '💾 Lưu thay đổi'}
+                </button>
+                <button className="btn btn-outline" type="button" style={{ flex: 1 }} onClick={() => setEditing(null)}>
+                  Hủy
+                </button>
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--color-muted)', marginTop: 10, marginBottom: 0 }}>
+                Học sinh sẽ thấy thay đổi ngay. Bài đã nộp vẫn giữ nguyên điểm.
+              </p>
+            </form>
           </div>
         </div>
       )}

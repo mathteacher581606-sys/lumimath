@@ -37,6 +37,60 @@ export class BankController {
     return this.bankService.listTopics(user.id);
   }
 
+  // Cây mục lục 3 cấp (CHƯƠNG → Bài → Dạng) kèm số câu
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get('topics/tree')
+  getTopicTree(@CurrentUser() user: any, @Query('grade') grade?: string) {
+    return this.bankService.getTopicTree(
+      user.id,
+      grade ? Number(grade) : undefined,
+    );
+  }
+
+  // Seed cây mục lục (lớp 10 + 11) — idempotent, chạy lại không nhân bản
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post('topics/seed')
+  seedTaxonomy(
+    @CurrentUser() user: any,
+    @Query('reset') reset?: string,
+    @Query('grade') grade?: string,
+  ) {
+    return this.bankService.seedTaxonomy(
+      user.id,
+      reset === '1' || reset === 'true',
+      grade ? Number(grade) : undefined,
+    );
+  }
+
+  // Giữ tương thích: seed riêng lớp 10
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post('topics/seed-grade10')
+  seedGrade10(@CurrentUser() user: any, @Query('reset') reset?: string) {
+    return this.bankService.seedTaxonomy(user.id, reset === '1' || reset === 'true', 10);
+  }
+
+  // AI phân loại lại toàn bộ câu hỏi theo cây mục lục (dạng lá)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post('reclassify')
+  reclassify(
+    @CurrentUser() user: any,
+    @Query('grade') grade?: string,
+    @Query('limit') limit?: string,
+    @Query('onlyUnclassified') onlyUnclassified?: string,
+    @Query('updatedAfter') updatedAfter?: string,
+  ) {
+    return this.bankService.reclassifyQuestions(user.id, {
+      grade: grade ? Number(grade) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      onlyUnclassified: onlyUnclassified === '1' || onlyUnclassified === 'true',
+      updatedAfter,
+    });
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)
   @Post('topics')
@@ -316,6 +370,14 @@ export class BankController {
   @Post('import-exam-confirm')
   importExamConfirm(@CurrentUser() user: any, @Body() body: any) {
     return this.bankService.importExamConfirm(user.id, body);
+  }
+
+  // Phân tích lại 1 câu (GV sửa code inline ở bước phân loại)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post('parse-question')
+  parseQuestion(@CurrentUser() user: any, @Body() body: any) {
+    return this.bankService.parseQuestionBlock(user.id, body?.tex);
   }
 
   // ============ NHẬP ĐỀ TỪ FILE WORD (.docx) — 0 TOKEN ============

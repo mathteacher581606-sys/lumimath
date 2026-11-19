@@ -93,6 +93,14 @@ export class ExamsController {
     );
   }
 
+  // Phòng luyện đề (TSA/HSA)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.STUDENT)
+  @Get('practice-room')
+  listPracticeRoom(@CurrentUser() user: any, @Query('kind') kind?: string) {
+    return this.examsService.listPracticeRoom(user.id, kind || 'PRACTICE_TSA');
+  }
+
   // Lịch sử làm bài của tôi (phải khai báo trước :id)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.STUDENT)
@@ -184,6 +192,34 @@ export class ExamsController {
     @Param('attemptId') attemptId: string,
   ) {
     return this.examsService.getAttemptDetail(user.id, id, attemptId);
+  }
+
+  // Tải PDF "ĐÁP ÁN & LỜI GIẢI" của một bài làm (học sinh tự tải lại từ lịch sử)
+  // PDF được biên dịch qua TeX Live với chế độ TỰ ĐỘNG SỬA LỖI LaTeX.
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/attempts/:attemptId/answers-pdf')
+  async attemptAnswersPdf(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Param('attemptId') attemptId: string,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename, fixes } =
+      await this.examsService.buildAttemptAnswersPdf(user.id, id, attemptId);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    // Cho biết bộ tự sửa LaTeX đã can thiệp những gì (để chẩn đoán/đối chiếu)
+    if (fixes && fixes.length) {
+      res.setHeader(
+        'X-Latex-Autofix',
+        encodeURIComponent(fixes.join(' | ')).slice(0, 900),
+      );
+    }
+    res.setHeader('X-Latex-Autofix-Count', String(fixes?.length || 0));
+    res.send(buffer);
   }
 
   // Xem bài làm của học sinh (giáo viên chấm/xem lại)
@@ -607,6 +643,27 @@ export class ExamsController {
   async compileTikz(@Body() body: any, @Res() res: Response) {
     const png = await this.examsService.compileTikzSnippet(body?.snippet || '');
     res.setHeader('Content-Disposition', 'inline; filename="tikz.png"');
+    res.send(png);
+  }
+
+  // Dự phòng: biên dịch 1 công thức toán bằng TeX Live → PNG
+  // (dùng khi KaTeX trên web không render được macro lạ)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post('compile-math')
+  @Header('Content-Type', 'image/png')
+  async compileMath(@Body() body: any, @Res() res: Response) {
+    const png = await this.examsService.compileMathSnippet(body?.latex || '');
+    res.setHeader('Content-Disposition', 'inline; filename="math.png"');
+    res.send(png);
+  }
+
+  // Dự phòng: biên dịch 1 ĐOẠN LaTeX (enumerate/center/itemize/itemchoice...) bằng TeX Live → PNG
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post('compile-latex')
+  @Header('Content-Type', 'image/png')
+  async compileLatex(@Body() body: any, @Res() res: Response) {
+    const png = await this.examsService.compileLatexSnippet(body?.latex || '');
+    res.setHeader('Content-Disposition', 'inline; filename="latex.png"');
     res.send(png);
   }
 

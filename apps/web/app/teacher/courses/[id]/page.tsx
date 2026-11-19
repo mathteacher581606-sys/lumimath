@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getUser } from '@/lib/api';
 import LatexRenderer from '@/components/LatexRenderer';
 import BackButton from '@/components/BackButton';
 import LessonComments from '@/components/LessonComments';
@@ -63,10 +63,194 @@ export default function TeacherCourseDetail() {
   const [savingCourse, setSavingCourse] = useState(false);
   const [deleteCourseConfirm, setDeleteCourseConfirm] = useState(false);
 
+  // Quản lý chương (sửa tên + sắp xếp lại thứ tự)
+  const [chapterEditor, setChapterEditor] = useState(false);
+  const [chapterList, setChapterList] = useState<{ orig: string; name: string }[]>([]);
+  const [savingChapters, setSavingChapters] = useState(false);
+
   // Quản lý học sinh
   const [students, setStudents] = useState<any[] | null>(null);
   const [showStudents, setShowStudents] = useState(false);
   const [removingStudent, setRemovingStudent] = useState<string | null>(null);
+  // Nhập học sinh từ Excel
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<any>(null);
+  // Sao chép bài giảng từ khóa học khác
+  const [showCopy, setShowCopy] = useState(false);
+  const [myCourses, setMyCourses] = useState<any[]>([]);
+  const [copySourceId, setCopySourceId] = useState('');
+  const [sourceLessons, setSourceLessons] = useState<any[]>([]);
+  const [selectedLessonIds, setSelectedLessonIds] = useState<string[]>([]);
+  const [copying, setCopying] = useState(false);
+  const [copyResult, setCopyResult] = useState<string | null>(null);
+  // Trợ giảng
+  const [assistants, setAssistants] = useState<any[]>([]);
+  const [showAssistants, setShowAssistants] = useState(false);
+  const [assistantEmail, setAssistantEmail] = useState('');
+  const [addingAssistant, setAddingAssistant] = useState(false);
+  const [assistantMsg, setAssistantMsg] = useState<string | null>(null);
+
+  const currentUserId = getUser()?.id || '';
+  const isOwner = !course || course.teacherId === currentUserId;
+
+  async function loadAssistants() {
+    try {
+      setAssistants(await apiFetch(`/courses/${courseId}/assistants`));
+    } catch (e: any) {
+      showToast('❌ ' + e.message);
+    }
+  }
+
+  async function addAssistant() {
+    const email = assistantEmail.trim();
+    if (!email) return;
+    setAddingAssistant(true);
+    setAssistantMsg(null);
+    try {
+      await apiFetch(`/courses/${courseId}/assistants`, {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      });
+      setAssistantEmail('');
+      await loadAssistants();
+      setAssistantMsg('✅ Đã thêm trợ giảng');
+    } catch (e: any) {
+      setAssistantMsg('❌ ' + e.message);
+    } finally {
+      setAddingAssistant(false);
+    }
+  }
+
+  async function removeAssistant(assistantId: string) {
+    if (!confirm('Gỡ trợ giảng này khỏi khóa học?')) return;
+    try {
+      await apiFetch(`/courses/${courseId}/assistants/${assistantId}`, {
+        method: 'DELETE',
+      });
+      await loadAssistants();
+    } catch (e: any) {
+      showToast('❌ ' + e.message);
+    }
+  }
+
+  async function openCopyPanel() {
+    setShowCopy(!showCopy);
+    if (!showCopy && myCourses.length === 0) {
+      try {
+        const list = await apiFetch('/courses/my');
+        setMyCourses((list || []).filter((c: any) => c.id !== courseId));
+      } catch (e: any) {
+        showToast('❌ ' + e.message);
+      }
+    }
+  }
+
+  async function loadSourceLessons(courseId: string) {
+    setCopySourceId(courseId);
+    setSelectedLessonIds([]);
+    setCopyResult(null);
+    if (!courseId) {
+      setSourceLessons([]);
+      return;
+    }
+    try {
+      const c = await apiFetch(`/courses/${courseId}`);
+      setSourceLessons(c?.lessons || []);
+    } catch (e: any) {
+      showToast('❌ ' + e.message);
+      setSourceLessons([]);
+    }
+  }
+
+  function toggleCopyLesson(id: string) {
+    setSelectedLessonIds((p) =>
+      p.includes(id) ? p.filter((x) => x !== id) : [...p, id],
+    );
+  }
+
+  function toggleAll() {
+    if (selectedLessonIds.length === sourceLessons.length) {
+      setSelectedLessonIds([]);
+    } else {
+      setSelectedLessonIds(sourceLessons.map((l: any) => l.id));
+    }
+  }
+
+  async function doCopyLessons() {
+    if (!copySourceId || selectedLessonIds.length === 0) {
+      showToast('⚠️ Chọn khóa học nguồn và ít nhất 1 bài giảng');
+      return;
+    }
+    setCopying(true);
+    setCopyResult(null);
+    try {
+      const r = await apiFetch(`/courses/${courseId}/copy-lessons`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sourceCourseId: copySourceId,
+          lessonIds: selectedLessonIds,
+        }),
+      });
+      setCopyResult(`✅ Đã sao chép ${r.copied} bài giảng`);
+      setSelectedLessonIds([]);
+      await loadCourse();
+    } catch (e: any) {
+      setCopyResult('❌ ' + e.message);
+    } finally {
+      setCopying(false);
+    }
+  }
+
+  async function downloadImportTemplate() {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(
+        `/api/courses/${courseId}/import-students/template`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) throw new Error('Không tải được file mẫu');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'mau-nhap-hoc-sinh-khoa-hoc.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      showToast('❌ ' + e.message);
+    }
+  }
+
+  async function handleImportStudents(file: File) {
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/courses/${courseId}/import-students`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          Authorization: `Bearer ${token}`,
+        },
+        body: file,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setImportResult({ error: data.message || 'Nhập thất bại' });
+      } else {
+        setImportResult(data);
+        await loadStudents();
+        showToast('✅ Đã nhập xong');
+      }
+    } catch (e: any) {
+      setImportResult({ error: e.message });
+    } finally {
+      setImporting(false);
+    }
+  }
 
   async function loadStudents() {
     try {
@@ -109,6 +293,42 @@ export default function TeacherCourseDetail() {
       showToast(e.message);
     } finally {
       setRemovingStudent(null);
+    }
+  }
+
+  // Sửa thông tin tài khoản học sinh đã đăng ký
+  const [editingStudent, setEditingStudent] = useState<any | null>(null);
+  const [studentForm, setStudentForm] = useState({ fullName: '', email: '', className: '', grade: '' });
+  const [savingStudent, setSavingStudent] = useState(false);
+
+  function openEditStudent(s: any) {
+    setEditingStudent(s);
+    setStudentForm({
+      fullName: s.student.fullName || '',
+      email: s.student.email || '',
+      className: s.student.className || '',
+      grade: s.student.grade != null ? String(s.student.grade) : '',
+    });
+  }
+
+  async function saveEditStudent() {
+    if (!editingStudent) return;
+    setSavingStudent(true);
+    try {
+      await apiFetch(`/courses/${courseId}/students/${editingStudent.student.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          ...studentForm,
+          grade: studentForm.grade === '' ? null : Number(studentForm.grade),
+        }),
+      });
+      showToast('Đã cập nhật thông tin học sinh');
+      setEditingStudent(null);
+      await loadStudents();
+    } catch (e: any) {
+      showToast(e.message);
+    } finally {
+      setSavingStudent(false);
     }
   }
 
@@ -657,7 +877,22 @@ export default function TeacherCourseDetail() {
     }
   }
 
-  if (loading) return <div className="page-container">Đang tải...</div>;
+  if (loading)
+    return (
+      <div className="page-container">
+        {/* Khung chờ đúng bố cục trang khóa học: banner + sidebar chương + danh sách bài */}
+        <div className="skeleton" style={{ height: 92, borderRadius: 16, marginBottom: 16 }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 280px) minmax(0, 1fr)', gap: 14 }}>
+          <div className="skeleton" style={{ height: 380, borderRadius: 14 }} />
+          <div>
+            <div className="skeleton" style={{ height: 40, borderRadius: 10, marginBottom: 10 }} />
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="skeleton" style={{ height: 54, borderRadius: 10, marginBottom: 8 }} />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   if (!course) return <div className="page-container">Không tìm thấy khóa học.</div>;
 
   // Gom bài giảng theo chương (giữ nguyên thứ tự)
@@ -668,6 +903,74 @@ export default function TeacherCourseDetail() {
     if (last && last.chapter === key) last.lessons.push(l);
     else lessonGroups.push({ chapter: key, lessons: [l] });
   });
+
+  // Số thứ tự bài TRONG TỪNG CHƯƠNG (1..n), không phải số toàn khóa
+  const chapterNoOf: Record<string, number> = {};
+  {
+    let cur = '\u0000';
+    let n = 0;
+    for (const l of course.lessons || []) {
+      const c = l.chapter || '';
+      if (c !== cur) {
+        cur = c;
+        n = 1;
+      } else {
+        n++;
+      }
+      chapterNoOf[l.id] = n;
+    }
+  }
+
+  // Mở trình quản lý chương
+  function openChapterEditor() {
+    const seen = new Set<string>();
+    const list: { orig: string; name: string }[] = [];
+    for (const l of course.lessons || []) {
+      const c = l.chapter || '';
+      if (seen.has(c)) continue;
+      seen.add(c);
+      list.push({ orig: c, name: c });
+    }
+    setChapterList(list);
+    setChapterEditor(true);
+  }
+
+  function moveChapter(i: number, dir: -1 | 1) {
+    const j = i + dir;
+    if (j < 0 || j >= chapterList.length) return;
+    const next = [...chapterList];
+    [next[i], next[j]] = [next[j], next[i]];
+    setChapterList(next);
+  }
+
+  async function saveChapters() {
+    setSavingChapters(true);
+    try {
+      // 1) Đổi tên các chương đã sửa
+      for (const c of chapterList) {
+        const name = c.name.trim();
+        if (c.orig && name && name !== c.orig) {
+          await apiFetch(`/courses/${courseId}/chapters/rename`, {
+            method: 'PATCH',
+            body: JSON.stringify({ oldTitle: c.orig, newTitle: name }),
+          });
+        }
+      }
+      // 2) Sắp xếp lại thứ tự chương (đánh lại order bài học theo chương)
+      const order = chapterList.map((c) => (c.orig ? c.name.trim() || c.orig : c.orig));
+      await apiFetch(`/courses/${courseId}/chapters/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ order }),
+      });
+      showToast('✅ Đã cập nhật chương');
+      setChapterEditor(false);
+      loadCourse();
+    } catch (e: any) {
+      showToast('❌ ' + e.message);
+    } finally {
+      setSavingChapters(false);
+    }
+  }
 
   return (
     <div className="page-container" data-theme="maroon" style={{ maxWidth: 1600 }}>
@@ -693,7 +996,7 @@ export default function TeacherCourseDetail() {
               <span className="badge badge-warning">Bản nháp</span>
             )}
             <span className="badge" style={{ background: 'rgba(255,255,255,0.16)', color: '#fff' }}>{course.lessons?.length ?? 0} bài giảng</span>
-            <span className="badge" style={{ background: 'rgba(255,255,255,0.16)', color: '#fff' }}>{course._count?.enrollments ?? 0} học sinh</span>
+            <span className="badge" style={{ background: 'rgba(255,255,255,0.16)', color: '#fff' }}>{students !== null ? students.length : (course._count?.enrollments ?? 0)} học sinh</span>
             {course.sequential && (
               <span className="badge" style={{ background: 'rgba(240,179,85,0.3)', color: '#fff' }}>🔒 Học tuần tự</span>
             )}
@@ -706,9 +1009,11 @@ export default function TeacherCourseDetail() {
           <Link href={`/teacher/courses/${courseId}/assignments`} className="btn-lm ghost" style={{ textDecoration: 'none' }}>
             📚 Giao bài tập
           </Link>
-          <button className="btn-lm ghost" onClick={openEditCourse}>
-            ✏️ Sửa khóa học
-          </button>
+          {isOwner && (
+            <button className="btn-lm ghost" onClick={openEditCourse}>
+              ✏️ Sửa khóa học
+            </button>
+          )}
           <button className="btn-lm amber" onClick={startAdd}>
             + Thêm bài giảng
           </button>
@@ -908,14 +1213,16 @@ export default function TeacherCourseDetail() {
             >
               Hủy
             </button>
-            <button
-              type="button"
-              className="btn btn-danger"
-              style={{ width: 'auto' }}
-              onClick={() => setDeleteCourseConfirm(true)}
-            >
-              🗑️ Xóa khóa học
-            </button>
+            {isOwner && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                style={{ width: 'auto' }}
+                onClick={() => setDeleteCourseConfirm(true)}
+              >
+                🗑️ Xóa khóa học
+              </button>
+            )}
           </div>
         </form>
       )}
@@ -1438,7 +1745,11 @@ export default function TeacherCourseDetail() {
         {showResults && (
           <div style={{ marginTop: 12 }}>
             {courseResults === null ? (
-              <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Đang tải…</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="skeleton" style={{ height: 14, borderRadius: 6 }} />
+                ))}
+              </div>
             ) : courseResults.students.length === 0 ? (
               <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>
                 Chưa có học sinh. Điểm sẽ hiển thị khi học sinh tham gia và làm bài BTVN.
@@ -1536,7 +1847,11 @@ export default function TeacherCourseDetail() {
         {showActivity && (
           <div style={{ marginTop: 12 }}>
             {activity === null ? (
-              <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Đang tải…</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="skeleton" style={{ height: 14, borderRadius: 6 }} />
+                ))}
+              </div>
             ) : activity.length === 0 ? (
               <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Chưa có dữ liệu hoạt động.</p>
             ) : (
@@ -1579,28 +1894,232 @@ export default function TeacherCourseDetail() {
       </div>
 
       {/* Danh sách bài giảng */}
-      <h2 style={{ fontSize: 18, marginBottom: 16 }}>
-        Bài giảng ({course.lessons?.length ?? 0})
-      </h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+        <h2 style={{ fontSize: 18, margin: 0 }}>
+          Bài giảng ({course.lessons?.length ?? 0})
+        </h2>
+        <button className="btn-lm ghost" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={openCopyPanel}>
+          📋 Sao chép bài giảng từ khóa học khác
+        </button>
+      </div>
+
+      {showCopy && (
+        <div className="card" style={{ marginBottom: 16, padding: 16, background: '#fdf6e8' }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>📋 Sao chép bài giảng vào khóa học này</div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+            <label style={{ fontSize: 13 }}>Khóa học nguồn:</label>
+            <select
+              value={copySourceId}
+              onChange={(e) => loadSourceLessons(e.target.value)}
+              style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid var(--color-rule)', background: 'var(--color-paper)', color: 'var(--color-ink)', fontSize: 13.5, minWidth: 260 }}
+            >
+              <option value="">— Chọn khóa học —</option>
+              {myCourses.map((c: any) => (
+                <option key={c.id} value={c.id}>
+                  {c.title || c.id} ({c._count?.lessons ?? 0} bài)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {sourceLessons.length > 0 && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <label style={{ fontSize: 12.5, cursor: 'pointer', userSelect: 'none' }} onClick={toggleAll}>
+                  <input type="checkbox" checked={selectedLessonIds.length === sourceLessons.length && sourceLessons.length > 0} readOnly style={{ marginRight: 6 }} />
+                  Chọn tất cả ({sourceLessons.length} bài)
+                </label>
+              </div>
+              <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--color-rule)', borderRadius: 8, background: '#fffdf7', padding: 6 }}>
+                {sourceLessons.map((l: any) => (
+                  <label key={l.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 8px', fontSize: 13, cursor: 'pointer', borderBottom: '1px solid var(--color-rule)' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedLessonIds.includes(l.id)}
+                      onChange={() => toggleCopyLesson(l.id)}
+                      style={{ marginTop: 3 }}
+                    />
+                    <span>
+                      {l.chapter ? <span style={{ color: 'var(--color-muted)', fontSize: 11.5 }}>{l.chapter} · </span> : null}
+                      {l.title || '(không tên)'}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10 }}>
+                <button className="btn-lm amber" style={{ padding: '7px 14px', fontSize: 13 }} onClick={doCopyLessons} disabled={copying || selectedLessonIds.length === 0}>
+                  {copying ? '⏳ Đang sao chép…' : `Sao chép ${selectedLessonIds.length} bài`}
+                </button>
+                {copyResult && <span style={{ fontSize: 13 }}>{copyResult}</span>}
+              </div>
+            </>
+          )}
+          {copySourceId && sourceLessons.length === 0 && (
+            <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Khóa học này chưa có bài giảng.</p>
+          )}
+        </div>
+      )}
+
+      {/* Trợ giảng (chỉ chủ khóa học) */}
+      {isOwner && (
+        <div className="card" style={{ marginBottom: 24, padding: 16 }}>
+          <div
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+            onClick={() => {
+              setShowAssistants(!showAssistants);
+              if (!showAssistants && assistants.length === 0) loadAssistants();
+            }}
+          >
+            <strong style={{ fontSize: 15 }}>
+              👥 Trợ giảng ({assistants.length})
+            </strong>
+            <span style={{ color: 'var(--color-muted)' }}>{showAssistants ? '▲' : '▼'}</span>
+          </div>
+          {showAssistants && (
+            <div style={{ marginTop: 12 }}>
+              <p style={{ fontSize: 13, color: 'var(--color-muted)', marginBottom: 10 }}>
+                Trợ giảng có toàn quyền quản lý khóa học (bài giảng, bài tập, học sinh, chấm điểm) — chỉ không thể xóa khóa học.
+              </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                <input
+                  type="email"
+                  placeholder="Email giáo viên (VD: giangvien@...)"
+                  value={assistantEmail}
+                  onChange={(e) => setAssistantEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addAssistant()}
+                  style={{ flex: 1, minWidth: 220, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-rule)', background: 'var(--color-paper)', color: 'var(--color-ink)' }}
+                />
+                <button className="btn-lm amber" style={{ padding: '8px 14px', fontSize: 13 }} onClick={addAssistant} disabled={addingAssistant}>
+                  {addingAssistant ? '⏳…' : '+ Thêm trợ giảng'}
+                </button>
+              </div>
+              {assistantMsg && <div style={{ fontSize: 13, marginBottom: 8 }}>{assistantMsg}</div>}
+              {assistants.length > 0 ? (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <tbody>
+                    {assistants.map((a: any) => (
+                      <tr key={a.id} style={{ borderBottom: '1px solid var(--color-rule)' }}>
+                        <td style={{ padding: '8px 4px' }}>
+                          <strong>{a.user?.fullName}</strong>{' '}
+                          <span className="mono" style={{ fontSize: 11, color: 'var(--color-muted)' }}>{a.user?.email}</span>
+                        </td>
+                        <td style={{ padding: '8px 4px', textAlign: 'right' }}>
+                          <button className="btn-lm ghost" style={{ padding: '4px 10px', fontSize: 12, color: 'var(--color-danger)' }} onClick={() => removeAssistant(a.id)}>
+                            Gỡ
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Chưa có trợ giảng.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Quản lý học sinh */}
       <div className="card" style={{ marginBottom: 24, padding: 16 }}>
         <div
-          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
-          onClick={() => {
-            setShowStudents(!showStudents);
-            if (!showStudents && students === null) loadStudents();
-          }}
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}
         >
-          <strong style={{ fontSize: 15 }}>
-            👥 Học sinh ({students !== null ? students.length : course._count?.enrollments ?? 0})
-          </strong>
-          <span style={{ color: 'var(--color-muted)' }}>{showStudents ? '▲' : '▼'}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', flex: 1, minWidth: 200 }}
+            onClick={() => {
+              setShowStudents(!showStudents);
+              if (!showStudents && students === null) loadStudents();
+            }}
+          >
+            <strong style={{ fontSize: 15 }}>
+              👥 Học sinh ({students !== null ? students.length : course._count?.enrollments ?? 0})
+            </strong>
+            <span style={{ color: 'var(--color-muted)' }}>{showStudents ? '▲' : '▼'}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              className="btn-lm ghost"
+              style={{ padding: '6px 12px', fontSize: 12.5 }}
+              onClick={() => setShowImport(!showImport)}
+              title="Nhập danh sách học sinh từ file Excel"
+            >
+              📥 Nhập Excel
+            </button>
+          </div>
         </div>
+
+        {/* Panel nhập Excel */}
+        {showImport && (
+          <div style={{ marginTop: 12, padding: 12, background: '#fdf6e8', borderRadius: 8, border: '1px solid var(--color-rule)' }}>
+            <div style={{ fontSize: 13, marginBottom: 10, lineHeight: 1.7 }}>
+              Tải <b>file mẫu</b>, điền danh sách học sinh (Họ tên, Email, Lớp, Mật khẩu, Trường), rồi tải file lên.
+              Học sinh chưa có tài khoản sẽ được <b>tạo tự động</b> và thêm vào khóa học này.
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="btn-lm ghost" style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={downloadImportTemplate}>
+                ⬇️ Tải file mẫu
+              </button>
+              <label className="btn-lm amber" style={{ padding: '6px 12px', fontSize: 12.5, cursor: 'pointer', display: 'inline-block' }}>
+                {importing ? '⏳ Đang nhập…' : '📤 Chọn file .xlsx'}
+                <input
+                  type="file"
+                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleImportStudents(f);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
+            {importResult && (
+              <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.8 }}>
+                {importResult.error ? (
+                  <span style={{ color: 'var(--color-danger)' }}>❌ {importResult.error}</span>
+                ) : (
+                  <>
+                    <div>✅ Đã nhập <b>{importResult.enrolled}</b> học sinh mới vào khóa học.</div>
+                    {importResult.created?.length > 0 && (
+                      <div>🆕 Tạo mới <b>{importResult.created.length}</b> tài khoản (xem mật khẩu bên dưới).</div>
+                    )}
+                    {importResult.already?.length > 0 && (
+                      <div style={{ color: 'var(--color-muted)' }}>⏭ {importResult.already.length} học sinh đã có trong khóa học.</div>
+                    )}
+                    {importResult.skipped?.length > 0 && (
+                      <div style={{ color: 'var(--color-warning)' }}>
+                        ⚠️ {importResult.skipped.length} dòng bị bỏ qua:
+                        {importResult.skipped.slice(0, 10).map((s: any, i: number) => (
+                          <div key={i} style={{ fontSize: 12 }}>• Dòng {s.row}: {s.reason}</div>
+                        ))}
+                        {importResult.skipped.length > 10 && <div style={{ fontSize: 12 }}>… và {importResult.skipped.length - 10} dòng khác</div>}
+                      </div>
+                    )}
+                    {importResult.created?.length > 0 && (
+                      <details style={{ marginTop: 6 }}>
+                        <summary style={{ cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }}>Tài khoản &amp; mật khẩu đã tạo (lưu lại ngay)</summary>
+                        <ul style={{ margin: '6px 0 0 18px', fontSize: 12.5, fontFamily: 'monospace' }}>
+                          {importResult.created.map((c: any, i: number) => (
+                            <li key={i}>{c.fullName} · {c.email} · <b>{c.password}</b></li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {showStudents && (
           <div style={{ marginTop: 12 }}>
             {students === null ? (
-              <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Đang tải…</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="skeleton" style={{ height: 14, borderRadius: 6 }} />
+                ))}
+              </div>
             ) : students.length === 0 ? (
               <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>
                 Chưa có học sinh đăng ký. Chia sẻ mã khóa học để học sinh tham gia.
@@ -1639,6 +2158,13 @@ export default function TeacherCourseDetail() {
                           <button
                             className="btn btn-outline"
                             style={{ width: 'auto', padding: '4px 10px', fontSize: 11 }}
+                            onClick={() => openEditStudent(s)}
+                          >
+                            ✏️ Sửa
+                          </button>
+                          <button
+                            className="btn btn-outline"
+                            style={{ width: 'auto', padding: '4px 10px', fontSize: 11 }}
                             disabled={removingStudent === s.student.id}
                             onClick={() => resetStudentPassword(s.student)}
                           >
@@ -1672,8 +2198,18 @@ export default function TeacherCourseDetail() {
         <div className="lm-course-layout">
           {/* ===== SIDEBAR GIÁO TRÌNH (kiểu Udemy) ===== */}
           <aside className="lm-course-sidebar">
-            <div style={{ fontWeight: 800, color: 'var(--lm-maroon)', fontSize: 13.5, padding: '4px 10px 8px' }}>
-              📖 Giáo trình
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 10px 8px', gap: 6 }}>
+              <span style={{ fontWeight: 800, color: 'var(--lm-maroon)', fontSize: 13.5 }}>
+                📖 Giáo trình
+              </span>
+              <button
+                type="button"
+                onClick={openChapterEditor}
+                title="Sửa tên chương và thứ tự chương"
+                style={{ border: '1px solid var(--color-rule)', background: 'var(--color-paper)', color: 'var(--color-ink)', borderRadius: 8, padding: '3px 8px', fontSize: 11.5, cursor: 'pointer' }}
+              >
+                ⚙️ Sửa chương
+              </button>
             </div>
             {course.lessons.map((l: any, idx: number) => {
               const prevL = idx > 0 ? course.lessons[idx - 1] : null;
@@ -1697,7 +2233,7 @@ export default function TeacherCourseDetail() {
                   >
                     <span className="tick" style={{ color: 'var(--lm-amber)' }}>›</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      {idx + 1}. {l.title}
+                      {chapterNoOf[l.id]}. {l.title}
                     </span>
                     {st ? (
                       <span style={{ fontSize: 10.5, color: 'var(--color-muted)', flexShrink: 0 }}>
@@ -1730,7 +2266,7 @@ export default function TeacherCourseDetail() {
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {group.lessons.map((lesson: any) => {
-                  const lessonNo = (course.lessons || []).indexOf(lesson) + 1;
+                  const lessonNo = chapterNoOf[lesson.id] || 1;
                   return (
             <div key={lesson.id} className="card" style={{ padding: 18, display: openLesson === lesson.id ? 'block' : 'none' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2088,6 +2624,95 @@ export default function TeacherCourseDetail() {
         </div>
       )}
 
+      {/* Modal quản lý chương: đổi tên + sắp xếp thứ tự */}
+      {chapterEditor && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'color-mix(in oklch, var(--color-ink) 45%, transparent)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 60,
+            padding: 16,
+          }}
+          onClick={() => !savingChapters && setChapterEditor(false)}
+        >
+          <div
+            className="card"
+            style={{ width: '100%', maxWidth: 560, margin: 0, maxHeight: '86vh', overflowY: 'auto' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ marginBottom: 6 }}>⚙️ Quản lý chương</h3>
+            <p style={{ fontSize: 12.5, color: 'var(--color-muted)', marginBottom: 14 }}>
+              Sửa tên chương và dùng nút ▲ ▼ để đổi thứ tự. Bài học trong mỗi chương được đánh số lại từ 1.
+            </p>
+
+            {chapterList.length === 0 && (
+              <p style={{ fontSize: 13, color: 'var(--color-muted)' }}>Khóa học chưa có chương nào.</p>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {chapterList.map((c, i) => (
+                <div key={c.orig || 'empty'} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, color: 'var(--color-muted)', width: 22, textAlign: 'right' }}>
+                    {i + 1}.
+                  </span>
+                  <input
+                    value={c.name}
+                    onChange={(e) => {
+                      const next = [...chapterList];
+                      next[i] = { ...next[i], name: e.target.value };
+                      setChapterList(next);
+                    }}
+                    placeholder={c.orig ? 'Tên chương' : 'Chương chưa đặt tên'}
+                    style={{ flex: 1, padding: '7px 10px', fontSize: 13.5 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => moveChapter(i, -1)}
+                    disabled={i === 0}
+                    title="Lên"
+                    style={{ padding: '6px 9px', borderRadius: 8, border: '1px solid var(--color-rule)', background: 'var(--color-paper)', cursor: i === 0 ? 'not-allowed' : 'pointer', opacity: i === 0 ? 0.4 : 1 }}
+                  >
+                    ▲
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveChapter(i, 1)}
+                    disabled={i === chapterList.length - 1}
+                    title="Xuống"
+                    style={{ padding: '6px 9px', borderRadius: 8, border: '1px solid var(--color-rule)', background: 'var(--color-paper)', cursor: i === chapterList.length - 1 ? 'not-allowed' : 'pointer', opacity: i === chapterList.length - 1 ? 0.4 : 1 }}
+                  >
+                    ▼
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end' }}>
+              <button
+                className="btn-lm ghost"
+                type="button"
+                onClick={() => setChapterEditor(false)}
+                disabled={savingChapters}
+              >
+                Hủy
+              </button>
+              <button
+                className="btn-lm amber"
+                type="button"
+                onClick={saveChapters}
+                disabled={savingChapters}
+              >
+                {savingChapters ? 'Đang lưu…' : 'Lưu thay đổi'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal xác nhận xóa khóa học */}
       {deleteCourseConfirm && (
         <div
@@ -2392,6 +3017,62 @@ export default function TeacherCourseDetail() {
                 {exSaving ? 'Đang gán…' : `✅ Gán ${bankSelected.length || ''} câu làm BTVN`}
               </button>
               <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setBankPicker(null)}>
+                Hủy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal sửa thông tin học sinh */}
+      {editingStudent && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'color-mix(in oklch, var(--color-ink) 45%, transparent)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1500,
+            padding: 20,
+          }}
+          onClick={() => setEditingStudent(null)}
+        >
+          <div className="auth-card" onClick={(e) => e.stopPropagation()}>
+            <div className="logo">✏️</div>
+            <h1>Sửa học sinh</h1>
+            <p className="subtitle">
+              {editingStudent.student.studentCode} · {editingStudent.student.email}
+            </p>
+            <div className="form-group">
+              <label>Họ tên</label>
+              <input value={studentForm.fullName} onChange={(e) => setStudentForm({ ...studentForm, fullName: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Email</label>
+              <input value={studentForm.email} onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label>Khối (1–12)</label>
+              <input
+                value={studentForm.grade}
+                onChange={(e) => setStudentForm({ ...studentForm, grade: e.target.value })}
+                type="number"
+                min={1}
+                max={12}
+                placeholder="VD: 12"
+              />
+            </div>
+            <div className="form-group">
+              <label>Lớp</label>
+              <input value={studentForm.className} onChange={(e) => setStudentForm({ ...studentForm, className: e.target.value })} placeholder="VD: 12A1" />
+            </div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button className="btn" style={{ flex: 1 }} disabled={savingStudent} onClick={saveEditStudent}>
+                {savingStudent ? 'Đang lưu…' : 'Lưu'}
+              </button>
+              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setEditingStudent(null)}>
                 Hủy
               </button>
             </div>

@@ -20,8 +20,12 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
 
-  // Token hết hạn → tự động đăng xuất và về trang đăng nhập
-  if (res.status === 401 && typeof window !== 'undefined') {
+  // Token hết hạn → tự động đăng xuất và về trang đăng nhập.
+  // LƯU Ý: KHÔNG áp dụng cho endpoint đăng nhập / đăng ký / quên mật khẩu —
+  // ở đó 401 nghĩa là "sai email hoặc mật khẩu", phải hiện đúng lỗi cho người dùng.
+  const isAuthEndpoint =
+    /\/auth\/(login|register|otp|forgot|reset)/.test(path);
+  if (res.status === 401 && typeof window !== 'undefined' && !isAuthEndpoint) {
     logout();
     if (!window.location.pathname.startsWith('/login')) {
       window.location.href = '/login';

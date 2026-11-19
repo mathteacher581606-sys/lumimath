@@ -3,11 +3,19 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/api';
 import { formatAnswer } from '@/lib/answer';
 import LatexRenderer from '@/components/LatexRenderer';
-import LatexEditor from '@/components/LatexEditor';
 import BackButton from '@/components/BackButton';
+
+// CodeMirror nạp lười — không chặn lần hiển thị đầu
+const LatexEditor = dynamic(() => import('@/components/LatexEditor'), {
+  ssr: false,
+  loading: () => (
+    <div className="skeleton" style={{ height: 380, borderRadius: 10 }} aria-label="Đang tải trình soạn LaTeX" />
+  ),
+});
 
 const PART_LABELS: Record<number, string> = {
   1: 'Phần I — Trắc nghiệm',
@@ -45,6 +53,10 @@ export default function ImportExamPage() {
   const [folders, setFolders] = useState<any[]>([]);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  // Sửa code inline từng câu + biên dịch lại lời giải
+  const [editing, setEditing] = useState<Record<number, string>>({});
+  const [parseBusy, setParseBusy] = useState<number | null>(null);
+  const [parseErr, setParseErr] = useState<Record<number, string>>({});
 
   useEffect(() => {
     apiFetch('/bank/topics')
@@ -76,8 +88,8 @@ export default function ImportExamPage() {
         data.questions.map((q: any, idx: number) => ({
           ...q,
           idx,
-          // Câu nghi trùng → mặc định bỏ qua (dùng lại câu có sẵn trong kho, không nhập thêm)
-          skipBank: !!q.duplicateOf,
+          // Chỉ TRÙNG CHÍNH XÁC mới tự bỏ qua; "nghi trùng" (gần giống) chỉ cảnh báo, giữ câu mới
+          skipBank: !!(q.duplicateOf && q.duplicateOf.exact),
         })),
       );
 
@@ -109,6 +121,60 @@ export default function ImportExamPage() {
     setQuestions((prev) =>
       prev.map((q, i) => (i === idx ? { ...q, [key]: value } : q)),
     );
+  }
+
+  function toggleEdit(idx: number) {
+    setEditing((prev) => {
+      const next = { ...prev };
+      if (next[idx] !== undefined) {
+        delete next[idx];
+        setParseErr((pe) => {
+          const n = { ...pe };
+          delete n[idx];
+          return n;
+        });
+      } else {
+        const q = questions.find((x) => x.idx === idx);
+        next[idx] = q?.source || '';
+      }
+      return next;
+    });
+  }
+
+  async function reparseQuestion(idx: number) {
+    setParseBusy(idx);
+    setParseErr((p) => ({ ...p, [idx]: '' }));
+    try {
+      const r = await apiFetch('/bank/parse-question', {
+        method: 'POST',
+        body: JSON.stringify({ tex: editing[idx] }),
+      });
+      setQuestions((prev) =>
+        prev.map((q, i) =>
+          i === idx
+            ? {
+                ...q,
+                type: r.type,
+                content: r.content,
+                options: r.options,
+                answer: r.answer,
+                answerMissing: r.answerMissing,
+                solution: r.solution,
+                source: editing[idx],
+              }
+            : q,
+        ),
+      );
+      setEditing((prev) => {
+        const n = { ...prev };
+        delete n[idx];
+        return n;
+      });
+    } catch (e: any) {
+      setParseErr((p) => ({ ...p, [idx]: e.message }));
+    } finally {
+      setParseBusy(null);
+    }
   }
 
   function handleFile(e: any) {
@@ -266,6 +332,11 @@ export default function ImportExamPage() {
                       <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                         <span className="badge badge-accent">Câu {q.idx + 1}</span>
                         <span className="badge">{TYPE_LABEL[q.type]}</span>
+                        {q.answerMissing && (
+                          <span className="badge badge-danger" title="Đề gốc không có dấu \True nên hệ thống không tự xác định được đáp án">
+                            ⚠️ Chưa xác định đáp án
+                          </span>
+                        )}
                         {q.duplicateOf && (
                           <>
                             <span className="badge badge-danger">
@@ -306,6 +377,68 @@ export default function ImportExamPage() {
                           ))}
                         </div>
                       )}
+                      {/* 💡 Lời giải (biên dịch) */}
+                      {q.solution && (
+                        <div
+                          style={{
+                            marginBottom: 8,
+                            fontSize: 12.5,
+                            background: 'color-mix(in oklch, var(--color-success) 8%, var(--color-paper))',
+                            padding: '8px 10px',
+                            borderRadius: 6,
+                            border: '1px solid color-mix(in oklch, var(--color-success) 25%, transparent)',
+                          }}
+                        >
+                          <strong style={{ color: 'var(--color-success)' }}>💡 Lời giải:</strong>{' '}
+                          <LatexRenderer content={q.solution} />
+                        </div>
+                      )}
+
+                      {/* ✏️ Sửa code inline từng câu */}
+                      <button
+                        type="button"
+                        className="lm-filter-btn"
+                        style={{ fontSize: 12, padding: '3px 10px', marginBottom: 8 }}
+                        onClick={() => toggleEdit(q.idx)}
+                      >
+                        {editing[q.idx] !== undefined ? '✕ Đóng sửa code' : '✏️ Sửa code câu này'}
+                      </button>
+                      {editing[q.idx] !== undefined && (
+                        <div style={{ marginBottom: 8 }}>
+                          <textarea
+                            value={editing[q.idx]}
+                            onChange={(e) => setEditing((p) => ({ ...p, [q.idx]: e.target.value }))}
+                            rows={5}
+                            spellCheck={false}
+                            style={{
+                              width: '100%',
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: 12,
+                              padding: 8,
+                              borderRadius: 6,
+                              border: '1px solid var(--color-rule)',
+                              background: 'var(--color-paper)',
+                              color: 'var(--color-ink)',
+                              lineHeight: 1.5,
+                            }}
+                          />
+                          {parseErr[q.idx] && (
+                            <div style={{ color: 'var(--color-danger)', fontSize: 12, marginTop: 4 }}>
+                              ⚠️ {parseErr[q.idx]}
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{ width: 'auto', marginTop: 6, fontSize: 12, padding: '5px 12px' }}
+                            disabled={parseBusy === q.idx}
+                            onClick={() => reparseQuestion(q.idx)}
+                          >
+                            {parseBusy === q.idx ? '⏳ Đang biên dịch…' : '✅ Biên dịch lại câu này'}
+                          </button>
+                        </div>
+                      )}
+
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <div className="form-group" style={{ width: 170, marginBottom: 0 }}>
                           <label style={{ fontSize: 12 }}>Phần</label>

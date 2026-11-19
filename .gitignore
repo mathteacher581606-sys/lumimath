@@ -13,3 +13,13 @@ deploy/
 kaspersky-ca.pem
 start_servers_*.bat
 *.zip
+
+# Claude bridge: vùng nhận code do Claude sinh ra (không commit)
+deploy/staging/
+staging/
+
+deploy/.claude-key
+
+deploy/handoff/
+
+tmp-*.js

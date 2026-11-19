@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   HttpException,
   Injectable,
@@ -6,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { Role } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
+import * as XLSX from 'xlsx';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
@@ -38,6 +41,10 @@ export class CoursesService {
   // ============ KHÓA HỌC ============
 
   async create(teacherId: string, dto: CreateCourseDto) {
+    // Trợ giảng không được tạo khóa học
+    if (await this.isAssistantOnly(teacherId)) {
+      throw new ForbiddenException('Trợ giảng không được tạo khóa học');
+    }
     return this.prisma.course.create({
       data: {
         teacherId,
@@ -55,13 +62,23 @@ export class CoursesService {
 
   async findAll(user: { id: string; role: Role }) {
     if (user.role === Role.TEACHER) {
-      return this.prisma.course.findMany({
-        where: { teacherId: user.id },
+      const courses = await this.prisma.course.findMany({
+        where: {
+          OR: [
+            { teacherId: user.id },
+            { assistants: { some: { userId: user.id } } },
+          ],
+        },
         include: {
+          teacher: { select: { id: true, fullName: true } },
           _count: { select: { lessons: true, enrollments: true } },
         },
         orderBy: { createdAt: 'desc' },
       });
+      return courses.map((c) => ({
+        ...c,
+        isAssistant: c.teacherId !== user.id,
+      }));
     }
     return this.prisma.course.findMany({
       where: { isPublished: true },
@@ -78,6 +95,7 @@ export class CoursesService {
       where: { id },
       include: {
         teacher: { select: { id: true, fullName: true, school: true } },
+        _count: { select: { enrollments: true, lessons: true } },
         lessons: {
           orderBy: { order: 'asc' },
           include: {
@@ -129,7 +147,8 @@ export class CoursesService {
   }
 
   async update(id: string, teacherId: string, dto: UpdateCourseDto) {
-    await this.getOwnedCourse(id, teacherId);
+    // Chỉ chủ khóa học được sửa (trợ giảng không được sửa khóa học)
+    await this.requireOwner(id, teacherId);
     return this.prisma.course.update({ where: { id }, data: { ...dto } });
   }
 
@@ -579,7 +598,7 @@ export class CoursesService {
   }
 
   async remove(id: string, teacherId: string) {
-    await this.getOwnedCourse(id, teacherId);
+    await this.requireOwner(id, teacherId);
     return this.prisma.course.delete({ where: { id } });
   }
 
@@ -587,13 +606,44 @@ export class CoursesService {
 
   async createLesson(courseId: string, teacherId: string, dto: CreateLessonDto) {
     await this.getOwnedCourse(courseId, teacherId);
+    const chapter = ((dto as any).chapter || null) as string | null;
+
+    // Tự chèn bài mới vào CUỐI CHƯƠNG của nó (giữ các chương liền mạch)
+    let order = dto.order;
+    if (order === undefined || order === null) {
+      const lessons = await this.prisma.lesson.findMany({
+        where: { courseId },
+        select: { id: true, chapter: true, order: true },
+        orderBy: { order: 'asc' },
+      });
+      const chapterLessons = lessons.filter((l) => (l.chapter || null) === chapter);
+      if (chapterLessons.length) {
+        const insertAt = (chapterLessons[chapterLessons.length - 1].order ?? 0) + 1;
+        // Dồn các bài phía sau xuống 1 bậc
+        const shift = lessons.filter((l) => (l.order ?? 0) >= insertAt);
+        if (shift.length) {
+          await this.prisma.$transaction(
+            shift.map((l) =>
+              this.prisma.lesson.update({
+                where: { id: l.id },
+                data: { order: (l.order ?? 0) + 1 },
+              }),
+            ),
+          );
+        }
+        order = insertAt;
+      } else {
+        order = (lessons.length ? Math.max(...lessons.map((l) => l.order ?? 0)) : 0) + 1;
+      }
+    }
+
     return this.prisma.lesson.create({
       data: {
         courseId,
         title: dto.title,
         description: dto.description,
-        chapter: (dto as any).chapter || null,
-        order: dto.order ?? 0,
+        chapter,
+        order,
         youtubeUrl: dto.youtubeUrl,
         pdfLinks: dto.pdfLinks ?? [],
         videos: (dto as any).videos ?? [],
@@ -615,12 +665,11 @@ export class CoursesService {
   ) {
     const lesson = await this.prisma.lesson.findUnique({
       where: { id: lessonId },
-      include: { course: true },
+      select: { id: true, courseId: true },
     });
     if (!lesson) throw new NotFoundException('Không tìm thấy bài giảng');
-    if (lesson.course.teacherId !== teacherId) {
-      throw new ForbiddenException('Bạn không sở hữu bài giảng này');
-    }
+    // Chủ khóa học hoặc trợ giảng đều được sửa bài giảng
+    await this.getOwnedCourse(lesson.courseId, teacherId);
     return this.prisma.lesson.update({
       where: { id: lessonId },
       data: {
@@ -659,13 +708,130 @@ export class CoursesService {
   async removeLesson(lessonId: string, teacherId: string) {
     const lesson = await this.prisma.lesson.findUnique({
       where: { id: lessonId },
-      include: { course: true },
+      select: { id: true, courseId: true },
     });
     if (!lesson) throw new NotFoundException('Không tìm thấy bài giảng');
-    if (lesson.course.teacherId !== teacherId) {
-      throw new ForbiddenException('Bạn không sở hữu bài giảng này');
-    }
+    // Chủ khóa học hoặc trợ giảng đều được xóa bài giảng
+    await this.getOwnedCourse(lesson.courseId, teacherId);
     return this.prisma.lesson.delete({ where: { id: lessonId } });
+  }
+
+  // ===== CHƯƠNG: đổi tên + sắp xếp lại thứ tự =====
+  async renameChapter(
+    courseId: string,
+    userId: string,
+    oldTitle: string,
+    newTitle: string,
+  ) {
+    await this.getOwnedCourse(courseId, userId);
+    const from = String(oldTitle || '');
+    const to = String(newTitle || '').trim();
+    if (!to) throw new BadRequestException('Tên chương không được để trống');
+    if (from === to) return { ok: true, updated: 0 };
+    const res = await this.prisma.lesson.updateMany({
+      where: { courseId, chapter: from },
+      data: { chapter: to },
+    });
+    return { ok: true, updated: res.count };
+  }
+
+  async reorderChapters(courseId: string, userId: string, order: string[]) {
+    await this.getOwnedCourse(courseId, userId);
+    const lessons = await this.prisma.lesson.findMany({
+      where: { courseId },
+      select: { id: true, chapter: true, order: true },
+    });
+    const groups = new Map<string, any[]>();
+    for (const l of lessons) {
+      const k = l.chapter || '';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(l);
+    }
+    for (const arr of groups.values()) {
+      arr.sort(
+        (a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id),
+      );
+    }
+    // Thứ tự chương mong muốn; chương không có trong danh sách thì xếp cuối
+    const seq: string[] = [];
+    for (const t of order || []) {
+      if (groups.has(t) && !seq.includes(t)) seq.push(t);
+    }
+    for (const t of groups.keys()) {
+      if (!seq.includes(t)) seq.push(t);
+    }
+    // Đánh lại order tuần tự: chương 1 (1..n), chương 2 (n+1..), ...
+    let n = 1;
+    for (const t of seq) {
+      for (const l of groups.get(t) || []) {
+        await this.prisma.lesson.update({
+          where: { id: l.id },
+          data: { order: n++ },
+        });
+      }
+    }
+    return { ok: true, chapters: seq.length, lessons: lessons.length };
+  }
+
+  // Sao chép bài giảng từ khóa học A sang khóa học B (giáo viên sở hữu cả 2)
+  async copyLessons(
+    targetCourseId: string,
+    teacherId: string,
+    sourceCourseId: string,
+    lessonIds: string[],
+  ) {
+    const target = await this.getOwnedCourse(targetCourseId, teacherId);
+    const source = await this.getOwnedCourse(sourceCourseId, teacherId);
+    if (!target || !source) {
+      throw new NotFoundException('Không tìm thấy khóa học');
+    }
+    if (sourceCourseId === targetCourseId) {
+      throw new ForbiddenException('Không thể sao chép vào chính khóa học đó');
+    }
+
+    const where: any = { courseId: sourceCourseId };
+    if (Array.isArray(lessonIds) && lessonIds.length) {
+      where.id = { in: lessonIds };
+    }
+    const lessons = await this.prisma.lesson.findMany({
+      where,
+      orderBy: { order: 'asc' },
+    });
+    if (!lessons.length) {
+      throw new NotFoundException('Không có bài giảng nào để sao chép');
+    }
+
+    const maxOrder = await this.prisma.lesson.aggregate({
+      where: { courseId: targetCourseId },
+      _max: { order: true },
+    });
+    let nextOrder = (maxOrder._max?.order ?? -1) + 1;
+
+    const created = await this.prisma.$transaction(
+      lessons.map((l) =>
+        this.prisma.lesson.create({
+          data: {
+            courseId: targetCourseId,
+            title: l.title,
+            description: l.description,
+            chapter: l.chapter,
+            order: nextOrder++,
+            youtubeUrl: l.youtubeUrl,
+            pdfLinks: l.pdfLinks,
+            videos: l.videos,
+            materials: l.materials,
+            content: l.content,
+            duration: l.duration,
+            examId: l.examId,
+            deadline: l.deadline,
+            isPreviewFree: l.isPreviewFree,
+            blocks: l.blocks,
+          },
+        }),
+      ),
+    );
+
+    return { copied: created.length, lessons: created.map((c) => ({ id: c.id, title: c.title })) };
   }
 
   // ============ ĐĂNG KÝ KHÓA HỌC ============
@@ -737,6 +903,237 @@ export class CoursesService {
       where: { courseId, studentId },
     });
     return { ok: true };
+  }
+
+  // Giáo viên sửa thông tin tài khoản của học sinh đã đăng ký khóa học
+  async updateStudent(
+    courseId: string,
+    teacherId: string,
+    studentId: string,
+    dto: {
+      fullName?: string;
+      email?: string;
+      className?: string;
+      grade?: number | null;
+    },
+  ) {
+    await this.getOwnedCourse(courseId, teacherId);
+    const enrollment = await this.prisma.enrollment.findUnique({
+      where: { courseId_studentId: { courseId, studentId } },
+    });
+    if (!enrollment) {
+      throw new NotFoundException('Học sinh chưa đăng ký khóa học này');
+    }
+
+    const data: any = {};
+    if (typeof dto.fullName === 'string' && dto.fullName.trim()) {
+      data.fullName = dto.fullName.trim();
+    }
+    if (typeof dto.className === 'string') data.className = dto.className;
+    if (dto.grade !== undefined) {
+      const g = Number(dto.grade);
+      data.grade = g >= 1 && g <= 12 ? Math.round(g) : null;
+    }
+    if (typeof dto.email === 'string' && dto.email.trim()) {
+      const email = dto.email.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new ForbiddenException('Email không hợp lệ');
+      }
+      const dup = await this.prisma.user.findFirst({
+        where: { email, id: { not: studentId } },
+      });
+      if (dup) {
+        throw new ForbiddenException('Email đã được sử dụng bởi tài khoản khác');
+      }
+      data.email = email;
+    }
+
+    return this.prisma.user.update({
+      where: { id: studentId },
+      data,
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        className: true,
+        grade: true,
+      },
+    });
+  }
+
+  // ============ NHẬP HỌC SINH VÀO KHÓA HỌC TỪ EXCEL (GIÁO VIÊN) ============
+
+  private randomStudentCode(): string {
+    return `HS-${Math.floor(100000 + Math.random() * 900000)}`;
+  }
+
+  private randomPassword(): string {
+    const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let s = '';
+    for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+    return s;
+  }
+
+  private normalizeHeader(h: string): string {
+    return String(h || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/[^a-z0-9]/g, '');
+  }
+
+  // Buffer file mẫu nhập học sinh (xlsx)
+  importStudentsTemplateBuffer(): Buffer {
+    const sample = [
+      {
+        'Họ tên': 'Nguyễn Văn A',
+        Email: 'nguyenvana@example.com',
+        'Lớp': '12T4',
+        'Mật khẩu': 'Abc12345',
+        'Trường': '',
+      },
+      {
+        'Họ tên': 'Trần Thị B',
+        Email: 'tranthib@example.com',
+        'Lớp': '12T4',
+        'Mật khẩu': '',
+        'Trường': '',
+      },
+      {
+        'Họ tên': 'Lê Văn C',
+        Email: 'levanc@example.com',
+        'Lớp': '12T5',
+        'Mật khẩu': '',
+        'Trường': '',
+      },
+    ];
+    const ws = XLSX.utils.json_to_sheet(sample);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Học sinh');
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  }
+
+  // Đọc file Excel → tạo tài khoản học sinh (nếu chưa có) và thêm vào khóa học
+  async importStudents(courseId: string, teacherId: string, buffer: Buffer) {
+    await this.getOwnedCourse(courseId, teacherId);
+    if (!buffer || !buffer.length) {
+      throw new ForbiddenException('Không có file Excel');
+    }
+
+    let rows: Record<string, any>[];
+    try {
+      const wb = XLSX.read(buffer, { type: 'buffer' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    } catch {
+      throw new ForbiddenException('Không đọc được file. Hãy dùng file .xlsx');
+    }
+    if (!rows.length) {
+      throw new ForbiddenException('File không có dòng dữ liệu nào');
+    }
+
+    // Nhận diện cột theo tiêu đề (không dấu, không phân biệt hoa thường)
+    const colMap: Record<string, string> = {};
+    const aliases: Record<string, string[]> = {
+      name: ['hoten', 'hovaten', 'ten', 'name', 'fullname', 'hosinh'],
+      email: ['email', 'mail'],
+      className: ['lop', 'class', 'classname'],
+      password: ['matkhau', 'password', 'mk'],
+      school: ['truong', 'school'],
+    };
+    for (const key of Object.keys(rows[0])) {
+      const norm = this.normalizeHeader(key);
+      for (const [field, names] of Object.entries(aliases)) {
+        if (names.includes(norm)) colMap[field] = key;
+      }
+    }
+    if (!colMap.name || !colMap.email) {
+      throw new ForbiddenException(
+        'File cần có cột "Họ tên" và "Email" (hỗ trợ thêm cột "Lớp", "Mật khẩu", "Trường")',
+      );
+    }
+
+    const enrolled: string[] = [];
+    const created: { fullName: string; email: string; password: string }[] = [];
+    const already: string[] = [];
+    const skipped: { row: number; reason: string }[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const rowNo = i + 2;
+      const fullName = String(r[colMap.name] || '').trim();
+      const email = String(r[colMap.email] || '').trim().toLowerCase();
+      const className = colMap.className
+        ? String(r[colMap.className] || '').trim()
+        : '';
+      const school = colMap.school
+        ? String(r[colMap.school] || '').trim()
+        : '';
+
+      if (!fullName || !email) {
+        skipped.push({ row: rowNo, reason: 'Thiếu họ tên hoặc email' });
+        continue;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        skipped.push({ row: rowNo, reason: `Email không hợp lệ: ${email}` });
+        continue;
+      }
+
+      let user = await this.prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        let password = this.randomPassword();
+        if (colMap.password) {
+          const given = String(r[colMap.password] || '').trim();
+          if (given) {
+            if (given.length < 6) {
+              skipped.push({
+                row: rowNo,
+                reason: `Mật khẩu phải ≥ 6 ký tự (${fullName})`,
+              });
+              continue;
+            }
+            password = given;
+          }
+        }
+        const hash = await bcrypt.hash(password, 10);
+        user = await this.prisma.user.create({
+          data: {
+            email,
+            passwordHash: hash,
+            role: Role.STUDENT,
+            fullName,
+            className: className || null,
+            school: school || null,
+            studentCode: this.randomStudentCode(),
+          },
+        });
+        created.push({ fullName, email, password });
+      } else if (user.role !== Role.STUDENT) {
+        skipped.push({ row: rowNo, reason: `Email thuộc tài khoản không phải học sinh: ${email}` });
+        continue;
+      } else if (className && !user.className) {
+        // bổ sung lớp nếu tài khoản có sẵn nhưng chưa có lớp
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { className },
+        });
+      }
+
+      const existing = await this.prisma.enrollment.findUnique({
+        where: { courseId_studentId: { courseId, studentId: user.id } },
+      });
+      if (existing) {
+        already.push(email);
+        continue;
+      }
+      await this.prisma.enrollment.create({
+        data: { courseId, studentId: user.id },
+      });
+      enrolled.push(email);
+    }
+
+    return { enrolled: enrolled.length, created, already, skipped, total: rows.length };
   }
 
   // ============ BẢNG ĐIỂM KHÓA HỌC (GIÁO VIÊN) ============
@@ -1050,12 +1447,79 @@ export class CoursesService {
 
   // ============ HELPER ============
 
+  // Trợ giảng thuần: có mặt trong CourseAssistant nhưng chưa sở hữu khóa học nào
+  private async isAssistantOnly(userId: string): Promise<boolean> {
+    const owned = await this.prisma.course.count({ where: { teacherId: userId } });
+    if (owned > 0) return false;
+    const assisted = await this.prisma.courseAssistant.count({
+      where: { userId },
+    });
+    return assisted > 0;
+  }
+
+  // Chủ khóa học HOẶC trợ giảng đều có quyền quản lý (trừ thao tác chỉ dành cho chủ)
   private async getOwnedCourse(id: string, teacherId: string) {
     const course = await this.prisma.course.findUnique({ where: { id } });
     if (!course) throw new NotFoundException('Không tìm thấy khóa học');
-    if (course.teacherId !== teacherId) {
-      throw new ForbiddenException('Bạn không sở hữu khóa học này');
+    if (course.teacherId === teacherId) return course;
+    const assistant = await this.prisma.courseAssistant.findUnique({
+      where: { courseId_userId: { courseId: id, userId: teacherId } },
+    });
+    if (assistant) return course;
+    throw new ForbiddenException('Bạn không có quyền quản lý khóa học này');
+  }
+
+  // CHỈ chủ khóa học (dùng cho xóa khóa + quản lý trợ giảng)
+  private async requireOwner(id: string, userId: string) {
+    const course = await this.prisma.course.findUnique({ where: { id } });
+    if (!course) throw new NotFoundException('Không tìm thấy khóa học');
+    if (course.teacherId !== userId) {
+      throw new ForbiddenException('Chỉ chủ khóa học mới được thực hiện thao tác này');
     }
     return course;
+  }
+
+  // ============ TRỢ GIẢNG ============
+
+  async listAssistants(courseId: string, userId: string) {
+    await this.requireOwner(courseId, userId);
+    const list = await this.prisma.courseAssistant.findMany({
+      where: { courseId },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, teacherCode: true } },
+      },
+      orderBy: { addedAt: 'asc' },
+    });
+    return list.map((a) => ({ id: a.id, addedAt: a.addedAt, user: a.user }));
+  }
+
+  async addAssistant(courseId: string, userId: string, email: string) {
+    await this.requireOwner(courseId, userId);
+    const target = await this.prisma.user.findUnique({
+      where: { email: String(email || '').trim().toLowerCase() },
+    });
+    if (!target) throw new NotFoundException('Không tìm thấy tài khoản với email này');
+    if (target.role !== Role.TEACHER) {
+      throw new ForbiddenException('Tài khoản phải là giáo viên mới làm trợ giảng được');
+    }
+    if (target.id === userId) {
+      throw new ForbiddenException('Bạn đã là chủ khóa học');
+    }
+    const existing = await this.prisma.courseAssistant.findUnique({
+      where: { courseId_userId: { courseId, userId: target.id } },
+    });
+    if (existing) throw new ForbiddenException('Người này đã là trợ giảng của khóa học');
+    await this.prisma.courseAssistant.create({
+      data: { courseId, userId: target.id },
+    });
+    return { ok: true, fullName: target.fullName, email: target.email };
+  }
+
+  async removeAssistant(courseId: string, userId: string, assistantId: string) {
+    await this.requireOwner(courseId, userId);
+    await this.prisma.courseAssistant.deleteMany({
+      where: { id: assistantId, courseId },
+    });
+    return { ok: true };
   }
 }

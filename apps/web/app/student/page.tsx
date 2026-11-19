@@ -5,8 +5,6 @@ import Link from 'next/link';
 import { apiFetch, getUser } from '@/lib/api';
 
 export default function StudentDashboard() {
-  const [enrollments, setEnrollments] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [me, setMe] = useState<any>(null);
   const [dash, setDash] = useState<any>(null);
   const [practice, setPractice] = useState<any>(null);
@@ -14,7 +12,6 @@ export default function StudentDashboard() {
   const [weekly, setWeekly] = useState<any>(null);
   const [achievements, setAchievements] = useState<any>(null);
   const [creatingPractice, setCreatingPractice] = useState(false);
-  const [tab, setTab] = useState<'home' | 'courses'>('home');
 
   // Cấp độ theo kiểu quân đội
   const RANKS = [
@@ -24,36 +21,15 @@ export default function StudentDashboard() {
     'Thiếu Tướng', 'Trung Tướng', 'Thượng Tướng', 'Đại Tướng',
     'Nguyên Soái', 'Huyền Thoại',
   ];
-  const COVER_GRADIENTS = [
-    'linear-gradient(135deg, #7b1113 0%, #be123c 60%, #e11d48 100%)',
-    'linear-gradient(135deg, #1e3a8a 0%, #3730a3 60%, #6d28d9 100%)',
-    'linear-gradient(135deg, #065f46 0%, #0d9488 60%, #14b8a6 100%)',
-    'linear-gradient(135deg, #92400e 0%, #d97706 60%, #f59e0b 100%)',
-    'linear-gradient(135deg, #0c4a6e 0%, #0284c7 60%, #38bdf8 100%)',
-  ];
-  const COVER_ICONS = ['📐', '📊', '📈', '🎯', '🧮'];
 
   useEffect(() => {
     setMe(getUser());
-    loadMyCourses();
     apiFetch('/exams/dashboard').then(setDash).catch(() => {});
     apiFetch('/exams/practice/recommend').then(setPractice).catch(() => {});
     apiFetch('/gamification/daily-quests').then(setQuests).catch(() => {});
     apiFetch('/gamification/achievements').then(setAchievements).catch(() => {});
     apiFetch('/courses/my-weekly-tasks').then(setWeekly).catch(() => {});
   }, []);
-
-  async function loadMyCourses() {
-    setLoading(true);
-    try {
-      const data = await apiFetch('/courses/my');
-      setEnrollments(data);
-    } catch (e: any) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function createPractice() {
     setCreatingPractice(true);
@@ -142,42 +118,9 @@ export default function StudentDashboard() {
             </div>
           </div>
         </div>
-        {/* Tab */}
-        <div style={{ display: 'flex', background: 'rgba(0,0,0,0.18)' }}>
-          <button
-            onClick={() => setTab('home')}
-            style={{
-              flex: 1,
-              padding: '12px 16px',
-              border: 'none',
-              background: tab === 'home' ? '#fff' : 'transparent',
-              color: tab === 'home' ? 'var(--lm-maroon)' : '#fff',
-              fontWeight: 800,
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-          >
-            🏠 Trang chủ
-          </button>
-          <button
-            onClick={() => setTab('courses')}
-            style={{
-              flex: 1,
-              padding: '12px 16px',
-              border: 'none',
-              background: tab === 'courses' ? '#fff' : 'transparent',
-              color: tab === 'courses' ? 'var(--lm-maroon)' : '#fff',
-              fontWeight: 800,
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-          >
-            📚 Khóa học của tôi
-          </button>
-        </div>
       </div>
 
-      {tab === 'home' && (
+      {/* Nội dung Trang chủ (tab "Khóa học của tôi" đã tách sang /student/my-courses) */}
       <>
 
       {/* 📅 Nhiệm vụ tuần này */}
@@ -262,7 +205,8 @@ export default function StudentDashboard() {
       </div>
 
       {/* ===== Ôn tập AI + lịch hạn nộp + streak ===== */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, marginBottom: 24 }}>
+      {/* align-items: start → thẻ ngắn không bị kéo cao bằng thẻ dài nhất */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, marginBottom: 24, alignItems: 'start' }}>
         {/* Ôn tập cá nhân hóa */}
         <div className="card" style={{ padding: 16 }}>
           <h3 style={{ fontSize: 15, marginBottom: 8 }}>🎯 Ôn tập thông minh</h3>
@@ -454,108 +398,6 @@ export default function StudentDashboard() {
         )}
       </div>
       </>
-      )}
-
-      {tab === 'courses' && (
-      <>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 16,
-        }}
-      >
-        <h2 style={{ fontSize: 18 }}>Đã đăng ký</h2>
-        <Link
-          href="/student/courses"
-          className="btn"
-          style={{ width: 'auto', padding: '9px 16px', textDecoration: 'none' }}
-        >
-          Khám phá thêm
-        </Link>
-      </div>
-
-      {loading ? (
-        <p>Đang tải…</p>
-      ) : enrollments.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>
-          <p style={{ fontSize: 16, marginBottom: 12 }}>Bạn chưa đăng ký khóa học nào</p>
-          <Link
-            href="/student/courses"
-            className="btn"
-            style={{ width: 'auto', display: 'inline-block', textDecoration: 'none' }}
-          >
-            Khám phá khóa học ngay
-          </Link>
-        </div>
-      ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-            gap: 14,
-          }}
-        >
-          {enrollments.map((en, i) => (
-            <Link
-              key={en.id}
-              href={`/student/courses/${en.course.id}`}
-              className="card course-card"
-              style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 0, overflow: 'hidden', borderRadius: 14 }}
-            >
-              <div
-                className="course-cover"
-                style={{
-                  background: en.course.coverUrl
-                    ? '#000'
-                    : COVER_GRADIENTS[i % COVER_GRADIENTS.length],
-                  position: 'relative',
-                  overflow: 'hidden',
-                  padding: '26px 18px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  minHeight: 96,
-                }}
-              >
-                {en.course.coverUrl && (
-                  <>
-                    <img
-                      src={en.course.coverUrl}
-                      alt={en.course.title}
-                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
-                    <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.5), transparent 60%)' }} />
-                  </>
-                )}
-                <span style={{ fontSize: 30, position: 'relative', zIndex: 2 }}>
-                  {en.course.coverUrl ? '' : COVER_ICONS[i % COVER_ICONS.length]}
-                </span>
-                <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', fontWeight: 700, color: '#fff', opacity: 0.9 }}>
-                    {en.course.subject || 'Toán'}
-                    {en.course.grade ? ` · Lớp ${en.course.grade}` : ' · THPT'}
-                  </span>
-                  <span style={{ fontSize: 15, fontWeight: 800, color: '#fff', lineHeight: 1.25 }}>
-                    {en.course.title}
-                  </span>
-                </div>
-              </div>
-              <div style={{ padding: 14 }}>
-                <p style={{ color: 'var(--color-muted)', fontSize: 13, marginBottom: 8 }}>
-                  {en.course.teacher?.fullName || 'Giáo viên'}
-                </p>
-                <div className="mono" style={{ fontSize: 12, color: 'var(--color-muted)' }}>
-                  {en.course._count?.lessons ?? 0} bài giảng
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
-      )}
-      </>
-      )}
     </div>
   );
 }

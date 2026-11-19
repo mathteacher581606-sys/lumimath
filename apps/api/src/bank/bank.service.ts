@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { QuestionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiService } from '../ai/ai.service';
@@ -16,7 +21,21 @@ export class BankService {
     private readonly examsService: ExamsService,
   ) {}
 
+  // Trợ giảng thuần: có mặt trong CourseAssistant nhưng chưa sở hữu khóa học nào
+  private async isAssistantOnly(userId: string): Promise<boolean> {
+    const owned = await this.prisma.course.count({ where: { teacherId: userId } });
+    if (owned > 0) return false;
+    const assisted = await this.prisma.courseAssistant.count({
+      where: { userId },
+    });
+    return assisted > 0;
+  }
+
   private async getBank(teacherId: string) {
+    // Trợ giảng không được dùng ngân hàng đề
+    if (await this.isAssistantOnly(teacherId)) {
+      throw new ForbiddenException('Trợ giảng không có quyền sử dụng ngân hàng đề');
+    }
     let bank = await this.prisma.questionBank.findUnique({
       where: { teacherId },
     });
@@ -26,6 +45,19 @@ export class BankService {
       });
     }
     return bank;
+  }
+
+  // Xoá các lệnh khoảng cách/xuống dòng hay gây lỗi khi nhập câu hỏi
+  private stripSpacingCmds(s: string | null | undefined): string {
+    return String(s ?? '')
+      .replace(/\\break(?![a-zA-Z])/g, ' ')
+      .replace(/\\qquad(?![a-zA-Z])/g, ' ')
+      .replace(/\\quad(?![a-zA-Z])/g, ' ')
+      // \lq\lq ... \rq\rq (mã trích dẫn LaTeX) → ngoặc kép thật, không lộ code ra màn hình
+      .replace(/\\lq\\lq/g, '\u201C')
+      .replace(/\\rq\\rq/g, '\u201D')
+      .replace(/\\lq/g, '\u2018')
+      .replace(/\\rq/g, '\u2019');
   }
 
   private letterFor(type: QuestionType): string {
@@ -230,6 +262,13 @@ export class BankService {
       }
     }
 
+    // Xoá \break / \qquad / \quad trong nội dung, lời giải và lựa chọn
+    for (const q of questions) {
+      q.content = this.stripSpacingCmds(q.content);
+      if (q.solution) q.solution = this.stripSpacingCmds(q.solution);
+      for (const o of q.options || []) o.text = this.stripSpacingCmds(o.text);
+    }
+
     // AI phân loại thô từng câu: chủ đề (đúng tên chủ đề đã tạo) + dạng bài + lớp + độ khó
     try {
       const ctx = await this.classificationContext(bank.id);
@@ -332,8 +371,204 @@ export class BankService {
     return this.prisma.topic.findMany({
       where: { bankId: bank.id },
       include: { _count: { select: { questions: true } } },
-      orderBy: [{ grade: 'asc' }, { name: 'asc' }],
+      orderBy: [{ grade: 'asc' }, { order: 'asc' }, { name: 'asc' }],
     });
+  }
+
+  // ===== CÂY MỤC LỤC 3 CẤP (CHƯƠNG → Bài → Dạng) =====
+  // Trả về cây topic + đếm số câu (cộng dồn cả cây con) theo lớp
+  async getTopicTree(teacherId: string, grade?: number) {
+    const bank = await this.getBank(teacherId);
+    const topics = await this.prisma.topic.findMany({
+      where: { bankId: bank.id, ...(grade ? { grade } : {}) },
+      include: { _count: { select: { questions: true } } },
+      orderBy: [{ order: 'asc' }, { name: 'asc' }],
+    });
+    const byParent = new Map<string | null, any[]>();
+    for (const t of topics) {
+      const key = t.parentId || null;
+      if (!byParent.has(key)) byParent.set(key, []);
+      byParent.get(key)!.push(t);
+    }
+    const build = (parentId: string | null): any[] =>
+      (byParent.get(parentId) || []).map((t) => {
+        const children = build(t.id);
+        const own = t._count?.questions ?? 0;
+        const total = own + children.reduce((s, c) => s + c.count, 0);
+        return {
+          id: t.id,
+          name: t.name,
+          grade: t.grade,
+          parentId: t.parentId,
+          order: t.order,
+          count: total,
+          own,
+          children,
+        };
+      });
+    return { tree: build(null) };
+  }
+
+  // Seed cây mục lục (CHƯƠNG → Bài → Dạng) cho lớp 10 và/hoặc 11 — idempotent.
+  // reset=true: xoá các topic thuộc mục lục của (các) lớp đang seed rồi tạo lại.
+  async seedTaxonomy(teacherId: string, reset = false, grade?: number) {
+    const bank = await this.getBank(teacherId);
+
+    const taxonomies: { grade: number; chapters: any[] }[] = [];
+    if (!grade || grade === 10) {
+      taxonomies.push({
+        grade: 10,
+        chapters: (await import('./grade10-taxonomy')).GRADE10_TAXONOMY,
+      });
+    }
+    if (!grade || grade === 11) {
+      taxonomies.push({
+        grade: 11,
+        chapters: (await import('./grade11-taxonomy')).GRADE11_TAXONOMY,
+      });
+    }
+    if (!grade || grade === 12) {
+      taxonomies.push({
+        grade: 12,
+        chapters: (await import('./grade12-taxonomy')).GRADE12_TAXONOMY,
+      });
+    }
+    const grades = taxonomies.map((t) => t.grade);
+
+    if (reset) {
+      const treeTopics = await this.prisma.topic.findMany({
+        where: {
+          bankId: bank.id,
+          grade: { in: grades },
+          OR: [{ parentId: { not: null } }, { name: { startsWith: 'CHƯƠNG ' } }],
+        },
+        select: { id: true },
+      });
+      if (treeTopics.length) {
+        const ids = treeTopics.map((t) => t.id);
+        // Gỡ câu hỏi khỏi các topic này trước khi xoá
+        await this.prisma.question.updateMany({
+          where: { topicId: { in: ids } },
+          data: { topicId: null },
+        });
+        await this.prisma.topic.deleteMany({ where: { id: { in: ids } } });
+      }
+    }
+
+    let created = 0;
+    let updated = 0;
+    const upsertTopic = async (
+      name: string,
+      g: number,
+      parentId: string | null,
+      order: number,
+    ) => {
+      const existing = await this.prisma.topic.findFirst({
+        where: { bankId: bank.id, name, grade: g, parentId },
+      });
+      if (existing) {
+        if (existing.order !== order) {
+          await this.prisma.topic.update({
+            where: { id: existing.id },
+            data: { order },
+          });
+          updated++;
+        }
+        return existing;
+      }
+      const t = await this.prisma.topic.create({
+        data: { bankId: bank.id, name, grade: g, parentId, order },
+      });
+      created++;
+      return t;
+    };
+
+    for (const { grade: g, chapters } of taxonomies) {
+      for (let ci = 0; ci < chapters.length; ci++) {
+        const ch = chapters[ci];
+        const chapter = await upsertTopic(ch.name, g, null, ci + 1);
+        for (let li = 0; li < ch.lessons.length; li++) {
+          const ls = ch.lessons[li];
+          const lesson = await upsertTopic(ls.name, g, chapter.id, li + 1);
+          for (let fi = 0; fi < ls.forms.length; fi++) {
+            await upsertTopic(ls.forms[fi], g, lesson.id, fi + 1);
+          }
+        }
+      }
+    }
+
+    // ===== Di chuyển câu hỏi từ các chủ đề CŨ (phẳng) sang CHƯƠNG mới tương ứng =====
+    const norm = (s: string) =>
+      String(s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/[^a-z0-9 ]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const STOP = new Set([
+      'chuong', 'bai', 'dang', 'va', 'cua', 'trong', 'cac', 'cho', 'voi',
+      'mot', 'hai', 'theo', 'tren',
+    ]);
+    const toks = (s: string) =>
+      new Set(
+        norm(s)
+          .split(' ')
+          .filter((w) => w.length > 2 && !STOP.has(w)),
+      );
+    const overlap = (a: Set<string>, b: Set<string>) => {
+      if (!a.size || !b.size) return 0;
+      let inter = 0;
+      for (const x of a) if (b.has(x)) inter++;
+      return inter / Math.min(a.size, b.size);
+    };
+
+    let migrated = 0;
+    for (const g of grades) {
+      const chapters = await this.prisma.topic.findMany({
+        where: {
+          bankId: bank.id,
+          grade: g,
+          parentId: null,
+          name: { startsWith: 'CHƯƠNG ' },
+        },
+      });
+      const legacy = await this.prisma.topic.findMany({
+        where: {
+          bankId: bank.id,
+          grade: g,
+          parentId: null,
+          NOT: { name: { startsWith: 'CHƯƠNG ' } },
+        },
+      });
+      for (const old of legacy) {
+        const ot = toks(old.name);
+        let best: any = null;
+        let bestScore = 0;
+        for (const ch of chapters) {
+          const s = overlap(ot, toks(ch.name));
+          if (s > bestScore) {
+            bestScore = s;
+            best = ch;
+          }
+        }
+        if (!best || bestScore < 0.5) continue;
+        const moved = await this.prisma.question.updateMany({
+          where: { topicId: old.id },
+          data: { topicId: best.id },
+        });
+        if (moved.count) migrated += moved.count;
+        const left = await this.prisma.question.count({
+          where: { topicId: old.id },
+        });
+        if (left === 0) {
+          await this.prisma.topic.delete({ where: { id: old.id } });
+        }
+      }
+    }
+
+    return { created, updated, migrated, grades };
   }
 
   async createTopic(teacherId: string, dto: CreateTopicDto) {
@@ -374,8 +609,11 @@ export class BankService {
     if (query.difficulty) where.difficulty = query.difficulty;
     if (query.q) where.content = { contains: query.q };
     if (query.code) {
-      // Tìm theo ID/mã câu hỏi (vd: A398335) — không phân biệt hoa thường
-      where.code = { contains: String(query.code).toUpperCase() };
+      // Tìm theo ID/mã câu hỏi (vd: A398335) — khớp CHÍNH XÁC, không phân biệt hoa thường
+      where.code = {
+        equals: String(query.code).toUpperCase(),
+        mode: 'insensitive',
+      };
     }
     if (query.ids) {
       const ids = String(query.ids).split(',').filter(Boolean).slice(0, 200);
@@ -502,7 +740,14 @@ export class BankService {
     const bank = await this.getBank(teacherId);
     const where: any = { bankId: bank.id, form: { not: null } };
     if (query?.grade) where.grade = Number(query.grade);
-    if (query?.topicId) where.topicId = String(query.topicId);
+    {
+      // Bao gồm cả topic con/cháu (chọn Chương/Bài hoặc nhiều chủ đề vẫn ra đủ dạng)
+      const roots = this.readTopicIds(query);
+      if (roots.length) {
+        const ids = await this.topicWithDescendants(bank.id, roots);
+        where.topicId = { in: ids };
+      }
+    }
     const qs = await this.prisma.question.findMany({
       where,
       select: { form: true },
@@ -658,6 +903,8 @@ export class BankService {
   async createQuestion(teacherId: string, dto: CreateQuestionDto) {
     const bank = await this.getBank(teacherId);
     const code = await this.generateUniqueCode(dto.type);
+    const cleanContent = this.stripSpacingCmds(dto.content);
+    const cleanSolution = this.stripSpacingCmds(dto.solution);
 
     // Xử lý chủ đề: nếu gửi topicName thì tìm hoặc tạo Topic
     let topicId: string | undefined = dto.topicId;
@@ -679,10 +926,10 @@ export class BankService {
         code,
         bankId: bank.id,
         type: dto.type,
-        content: dto.content,
+        content: cleanContent,
         options: dto.options ?? null,
         answer: dto.answer,
-        solution: dto.solution,
+        solution: cleanSolution,
         grade: dto.grade,
         topicId,
         form: (dto as any).form?.trim() || null,
@@ -698,12 +945,16 @@ export class BankService {
   }
 
   // Biên dịch sẵn các block tikz (không chặn lưu câu hỏi)
+  private tikzQueue: Promise<any> = Promise.resolve();
   private precompileTikz(...texts: (string | undefined | null)[]) {
     const blocks = texts.flatMap((t) => extractTikzBlocks(t || '')).slice(0, 10);
     if (!blocks.length) return;
-    Promise.all(
-      blocks.map((b) => this.examsService.compileTikzSnippet(b).catch(() => {})),
-    ).catch(() => {});
+    // Nối đuôi để biên dịch TUẦN TỰ (không đổ ồ ạt pdflatex gây hết RAM khi nhập nhiều câu)
+    this.tikzQueue = this.tikzQueue
+      .then(() =>
+        Promise.all(blocks.map((b) => this.examsService.compileTikzSnippet(b).catch(() => {}))),
+      )
+      .catch(() => {});
   }
 
   async getQuestion(teacherId: string, id: string) {
@@ -725,6 +976,9 @@ export class BankService {
 
     // Xử lý chủ đề: gửi topicName (text) → tìm hoặc tạo Topic, CHUYỂN câu hỏi sang thư mục đó
     const data: any = { ...dto };
+    // Xoá \break / \qquad / \quad nếu có cập nhật nội dung/lời giải
+    if (data.content !== undefined) data.content = this.stripSpacingCmds(data.content);
+    if (data.solution !== undefined) data.solution = this.stripSpacingCmds(data.solution);
     const topicName: string = ((dto as any).topicName || '').trim();
     if (topicName) {
       const grade = dto.grade !== undefined ? dto.grade : question.grade;
@@ -859,19 +1113,71 @@ export class BankService {
   }
 
   // Danh sách câu hỏi CÓ PHÂN TRANG + SẮP XẾP (cho toolbar ngân hàng đề)
+  // Trả về [id, …tất cả con/cháu] của MỘT HOẶC NHIỀU topic — lọc câu hỏi theo cả CÂY mục lục
+  private async topicWithDescendants(
+    bankId: string,
+    topicId: string | string[],
+  ): Promise<string[]> {
+    const roots = (Array.isArray(topicId) ? topicId : [topicId])
+      .map((x) => String(x || '').trim())
+      .filter(Boolean);
+    if (!roots.length) return [];
+    const all = await this.prisma.topic.findMany({
+      where: { bankId },
+      select: { id: true, parentId: true },
+    });
+    const childrenOf = new Map<string, string[]>();
+    for (const t of all) {
+      if (t.parentId) {
+        if (!childrenOf.has(t.parentId)) childrenOf.set(t.parentId, []);
+        childrenOf.get(t.parentId)!.push(t.id);
+      }
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const stack: string[] = [...roots];
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+      for (const c of childrenOf.get(id) || []) stack.push(c);
+    }
+    return out;
+  }
+
+  // Đọc tham số chủ đề (hỗ trợ cả `topicIds` nhiều giá trị và `topicId` cũ)
+  private readTopicIds(query: any): string[] {
+    const raw: string[] = [];
+    const multi = String(query?.topicIds || '');
+    if (multi) raw.push(...multi.split(','));
+    if (query?.topicId) raw.push(String(query.topicId));
+    return Array.from(new Set(raw.map((s) => s.trim()).filter(Boolean)));
+  }
+
   async listQuestionsPaged(teacherId: string, query: any) {
     const bank = await this.getBank(teacherId);
     const where: any = { bankId: bank.id };
     if (query.type) where.type = query.type;
     if (query.grade) where.grade = Number(query.grade);
-    if (query.topicId) where.topicId = query.topicId;
+    {
+      // Chọn CHƯƠNG/Bài (hoặc NHIỀU chủ đề) phải bao gồm cả các Dạng con bên trong
+      const roots = this.readTopicIds(query);
+      if (roots.length) {
+        const ids = await this.topicWithDescendants(bank.id, roots);
+        where.topicId = { in: ids };
+      }
+    }
     if (query.form) where.form = query.form;
     if (query.source) where.source = query.source;
     if (query.difficulty) where.difficulty = query.difficulty;
     if (query.q) where.content = { contains: query.q };
     if (query.code) {
-      // Tìm theo ID/mã câu hỏi (vd: A398335) — không phân biệt hoa thường
-      where.code = { contains: String(query.code).toUpperCase() };
+      // Tìm theo ID/mã câu hỏi (vd: A398335) — khớp CHÍNH XÁC, không phân biệt hoa thường
+      where.code = {
+        equals: String(query.code).toUpperCase(),
+        mode: 'insensitive',
+      };
     }
 
     const page = Math.max(1, Number(query.page) || 1);
@@ -1188,17 +1494,26 @@ export class BankService {
     return { imported: created.length, questions: created };
   }
 
-  // Ngữ cảnh phân loại AI: danh sách chủ đề + dạng bài đã có trong ngân hàng
+  // Ngữ cảnh phân loại AI: các DẠNG BÀI LÁ trong cây mục lục (CHƯƠNG → Bài → Dạng)
+  // + danh sách dạng bài tự do đã có trong ngân hàng
   private async classificationContext(bankId: string) {
     const [topics, bankForms] = await Promise.all([
       this.prisma.topic.findMany({
         where: { bankId },
-        select: { name: true, grade: true },
+        select: {
+          name: true,
+          grade: true,
+          _count: { select: { children: true } },
+        },
       }),
       this.prisma.bankForm.findMany({ where: { bankId } }),
     ]);
+    // Chỉ lấy topic LÁ (không có topic con) — đó chính là các "Dạng" trong mục lục
+    const leaves = topics
+      .filter((t) => (t._count?.children ?? 0) === 0)
+      .map((t) => ({ name: t.name, grade: t.grade }));
     return {
-      topics: topics as { name: string; grade: number | null }[],
+      topics: leaves,
       forms: bankForms.map((f) => f.name),
     };
   }
@@ -1252,11 +1567,13 @@ export class BankService {
     return 1 - this.levenshtein(a, b) / maxLen >= 0.88;
   }
 
-  // Đối chiếu các câu mới với kho → trả về câu trùng (kèm nội dung để so sánh)
+  // Đối chiếu các câu mới với kho → trả về câu trùng (kèm nội dung để so sánh).
+  // `exact=true` chỉ khi nội dung chuẩn hoá KHỚP TUYỆT ĐỐI; `exact=false` là "nghi trùng"
+  // (gần giống) — CHỈ cảnh báo, KHÔNG tự thay thế (đề không bị đổi số).
   private async markDuplicates(
     bankId: string,
     contents: string[],
-  ): Promise<({ code: string; id: string; content: string } | null)[]> {
+  ): Promise<({ code: string; id: string; content: string; exact: boolean } | null)[]> {
     if (!contents.length) return [];
     const existing = await this.prisma.question.findMany({
       where: { bankId },
@@ -1266,7 +1583,7 @@ export class BankService {
       q,
       n: this.normalizeQuestion(q.content),
     }));
-    const result: ({ code: string; id: string; content: string } | null)[] = [];
+    const result: ({ code: string; id: string; content: string; exact: boolean } | null)[] = [];
     const seen = new Set<string>();
     for (const c of contents) {
       const n = this.normalizeQuestion(c);
@@ -1275,10 +1592,10 @@ export class BankService {
         continue;
       }
       seen.add(n);
-      let dup: { code: string; id: string; content: string } | null = null;
+      let dup: { code: string; id: string; content: string; exact: boolean } | null = null;
       const exact = norms.find((x) => x.n === n);
       if (exact) {
-        dup = { code: exact.q.code, id: exact.q.id, content: exact.q.content };
+        dup = { code: exact.q.code, id: exact.q.id, content: exact.q.content, exact: true };
       } else {
         // Chỉ so gần giống với các câu có độ dài tương đương (±30%)
         const near = norms.find(
@@ -1287,7 +1604,7 @@ export class BankService {
             Math.abs(x.n.length - n.length) <= Math.max(n.length, x.n.length) * 0.3 &&
             this.similar(x.n, n),
         );
-        if (near) dup = { code: near.q.code, id: near.q.id, content: near.q.content };
+        if (near) dup = { code: near.q.code, id: near.q.id, content: near.q.content, exact: false };
       }
       result.push(dup);
     }
@@ -1339,9 +1656,10 @@ export class BankService {
 
   // Bước 1: tách câu hỏi + AI phân loại thô (chưa lưu) → giáo viên duyệt
   async previewImport(teacherId: string, texSource: string) {
-    const parsed = this.parseTex(texSource);
+    const failures: { index: number; reason: string; preview: string }[] = [];
+    const parsed = this.parseTex(texSource, failures);
     if (!parsed.length) {
-      return { questions: [] };
+      return { questions: [], failed: failures };
     }
     const bank = await this.getBank(teacherId);
     const ctx = await this.classificationContext(bank.id);
@@ -1366,9 +1684,12 @@ export class BankService {
     return {
       questions: parsed.map((p, i) => ({
         type: p.type,
+        part: { MCQ: 1, TRUE_FALSE: 2, SHORT_ANSWER: 3, ESSAY: 4 }[p.type] ?? 1,
+        source: p.source ?? '',
         content: p.content,
         options: p.options ?? null,
         answer: p.answer,
+        answerMissing: !!p.answerMissing,
         solution: p.solution ?? '',
         duplicateOf: dupes[i] ?? null,
         ai: {
@@ -1378,7 +1699,86 @@ export class BankService {
           form: aiResults[i]?.form || '',
         },
       })),
+      failed: failures,
     };
+  }
+
+  // AI phân loại lại TOÀN BỘ câu hỏi trong ngân hàng theo cây mục lục (dạng lá)
+  async reclassifyQuestions(
+    teacherId: string,
+    opts: {
+      grade?: number;
+      limit?: number;
+      onlyUnclassified?: boolean;
+      updatedAfter?: string;
+    } = {},
+  ) {
+    const bank = await this.getBank(teacherId);
+    const ctx = await this.classificationContext(bank.id);
+    const where: any = { bankId: bank.id };
+    if (opts.grade) where.grade = opts.grade;
+    if (opts.onlyUnclassified) {
+      where.OR = [{ topicId: null }, { aiClassified: false }];
+    }
+    // Chỉ phân loại các câu vừa cập nhật từ mốc thời gian này
+    if (opts.updatedAfter) {
+      const d = new Date(opts.updatedAfter);
+      if (!isNaN(d.getTime())) where.updatedAt = { gte: d };
+    }
+    const take = Math.min(Math.max(Number(opts.limit) || 200, 1), 500);
+    const questions = await this.prisma.question.findMany({
+      where,
+      orderBy: opts.updatedAfter ? { updatedAt: 'desc' } : { createdAt: 'asc' },
+      take,
+      select: { id: true, content: true, grade: true, topicId: true, form: true, difficulty: true },
+    });
+    if (!questions.length) return { total: 0, updated: 0, matched: 0 };
+
+    // Map tên dạng lá (lowercase) → topicId
+    const allTopics = await this.prisma.topic.findMany({
+      where: { bankId: bank.id },
+      include: { _count: { select: { children: true } } },
+    });
+    const leafByName = new Map<string, string>();
+    for (const t of allTopics) {
+      if ((t._count?.children ?? 0) === 0) {
+        leafByName.set(String(t.name).trim().toLowerCase(), t.id);
+      }
+    }
+
+    const BATCH = 8;
+    let updated = 0;
+    let matched = 0;
+    for (let i = 0; i < questions.length; i += BATCH) {
+      const chunk = questions.slice(i, i + BATCH);
+      let res: any[] = [];
+      try {
+        res = await this.ai.classifyQuestionsBatch(
+          chunk.map((q) => q.content),
+          ctx,
+        );
+      } catch (e) {
+        res = [];
+      }
+      for (let j = 0; j < chunk.length; j++) {
+        const q = chunk[j];
+        const r = res[j] || {};
+        const leafId = leafByName.get(String(r.topic || '').trim().toLowerCase()) || null;
+        if (leafId) matched++;
+        await this.prisma.question.update({
+          where: { id: q.id },
+          data: {
+            grade: r.grade ?? q.grade ?? null,
+            topicId: leafId ?? q.topicId,
+            form: r.form ? String(r.form).trim().slice(0, 200) : q.form,
+            difficulty: r.difficulty ?? q.difficulty,
+            aiClassified: true,
+          },
+        });
+        updated++;
+      }
+    }
+    return { total: questions.length, updated, matched };
   }
 
   // Bước 2: lưu vào ngân hàng theo phân loại giáo viên đã chỉnh
@@ -1415,9 +1815,9 @@ export class BankService {
           options: (q.options as any) ?? null,
           answer: q.answer as any,
           solution: q.solution || null,
-          grade: q.grade ?? null,
+          grade: q.grade ?? q.ai?.grade ?? null,
           topicId,
-          difficulty: q.difficulty ?? null,
+          difficulty: q.difficulty ?? q.ai?.difficulty ?? null,
           form: (q.form || q.ai?.form || '').trim() || null,
           texSource,
         },
@@ -1469,9 +1869,11 @@ export class BankService {
 
     const questions = parsed.map((p, i) => ({
       type: p.type,
+      source: p.source ?? '',
       content: p.content,
       options: p.options ?? null,
       answer: p.answer,
+      answerMissing: !!p.answerMissing,
       solution: p.solution ?? '',
       part: partByType[p.type] ?? 1,
       topicName: this.cleanAiTopic(aiResults[i]?.topic),
@@ -1634,13 +2036,78 @@ export class BankService {
     return null;
   }
 
-  private parseTex(tex: string): any[] {
+  // Phân tích lại 1 câu (khi GV sửa code inline ở bước phân loại)
+  async parseQuestionBlock(teacherId: string, tex: string) {
+    const parsed = this.parseTex(tex || '');
+    if (!parsed.length) {
+      throw new NotFoundException(
+        'Không phân tích được câu hỏi — kiểm tra cấu trúc \\begin{ex}...\\end{ex}',
+      );
+    }
+    const p = parsed[0];
+    return {
+      type: p.type,
+      content: p.content,
+      options: p.options ?? null,
+      answer: p.answer,
+      answerMissing: !!p.answerMissing,
+      solution: p.solution ?? '',
+      source: p.source ?? tex,
+    };
+  }
+
+  private parseTex(
+    tex: string,
+    failures?: { index: number; reason: string; preview: string }[],
+  ): any[] {
+    // Chuẩn hoá: \begin{vd} (ví dụ) và \begin{bt} (bài tập) → \begin{ex} (câu hỏi)
+    const normalized = String(tex || '')
+      .replace(/\\begin\{vd\}/g, '\\begin{ex}')
+      .replace(/\\end\{vd\}/g, '\\end{ex}')
+      .replace(/\\begin\{bt\}/g, '\\begin{ex}')
+      .replace(/\\end\{bt\}/g, '\\end{ex}');
     const results: any[] = [];
     const exRegex = /\\begin\{ex\}([\s\S]*?)\\end\{ex\}/g;
     let match;
-    while ((match = exRegex.exec(tex)) !== null) {
+    let idx = 0;
+    while ((match = exRegex.exec(normalized)) !== null) {
+      idx++;
       const q = this.parseExBlock(match[1]);
-      if (q) results.push(q);
+      if (!q) {
+        if (failures) {
+          failures.push({
+            index: idx,
+            reason: 'Không phân tích được cấu trúc câu hỏi',
+            preview: match[1].replace(/\s+/g, ' ').trim().slice(0, 80),
+          });
+        }
+        continue;
+      }
+      // Xoá \break / \qquad / \quad trong nội dung, lời giải và lựa chọn
+      q.content = this.stripSpacingCmds(q.content);
+      if (q.solution) q.solution = this.stripSpacingCmds(q.solution);
+      if (Array.isArray(q.options)) {
+        q.options = q.options.map((o: any) => ({
+          ...o,
+          text: this.stripSpacingCmds(o?.text),
+        }));
+      }
+      // Khối rỗng (không có nội dung lẫn đáp án) → coi là lỗi biên dịch
+      const hasContent =
+        String(q.content || '').trim().length > 0 ||
+        (q.solution && String(q.solution).trim().length > 0);
+      if (!hasContent) {
+        if (failures) {
+          failures.push({
+            index: idx,
+            reason: 'Khối câu hỏi rỗng (không có nội dung)',
+            preview: '',
+          });
+        }
+        continue;
+      }
+      q.source = '\\begin{ex}' + match[1] + '\\end{ex}';
+      results.push(q);
     }
     return results;
   }
@@ -1689,7 +2156,8 @@ export class BankService {
     const choiceMatch = /\\choice(?:\[[^\]]*\])?\s*\{/.exec(raw);
     if (choiceMatch) {
       const options: any[] = [];
-      let answer = 'A';
+      let answer: string | null = null;
+      let answerMissing = true;
       let currentIndex = choiceMatch.index + choiceMatch[0].length - 1;
       let lastEnd = currentIndex;
       for (let i = 0; i < 4; i++) {
@@ -1699,6 +2167,7 @@ export class BankService {
           const id = String.fromCharCode(65 + i);
           if (text.includes('\\True')) {
             answer = id;
+            answerMissing = false;
             text = text.replace(/\\True\s*/g, '').trim();
           }
           options.push({ id, text });
@@ -1718,6 +2187,7 @@ export class BankService {
         content,
         options,
         answer,
+        answerMissing,
         solution: solution || undefined,
       };
     }
@@ -1728,6 +2198,7 @@ export class BankService {
       const options: any[] = [];
       const answer: any = {};
       const ids = ['a', 'b', 'c', 'd'];
+      let hasAnyMarker = false;
       let currentIndex = tfMatch.index + tfMatch[0].length - 1;
       let lastEnd = currentIndex;
       for (let i = 0; i < 4; i++) {
@@ -1736,11 +2207,15 @@ export class BankService {
           let text = balanced.content.trim();
           const id = ids[i] || String(i + 1);
           let isTrue = false;
+          let marked = false;
           if (text.includes('\\FalseTF')) {
             isTrue = false;
+            marked = true;
           } else if (text.includes('\\TrueTF') || text.includes('\\True')) {
             isTrue = true;
+            marked = true;
           }
+          if (marked) hasAnyMarker = true;
           text = text
             .replace(/\\TrueTF\s*/g, '')
             .replace(/\\FalseTF\s*/g, '')
@@ -1759,11 +2234,14 @@ export class BankService {
         raw.substring(0, tfMatch.index).trim() +
         (leftover ? '\n' + leftover : '')
       ).trim();
+      // Không có bất kỳ dấu \TrueTF/\FalseTF/\True nào → chưa xác định được đáp án
+      const answerMissing = !hasAnyMarker;
       return {
         type: QuestionType.TRUE_FALSE,
         content,
         options,
         answer,
+        answerMissing,
         solution: solution || undefined,
       };
     }

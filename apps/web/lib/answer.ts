@@ -5,6 +5,9 @@
 export function formatAnswer(answer: any): string {
   if (typeof answer === 'string') return answer;
   if (typeof answer === 'boolean') return answer ? 'Đúng' : 'Sai';
+  if (Array.isArray(answer)) {
+    return answer.map((x) => formatAnswer(x)).join(', ');
+  }
   if (answer && typeof answer === 'object') {
     // Câu tự luận: { text, images }
     if (typeof answer.text === 'string') return answer.text;

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
+import { useMe } from '@/lib/use-me';
 
 // Bảng màu gradient cho bìa khóa học (xoay vòng theo thứ tự)
 const COVER_GRADIENTS = [
@@ -17,6 +18,8 @@ const COVER_ICONS = ['📐', '📈', '🧮', '📊', '🔢', '✏️'];
 
 export default function TeacherDashboard() {
   const [courses, setCourses] = useState<any[]>([]);
+  const me = useMe();
+  const assistantOnly = !!me?.assistantOnly;
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
@@ -125,19 +128,21 @@ export default function TeacherDashboard() {
               Tạo khóa học, bài giảng, bài tập và theo dõi học sinh
             </p>
           </div>
-          <button
-            className="btn"
-            style={{
-              width: 'auto',
-              padding: '10px 20px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #f59e0b, #ef4444)',
-              boxShadow: '0 4px 12px rgba(239,68,68,0.35)',
-            }}
-            onClick={() => setShowForm(!showForm)}
-          >
-            {showForm ? 'Hủy' : '+ Tạo khóa học'}
-          </button>
+          {!assistantOnly && (
+            <button
+              className="btn"
+              style={{
+                width: 'auto',
+                padding: '10px 20px',
+                border: 'none',
+                background: 'linear-gradient(135deg, #f59e0b, #ef4444)',
+                boxShadow: '0 4px 12px rgba(239,68,68,0.35)',
+              }}
+              onClick={() => setShowForm(!showForm)}
+            >
+              {showForm ? 'Hủy' : '+ Tạo khóa học'}
+            </button>
+          )}
         </div>
 
         {/* Ô thống kê nhanh */}
@@ -172,7 +177,7 @@ export default function TeacherDashboard() {
         </div>
       </div>
 
-      {showForm && (
+      {showForm && !assistantOnly && (
         <form onSubmit={createCourse} className="card" style={{ marginBottom: 24 }}>
           <h3 style={{ marginBottom: 16 }}>Tạo khóa học mới</h3>
           <div className="form-group">
@@ -293,6 +298,11 @@ export default function TeacherDashboard() {
                   </p>
                 )}
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {c.isAssistant && (
+                    <span className="badge" style={{ background: 'rgba(232,163,61,0.25)', color: '#7a5a10', border: '1px solid rgba(232,163,61,0.5)' }}>
+                      👥 Trợ giảng
+                    </span>
+                  )}
                   {c.password ? (
                     <span className="badge badge-warning">🔒 Có mật khẩu</span>
                   ) : (

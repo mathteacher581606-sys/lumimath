@@ -51,8 +51,13 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  me(@CurrentUser() user: any) {
-    return user;
+  async me(@CurrentUser() user: any) {
+    // Trợ giảng thuần (chưa sở hữu khóa học nào) → chỉ thao tác trong khóa được add
+    const owned = await this.prisma.course.count({ where: { teacherId: user.id } });
+    const assisted = await this.prisma.courseAssistant.count({
+      where: { userId: user.id },
+    });
+    return { ...user, assistantOnly: owned === 0 && assisted > 0 };
   }
 
   // ============ QUÊN MẬT KHẨU (email thật) ============

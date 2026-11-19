@@ -45,8 +45,23 @@ export default function CourseDetailPage() {
   useEffect(() => {
     loadCourse();
     loadProgress();
+    loadAssignmentInfo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId]);
+
+  // Thông tin bài tập của khóa: tổng số bài giao + số bài CHƯA NỘP (hiện badge trên nút lớn)
+  const [asgInfo, setAsgInfo] = useState<{ total: number; pending: number } | null>(null);
+
+  async function loadAssignmentInfo() {
+    try {
+      const data = await apiFetch(`/courses/${courseId}/assignments`);
+      const list: any[] = Array.isArray(data?.assignments) ? data.assignments : [];
+      const pending = list.filter((a) => !a.mySubmission).length;
+      setAsgInfo({ total: list.length, pending });
+    } catch {
+      setAsgInfo(null);
+    }
+  }
 
   // Tiến độ học tập
   const [progress, setProgress] = useState<any>(null);
@@ -416,14 +431,6 @@ export default function CourseDetailPage() {
             )}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
-          <Link href={`/student/courses/${courseId}/announcements`} className="btn-lm ghost" style={{ textDecoration: 'none' }}>
-            📣 Bảng tin
-          </Link>
-          <Link href={`/student/courses/${courseId}/assignments`} className="btn-lm amber" style={{ textDecoration: 'none' }}>
-            📚 Bài tập
-          </Link>
-        </div>
       </div>
 
       {/* Banner khóa học (bannerUrl) — fallback ảnh đại diện/gradient */}
@@ -478,7 +485,38 @@ export default function CourseDetailPage() {
         </div>
       </div>
 
-      {/* Banner chưa đăng ký: chỉ xem được bài xem thử miễn phí */}
+      {/* ===== THANH HÀNH ĐỘNG LỚN: Bài tập (nổi bật) + Bảng tin ===== */}
+      <div className="lm-course-actions">
+        <Link
+          href={`/student/courses/${courseId}/assignments`}
+          className="lm-cta-assignments"
+          title="Vào làm bài tập của khóa học"
+        >
+          <span className="lm-cta-icon">📚</span>
+          <span className="lm-cta-text">
+            <b>BÀI TẬP</b>
+            <small>
+              {asgInfo
+                ? asgInfo.pending > 0
+                  ? `${asgInfo.pending} bài chưa nộp · ${asgInfo.total} bài được giao`
+                  : `${asgInfo.total} bài được giao · đã nộp đủ`
+                : 'Xem và làm bài tập của khóa học'}
+            </small>
+          </span>
+          {asgInfo && asgInfo.pending > 0 && (
+            <span className="lm-cta-badge">{asgInfo.pending}</span>
+          )}
+          <span className="lm-cta-arrow">→</span>
+        </Link>
+        <Link
+          href={`/student/courses/${courseId}/announcements`}
+          className="lm-cta-news"
+          title="Xem bảng tin của lớp"
+        >
+          📣 Bảng tin
+        </Link>
+      </div>
+
       {course.enrolled === false && (
         <div
           className="card"

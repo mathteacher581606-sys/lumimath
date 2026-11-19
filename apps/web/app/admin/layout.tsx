@@ -29,9 +29,10 @@ export default function AdminLayout({
     return <div style={{ padding: 40, textAlign: 'center' }}>Đang tải…</div>;
 
   const navItems = [
-    { href: '/admin', label: 'Tổng quan' },
-    { href: '/admin/users', label: 'Thành viên' },
-    { href: '/settings', label: 'Cài đặt' },
+    { href: '/admin', label: 'Tổng quan', icon: '📊' },
+    { href: '/admin/users', label: 'Thành viên', icon: '👥' },
+    { href: '/admin/courses', label: 'Khóa học', icon: '📚' },
+    { href: '/settings', label: 'Cài đặt', icon: '⚙️' },
   ];
 
   const isActive = (href: string) =>
@@ -52,8 +53,10 @@ export default function AdminLayout({
               key={item.href}
               href={item.href}
               className={`nav-link ${isActive(item.href) ? 'active' : ''}`}
+              title={item.label}
             >
-              {item.label}
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
             </Link>
           ))}
         </nav>

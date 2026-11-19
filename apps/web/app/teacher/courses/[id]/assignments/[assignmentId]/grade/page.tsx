@@ -584,12 +584,110 @@ export default function GradeAssignmentPage() {
     viewRef.current?.requestFullscreen?.().catch(() => {});
   }
 
+  // Lịch sử các lần nộp/sửa của bài nộp đang chọn
+  const [history, setHistory] = useState<{ forId: string; rows: any[] } | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // ===== Phím tắt chấm bài cho giáo viên =====
+  const [showKeys, setShowKeys] = useState(false);
+  const saveRef = useRef<() => void>(() => {});
+  saveRef.current = save;
+  const openRef = useRef<(d: any, sid: string) => void>(() => {});
+  openRef.current = openSubmission;
+
+  useEffect(() => {
+    function isTyping(el: any) {
+      if (!el) return false;
+      const tag = String(el.tagName || '').toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || !!el.isContentEditable;
+    }
+    function onKey(e: KeyboardEvent) {
+      if (!detail || !detail.submissions?.length) return;
+      if (isTyping(document.activeElement)) return;
+      const subs: any[] = detail.submissions;
+      const idx = subs.findIndex((s: any) => s.id === submission?.id);
+
+      // Cmd/Ctrl + Enter → Lưu điểm
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        saveRef.current();
+        return;
+      }
+      if (e.key === '?') {
+        e.preventDefault();
+        setShowKeys((v) => !v);
+        return;
+      }
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        const n = subs[Math.min(subs.length - 1, idx + 1)];
+        if (n && n.id !== submission?.id) {
+          e.preventDefault();
+          openRef.current(detail, n.id);
+        }
+        return;
+      }
+      if (e.key === 'k' || e.key === 'ArrowUp') {
+        const p = subs[Math.max(0, idx - 1)];
+        if (p && p.id !== submission?.id) {
+          e.preventDefault();
+          openRef.current(detail, p.id);
+        }
+        return;
+      }
+      // 1..9 → điểm 1..9 ; 0 → 10
+      if (/^[0-9]$/.test(e.key)) {
+        setScore(e.key === '0' ? '10' : e.key);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [detail, submission]);
+
+  async function loadHistory() {
+    if (!submission?.id) return;
+    try {
+      const rows = await apiFetch(
+        `/courses/${courseId}/assignments/${assignmentId}/submissions/${submission.id}/history`,
+      );
+      setHistory({ forId: submission.id, rows: Array.isArray(rows) ? rows : [] });
+      setShowHistory(true);
+    } catch (e: any) {
+      alert(e.message);
+    }
+  }
+
   const images = submission?.imageUrls || [];
   const firstImage = images[0] || submission?.pdfUrl ? null : null;
+  // Lịch sử của ĐÚNG bài nộp đang chọn (null nếu chưa tải / khác bài)
+  const histRows: any[] | null =
+    history && submission?.id && history.forId === submission.id ? history.rows : null;
 
-  return (
-    <div className="page-container" data-theme="maroon" style={{ maxWidth: 1300 }}>
+  return (    <div className="page-container" data-theme="maroon" style={{ maxWidth: 1300 }}>
       {toast && <div className="toast" style={{ position: 'fixed', top: 20, right: 20, zIndex: 60 }}>{toast}</div>}
+
+      {/* Gợi ý phím tắt chấm bài */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <button
+          type="button"
+          className="lm-filter-btn"
+          style={{ padding: '5px 12px', fontSize: 12, fontWeight: 700 }}
+          onClick={() => setShowKeys((v) => !v)}
+          title="Xem phím tắt chấm bài"
+        >
+          ⌨️ Phím tắt {showKeys ? '▲' : '▼'}
+        </button>
+      </div>
+      {showKeys && (
+        <div
+          className="card"
+          style={{ padding: '10px 14px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.9, color: 'var(--color-muted)' }}
+        >
+          <b style={{ color: 'var(--color-ink)' }}>Phím tắt chấm bài:</b>{' '}
+          <kbd>J</kbd> / <kbd>↓</kbd> bài kế tiếp · <kbd>K</kbd> / <kbd>↑</kbd> bài trước ·{' '}
+          <kbd>1</kbd>–<kbd>9</kbd> nhập điểm nhanh (<kbd>0</kbd> = 10) ·{' '}
+          <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> lưu điểm · <kbd>?</kbd> ẩn/hiện gợi ý
+        </div>
+      )}
       <div className="lm-band">
         <div style={{ flex: 1, minWidth: 220 }}>
           <h2>
@@ -635,7 +733,7 @@ export default function GradeAssignmentPage() {
                     { method: 'POST', body: JSON.stringify({ posted: !detail.gradesPosted }) },
                   );
                   showToast(detail.gradesPosted ? '🔒 Đã ẩn điểm khỏi học sinh' : `📢 Đã công bố điểm cho ${r.notified} học sinh`);
-                  load();
+                  load(submission?.id);
                 } catch (err: any) {
                   showToast('❌ ' + err.message);
                 }
@@ -1108,6 +1206,84 @@ export default function GradeAssignmentPage() {
                 {submission.content}
               </div>
             )}
+
+            {/* ===== LỊCH SỬ NỘP BÀI (đối chiếu các lần sửa) ===== */}
+            {submission?.id && (
+              <div style={{ marginTop: 14, borderTop: '1px dashed var(--color-rule)', paddingTop: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="lm-filter-btn"
+                    style={{ padding: '6px 14px', fontSize: 12.5, fontWeight: 700 }}
+                    onClick={() => (showHistory && histRows ? setShowHistory(false) : loadHistory())}
+                  >
+                    📜 Lịch sử nộp bài
+                    {histRows ? ` (${histRows.length})` : ''}
+                  </button>
+                  {histRows && (
+                    <span style={{ fontSize: 12, color: 'var(--color-muted)' }}>
+                      {histRows.length} lần nộp
+                      {histRows.length > 1 ? ` · đã sửa ${histRows.length - 1} lần` : ''}
+                    </span>
+                  )}
+                </div>
+
+                {showHistory && histRows && (
+                  <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {histRows.length === 0 ? (
+                      <p style={{ fontSize: 12.5, color: 'var(--color-muted)' }}>
+                        Chưa có lịch sử (bài nộp trước khi bật tính năng này).
+                      </p>
+                    ) : (
+                      histRows.map((h: any) => (
+                        <div
+                          key={h.id}
+                          style={{
+                            border: '1px solid var(--color-rule)',
+                            borderRadius: 10,
+                            padding: 10,
+                            background: '#fff',
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                            <b style={{ fontSize: 12.5, color: 'var(--lm-maroon)' }}>
+                              Lần {h.version}
+                              {h.version === 1 ? ' (nộp đầu)' : ' (sửa)'}
+                            </b>
+                            <span style={{ fontSize: 11.5, color: 'var(--color-muted)' }}>
+                              {h.submittedAt ? new Date(h.submittedAt).toLocaleString('vi-VN') : ''}
+                            </span>
+                          </div>
+                          {h.content && (
+                            <div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', background: '#faf6ee', borderRadius: 6, padding: 8, marginBottom: 6 }}>
+                              {h.content}
+                            </div>
+                          )}
+                          {Array.isArray(h.imageUrls) && h.imageUrls.length > 0 && (
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              {h.imageUrls.map((u: string, k: number) => (
+                                <a key={k} href={u} target="_blank" rel="noreferrer" title={`Trang ${k + 1}`}>
+                                  <img
+                                    src={u}
+                                    alt={`Trang ${k + 1}`}
+                                    style={{ width: 74, height: 74, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--color-rule)' }}
+                                  />
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                          {h.pdfUrl && (
+                            <a href={h.pdfUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--color-accent)' }}>
+                              📄 PDF đính kèm
+                            </a>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1168,6 +1344,7 @@ export default function GradeAssignmentPage() {
                               { method: 'PATCH', body: JSON.stringify({ fudgePoints: f }) },
                             );
                             showToast(`✅ Điểm sau nới: ${r.score}đ`);
+                            await load(submission?.id);
                           } catch (err: any) {
                             showToast('❌ ' + err.message);
                           }
@@ -1187,7 +1364,7 @@ export default function GradeAssignmentPage() {
                             { method: 'POST' },
                           );
                           showToast(r.changed ? `↻ Điểm mới: ${r.score}đ (cũ ${r.oldScore}đ)` : '✅ Chấm lại xong — điểm không đổi');
-                          load();
+                          load(submission?.id);
                         } catch (err: any) {
                           showToast('❌ ' + err.message);
                         }
@@ -1210,7 +1387,7 @@ export default function GradeAssignmentPage() {
                             r.message ||
                               `↻ Đã chấm lại ${r.total} bài — ${r.changed} bài đổi điểm`,
                           );
-                          load();
+                          load(submission?.id);
                         } catch (err: any) {
                           showToast('❌ ' + err.message);
                         }
@@ -1227,7 +1404,7 @@ export default function GradeAssignmentPage() {
                         try {
                           const r = await apiFetch(`/exams/${detail?.examId}/regrade-all`, { method: 'POST' });
                           showToast(`↻ Đã chấm lại ${r.total} bài — ${r.changed} bài đổi điểm`);
-                          load();
+                          load(submission?.id);
                         } catch (err: any) {
                           showToast('❌ ' + err.message);
                         }

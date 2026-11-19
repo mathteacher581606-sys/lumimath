@@ -24,8 +24,9 @@ import { MailModule } from './mail/mail.module';
       isGlobal: true,
       envFilePath: ['../../.env', '.env'],
     }),
-    // Giới hạn tần suất: mặc định 300 yêu cầu/phút/IP (đăng nhập bị giới hạn riêng ở auth.controller)
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 300 }]),
+    // Giới hạn tần suất: mặc định 600 yêu cầu/phút/IP (đăng nhập bị giới hạn riêng ở auth.controller)
+    // Lưu ý: cần app.set('trust proxy') ở main.ts để tính đúng IP từng học sinh sau Cloudflare.
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 600 }]),
     PrismaModule,
     AuthModule,
     CoursesModule,

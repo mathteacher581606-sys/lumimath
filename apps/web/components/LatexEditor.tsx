@@ -3,7 +3,8 @@
 import React, { useEffect, useRef } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState } from '@codemirror/state';
-import { StreamLanguage } from '@codemirror/language';
+import { StreamLanguage, syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import {
   autocompletion,
@@ -128,6 +129,40 @@ function latexAutocompletion(
 
 // ============ THEME (Sáng mặc định — dễ đọc; tối khi app đang ở theme Nocturne) ============
 
+// Màu cú pháp LaTeX cho nền SÁNG (dịu mắt, đủ tương phản)
+const latexHighlightLight = HighlightStyle.define([
+  { tag: tags.keyword, color: '#7c3aed', fontWeight: '600' },
+  { tag: tags.string, color: '#059669' },
+  { tag: tags.number, color: '#b45309' },
+  { tag: tags.comment, color: '#94a3b8', fontStyle: 'italic' },
+  { tag: tags.operator, color: '#2563eb' },
+  { tag: tags.bracket, color: '#334155' },
+  { tag: tags.atom, color: '#db2777' },
+  { tag: tags.variableName, color: '#1e293b' },
+  { tag: tags.typeName, color: '#0e7490' },
+  { tag: tags.tagName, color: '#b45309' },
+  { tag: tags.attributeName, color: '#7c3aed' },
+  { tag: tags.processingInstruction, color: '#7c3aed' },
+  { tag: tags.meta, color: '#64748b' },
+]);
+
+// Màu cú pháp LaTeX cho nền TỐI (dịu, không chói)
+const latexHighlightDark = HighlightStyle.define([
+  { tag: tags.keyword, color: '#c4b5fd', fontWeight: '600' },
+  { tag: tags.string, color: '#86efac' },
+  { tag: tags.number, color: '#fdba74' },
+  { tag: tags.comment, color: '#7b8794', fontStyle: 'italic' },
+  { tag: tags.operator, color: '#7dd3fc' },
+  { tag: tags.bracket, color: '#cbd5e1' },
+  { tag: tags.atom, color: '#f9a8d4' },
+  { tag: tags.variableName, color: '#e2e8f0' },
+  { tag: tags.typeName, color: '#67e8f9' },
+  { tag: tags.tagName, color: '#fcd34d' },
+  { tag: tags.attributeName, color: '#c4b5fd' },
+  { tag: tags.processingInstruction, color: '#c4b5fd' },
+  { tag: tags.meta, color: '#94a3b8' },
+]);
+
 const latexThemeLight = EditorView.theme(
   {
     '&': {
@@ -176,40 +211,40 @@ const latexThemeDark = EditorView.theme(
   {
     '&': {
       fontSize: '13.5px',
-      backgroundColor: '#1e1e1e',
-      color: '#d4d4d4',
+      backgroundColor: '#0f172a',
+      color: '#e2e8f0',
       height: '100%',
     },
     '.cm-content': {
       fontFamily: '"Fira Code", Menlo, Monaco, Consolas, "Courier New", monospace',
       padding: '12px 14px',
-      caretColor: '#60a5fa',
+      caretColor: '#7dd3fc',
     },
     '&.cm-focused .cm-cursor': {
-      borderLeftColor: '#60a5fa',
+      borderLeftColor: '#7dd3fc',
       borderLeftWidth: '2px',
     },
     '&.cm-focused .cm-selectionBackground, ::selection': {
-      backgroundColor: '#264f78',
+      backgroundColor: '#1e3a5f',
     },
     '.cm-gutters': {
-      backgroundColor: '#252526',
-      color: '#858585',
+      backgroundColor: '#111c33',
+      color: '#7b8794',
       border: 'none',
-      borderRight: '1px solid #333333',
+      borderRight: '1px solid #1e293b',
     },
     '.cm-activeLine': {
-      backgroundColor: '#2a2d2e40',
+      backgroundColor: '#1e293b80',
     },
     '.cm-tooltip-autocomplete': {
-      backgroundColor: '#252526',
-      border: '1px solid #454545',
+      backgroundColor: '#111c33',
+      border: '1px solid #334155',
       borderRadius: '6px',
-      color: '#cccccc',
+      color: '#e2e8f0',
       boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
     },
     '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
-      backgroundColor: '#04395e',
+      backgroundColor: '#1e3a5f',
       color: '#ffffff',
     },
   },
@@ -363,6 +398,7 @@ export default function LatexEditor({
           defaultKeymap: true,
         }),
         isDark ? latexThemeDark : latexThemeLight,
+        syntaxHighlighting(isDark ? latexHighlightDark : latexHighlightLight),
         EditorView.lineWrapping,
         imageHandlers,
         EditorView.updateListener.of((update) => {

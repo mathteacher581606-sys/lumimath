@@ -445,6 +445,29 @@ export class AiService {
     questions: string[],
     context?: { topics?: { name: string; grade: number | null }[]; forms?: string[] },
   ): Promise<any[]> {
+    // Chia nhỏ theo lô (8 câu/lần) để tránh JSON đầu ra bị cắt khi có nhiều câu
+    const BATCH = 8;
+    if (questions.length > BATCH) {
+      const out: any[] = [];
+      for (let i = 0; i < questions.length; i += BATCH) {
+        const chunk = questions.slice(i, i + BATCH);
+        try {
+          const res = await this.classifyQuestionsBatch(chunk, context);
+          out.push(...res);
+        } catch {
+          out.push(
+            ...chunk.map(() => ({
+              grade: null,
+              topic: '',
+              difficulty: null,
+              form: '',
+            })),
+          );
+        }
+      }
+      return out;
+    }
+
     const topics = context?.topics || [];
     const forms = context?.forms || [];
     const topicLines = topics.length
@@ -469,9 +492,9 @@ export class AiService {
       'Phân loại từng câu hỏi sau (chủ đề, lớp, độ khó, dạng bài):',
       numbered,
       '',
-      'DANH SÁCH CHỦ ĐỀ ĐÃ TẠO TRONG NGÂN HÀNG — CHỈ được chọn chủ đề ĐÚNG NGUYÊN TÊN trong danh sách này (đúng cả lớp), KHÔNG thêm tiền tố hay hậu tố:',
+      'DANH SÁCH DẠNG BÀI TRONG MỤC LỤC NGÂN HÀNG (mỗi dòng là các dạng của 1 lớp) — CHỈ được chọn ĐÚNG NGUYÊN TÊN một dạng trong danh sách này nếu câu hỏi thuộc dạng đó, KHÔNG thêm tiền tố hay hậu tố:',
       topicLines,
-      'Nếu không có chủ đề nào phù hợp → topic = "" (để trống).',
+      'Nếu câu hỏi không thuộc dạng nào trong danh sách → topic = "" (để trống) và tự đề xuất form ngắn gọn.',
       '',
       'DANH SÁCH DẠNG BÀI ĐÃ CÓ — ưu tiên dùng nếu trùng ý:',
       formLines,
@@ -557,5 +580,75 @@ export class AiService {
         advice: '',
       };
     }
+  }
+
+  // Tạo nhận xét NGẮN GỌN cho nhiều học sinh trong 1 lần gọi AI (lô 10 em)
+  // Dùng cho cột "Nhận xét của GV" khi GV chưa nhận xét.
+  // Định dạng: Điểm mạnh / Điểm yếu / Lời khuyên
+  async generateShortComments(
+    items: {
+      fullName: string;
+      score: number | null;
+      status: string;
+      correctTopics?: string[];
+      wrongTopics?: string[];
+      weakTypes?: string[];
+    }[],
+  ): Promise<(string | null)[]> {
+    const out: (string | null)[] = [];
+    const BATCH = 10;
+    for (let i = 0; i < items.length; i += BATCH) {
+      const chunk = items.slice(i, i + BATCH);
+      const lines = chunk.map((it, j) => {
+        const strong = (it.correctTopics || []).slice(0, 6).join('; ');
+        const weak = (it.wrongTopics || []).slice(0, 6).join('; ');
+        const wt = (it.weakTypes || []).slice(0, 4).join(', ');
+        return [
+          `${j + 1}. ${it.fullName} — điểm ${it.score != null ? it.score : 'chưa có'}, ${it.status}`,
+          strong ? `   Dạng làm ĐÚNG: ${strong}` : '',
+          weak ? `   Dạng làm SAI: ${weak}` : '',
+          wt ? `   Loại câu làm sai: ${wt}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n');
+      });
+      const system =
+        'Bạn là giáo viên Toán THPT Việt Nam. Viết nhận xét ngắn gọn cho từng học sinh theo ĐÚNG 3 mục: Điểm mạnh, Điểm yếu, Lời khuyên. Giọng chân thành, khích lệ, KHÔNG nhắc đến AI. Chỉ trả về JSON array.';
+      const user = [
+        'Với mỗi học sinh dưới đây, hãy viết:',
+        '- "strength" (Điểm mạnh): nắm chắc phần/dạng bài nào (dựa trên các dạng làm đúng + điểm)',
+        '- "weakness" (Điểm yếu): dạng bài còn yếu, lỗi tính toán/ẩu, phần cần củng cố (dựa trên dạng làm sai + điểm)',
+        '- "advice" (Lời khuyên): 1 câu khuyên cụ thể',
+        'Mỗi mục 1 câu ngắn (tối đa 20 từ). Nếu không có dữ liệu dạng bài, dựa vào điểm để nhận xét.',
+        '',
+        ...lines,
+        '',
+        'Trả về JSON array đúng thứ tự: [{"strength":"...","weakness":"...","advice":"..."}]',
+      ].join('\n');
+      try {
+        const raw = await this.chat([
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ]);
+        const parsed = this.parseJson(raw);
+        const arr: any[] = Array.isArray(parsed) ? parsed : [];
+        for (let j = 0; j < chunk.length; j++) {
+          const v = arr[j];
+          if (v && (v.strength || v.weakness || v.advice)) {
+            const text = [
+              `Điểm mạnh: ${String(v.strength || '—').trim()}`,
+              `Điểm yếu: ${String(v.weakness || '—').trim()}`,
+              `Lời khuyên: ${String(v.advice || '—').trim()}`,
+            ].join('\n');
+            out.push(text.slice(0, 600));
+          } else {
+            out.push(null);
+          }
+        }
+      } catch {
+        for (let j = 0; j < chunk.length; j++) out.push(null);
+      }
+    }
+    return out;
   }
 }

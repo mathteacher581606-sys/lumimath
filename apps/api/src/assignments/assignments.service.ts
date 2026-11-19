@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { QuestionType } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
@@ -12,6 +13,8 @@ import { AiService } from '../ai/ai.service';
 import { MailService } from '../mail/mail.service';
 import { GamificationService } from '../gamification/gamification.service';
 import { ExamsService } from '../exams/exams.service';
+import { escapeTex, safeFilename } from '../common/export.helper';
+import * as XLSX from 'xlsx';
 
 @Injectable()
 export class AssignmentsService {
@@ -23,16 +26,76 @@ export class AssignmentsService {
     private exams: ExamsService,
   ) {}
 
+  // Chủ khóa học hoặc trợ giảng → được xem/ quản lý như giáo viên
+  private async isCourseManager(courseId: string, userId: string): Promise<boolean> {
+    const course = await this.prisma.course.findUnique({
+      where: { id: courseId },
+      select: { id: true, teacherId: true },
+    });
+    if (!course) return false;
+    if (course.teacherId === userId) return true;
+    const assistant = await this.prisma.courseAssistant.findUnique({
+      where: { courseId_userId: { courseId, userId } },
+    });
+    return !!assistant;
+  }
+
   private async ensureTeacher(courseId: string, teacherId: string) {
     const course = await this.prisma.course.findUnique({
       where: { id: courseId },
       select: { id: true, teacherId: true },
     });
     if (!course) throw new NotFoundException('Không tìm thấy khóa học');
-    if (course.teacherId !== teacherId) {
-      throw new ForbiddenException('Bạn không sở hữu khóa học này');
+    if (course.teacherId === teacherId) return course;
+    // Trợ giảng cũng được quản lý bài tập của khóa học
+    const assistant = await this.prisma.courseAssistant.findUnique({
+      where: { courseId_userId: { courseId, userId: teacherId } },
+    });
+    if (assistant) return course;
+    throw new ForbiddenException('Bạn không có quyền quản lý khóa học này');
+  }
+
+  // Hạn nộp hiệu dụng cho 1 học sinh: ưu tiên hạn riêng theo lớp, nếu không có thì dùng hạn chung
+  private effectiveDueDate(assignment: any, className?: string | null): Date | null {
+    const overrides = Array.isArray(assignment?.classDeadlines)
+      ? (assignment.classDeadlines as any[])
+      : [];
+    const key = String(className ?? '').trim().toLowerCase();
+    if (key) {
+      // So khớp lớp không phân biệt hoa thường / khoảng trắng thừa
+      const o = overrides.find(
+        (d) => String(d?.className ?? '').trim().toLowerCase() === key,
+      );
+      if (o?.dueDate) return new Date(o.dueDate);
     }
-    return course;
+    return assignment?.dueDate ? new Date(assignment.dueDate) : null;
+  }
+
+  // Đồng bộ điểm bài giao theo điểm bài thi hiện tại (chỉ khi lệch) — để danh sách khớp phần chi tiết.
+  // Trả về mảng submissions đã cập nhật (mutate tại chỗ) để dùng cho danh sách/export.
+  private async syncSubmissionScores(subs: any[]): Promise<void> {
+    const withAttempt = (subs || []).filter((s) => (s?.answers as any)?.attemptId);
+    if (!withAttempt.length) return;
+    const attemptIds = withAttempt.map((s) => (s.answers as any).attemptId);
+    const attempts = await this.prisma.examAttempt.findMany({
+      where: { id: { in: attemptIds } },
+      select: { id: true, score: true },
+    });
+    const scoreById = new Map(attempts.map((a) => [a.id, a.score]));
+    for (const s of withAttempt) {
+      const aid = (s.answers as any).attemptId;
+      const sc = scoreById.get(aid);
+      if (sc == null || typeof sc !== 'number') continue;
+      // Điểm lệch → cập nhật cả điểm cuối lẫn điểm hệ thống theo bài thi
+      if (s.score === sc && s.aiScore === sc) continue;
+      await this.prisma.assignmentSubmission.update({
+        where: { id: s.id },
+        data: { score: sc, aiScore: sc, aiComment: null },
+      });
+      s.score = sc;
+      s.aiScore = sc;
+      s.aiComment = null;
+    }
   }
 
   // ============ DANH SÁCH ============
@@ -53,7 +116,7 @@ export class AssignmentsService {
       },
     });
 
-    if (course.teacherId === userId) {
+    if (await this.isCourseManager(courseId, userId)) {
       const studentCount = await this.prisma.enrollment.count({
         where: { courseId },
       });
@@ -75,6 +138,11 @@ export class AssignmentsService {
       },
     });
     const byAssignment = new Map(mine.map((m) => [m.assignmentId, m]));
+    const me = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { className: true },
+    });
+    const myClass = me?.className || null;
     return {
       isTeacher: false,
       assignments: assignments.map((a) => {
@@ -86,8 +154,10 @@ export class AssignmentsService {
           a.gradesPosted ||
           (a.postAt && new Date(a.postAt).getTime() <= Date.now());
         const visible = !!my?.published && posted;
+        const due = this.effectiveDueDate(a as any, myClass);
         return {
           ...a,
+          dueDate: due, // hạn nộp hiệu dụng cho lớp của học sinh này
           gradesPosted: posted,
           mySubmission: my
             ? {
@@ -105,10 +175,7 @@ export class AssignmentsService {
               }
             : null,
           showAnswers,
-          isLate:
-            a.dueDate && my
-              ? new Date(my.submittedAt) > new Date(a.dueDate)
-              : false,
+          isLate: due && my ? new Date(my.submittedAt) > due : false,
         };
       }),
     };
@@ -146,6 +213,14 @@ export class AssignmentsService {
         pdfUrl: body?.pdfUrl || null,
         assignDate: body?.assignDate ? new Date(body.assignDate) : null,
         dueDate: body?.dueDate ? new Date(body.dueDate) : null,
+        classDeadlines: Array.isArray(body?.classDeadlines)
+          ? body.classDeadlines
+              .filter((d: any) => d?.className && d?.dueDate)
+              .map((d: any) => ({
+                className: String(d.className).trim(),
+                dueDate: new Date(d.dueDate).toISOString(),
+              }))
+          : [],
         minScoreForAnswers:
           body?.minScoreForAnswers != null && body.minScoreForAnswers !== ''
             ? Number(body.minScoreForAnswers)
@@ -156,6 +231,16 @@ export class AssignmentsService {
           : null,
         showLeaderboard: !!body?.showLeaderboard,
         allowResubmit: !!body?.allowResubmit,
+        maxResubmit:
+          body?.maxResubmit != null && body.maxResubmit !== ''
+            ? Math.max(0, Number(body.maxResubmit))
+            : null,
+        lockAfterGraded:
+          body?.lockAfterGraded === undefined ? true : !!body.lockAfterGraded,
+        maxAttempts:
+          body?.maxAttempts != null && body.maxAttempts !== ''
+            ? Number(body.maxAttempts)
+            : 0,
         lateDeductionPercent: body?.lateDeductionPercent != null && body.lateDeductionPercent !== '' ? Number(body.lateDeductionPercent) : null,
         lateIntervalHours: Number(body?.lateIntervalHours) || 24,
         lateMinPercent: body?.lateMinPercent != null && body.lateMinPercent !== '' ? Number(body.lateMinPercent) : null,
@@ -166,6 +251,13 @@ export class AssignmentsService {
     if (!assignment.title) {
       await this.prisma.assignment.delete({ where: { id: assignment.id } });
       throw new ForbiddenException('Tiêu đề bài giao không được trống');
+    }
+    // Đồng bộ số lần nộp tối đa sang đề thi (để giới hạn lần vào thi của học sinh)
+    if (assignment.examId && (assignment.maxAttempts ?? 0) > 0) {
+      await this.prisma.exam.update({
+        where: { id: assignment.examId },
+        data: { maxAttempts: assignment.maxAttempts },
+      });
     }
     // Thông báo in-app cho học sinh đã đăng ký
     const enrollments = await this.prisma.enrollment.findMany({
@@ -203,6 +295,8 @@ export class AssignmentsService {
       'hideAnswers',
       'showLeaderboard',
       'allowResubmit',
+      'lockAfterGraded',
+      'maxAttempts',
       'lateDeductionPercent',
       'lateIntervalHours',
       'lateMinPercent',
@@ -215,6 +309,15 @@ export class AssignmentsService {
       data.assignDate = body.assignDate ? new Date(body.assignDate) : null;
     if (body.dueDate !== undefined)
       data.dueDate = body.dueDate ? new Date(body.dueDate) : null;
+    if (body.classDeadlines !== undefined)
+      data.classDeadlines = Array.isArray(body.classDeadlines)
+        ? body.classDeadlines
+            .filter((d: any) => d?.className && d?.dueDate)
+            .map((d: any) => ({
+              className: String(d.className).trim(),
+              dueDate: new Date(d.dueDate).toISOString(),
+            }))
+        : [];
     if (body.revealAnswersAt !== undefined)
       data.revealAnswersAt = body.revealAnswersAt
         ? new Date(body.revealAnswersAt)
@@ -224,10 +327,23 @@ export class AssignmentsService {
         body.minScoreForAnswers === '' || body.minScoreForAnswers == null
           ? null
           : Number(body.minScoreForAnswers);
-    return this.prisma.assignment.update({
+    if (body.maxResubmit !== undefined)
+      data.maxResubmit =
+        body.maxResubmit === '' || body.maxResubmit == null
+          ? null
+          : Math.max(0, Number(body.maxResubmit));
+    const updated = await this.prisma.assignment.update({
       where: { id: assignmentId },
       data,
     });
+    // Đồng bộ số lần nộp tối đa sang đề thi
+    if (updated.examId && (updated.maxAttempts ?? 0) > 0) {
+      await this.prisma.exam.update({
+        where: { id: updated.examId },
+        data: { maxAttempts: updated.maxAttempts },
+      });
+    }
+    return updated;
   }
 
   async remove(courseId: string, assignmentId: string, teacherId: string) {
@@ -271,7 +387,7 @@ export class AssignmentsService {
     if (!assignment || assignment.courseId !== courseId) {
       throw new NotFoundException('Không tìm thấy bài giao');
     }
-    const isTeacher = assignment.course.teacherId === userId;
+    const isTeacher = await this.isCourseManager(courseId, userId);
     if (!isTeacher && role === 'STUDENT') {
       const en = await this.prisma.enrollment.findUnique({
         where: { courseId_studentId: { courseId, studentId: userId } },
@@ -279,22 +395,42 @@ export class AssignmentsService {
       if (!en) throw new ForbiddenException('Chưa đăng ký khóa học');
     }
 
+    // Nạp NỘI DUNG các câu tự luận đã chọn từ ngân hàng đề để học sinh ĐỌC ĐƯỢC ĐỀ BÀI.
+    // Học sinh chỉ nhận content/options (KHÔNG nhận đáp án/lời giải).
+    const qIds: string[] = Array.isArray((assignment as any).questionIds)
+      ? ((assignment as any).questionIds as string[])
+      : [];
+    let bankQuestions: any[] = [];
+    if (qIds.length) {
+      const rows = await this.prisma.question.findMany({
+        where: { id: { in: qIds } },
+        select: isTeacher
+          ? { id: true, code: true, type: true, content: true, options: true, answer: true, solution: true }
+          : { id: true, code: true, type: true, content: true, options: true },
+      });
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      bankQuestions = qIds.map((id) => byId.get(id)).filter(Boolean) as any[];
+    }
+
     if (isTeacher) {
       const submissions = await this.prisma.assignmentSubmission.findMany({
         where: { assignmentId },
         orderBy: { submittedAt: 'asc' },
         include: {
-          student: { select: { id: true, fullName: true, studentCode: true } },
+          student: { select: { id: true, fullName: true, studentCode: true, className: true } },
         },
       });
+      // Đồng bộ điểm theo bài thi (nếu lệch) để danh sách khớp với chi tiết chấm bài
+      await this.syncSubmissionScores(submissions);
       const enrolled = await this.prisma.enrollment.findMany({
         where: { courseId },
-        include: { student: { select: { id: true, fullName: true, studentCode: true } } },
+        include: { student: { select: { id: true, fullName: true, studentCode: true, className: true } } },
         orderBy: { enrolledAt: 'asc' },
       });
       const submittedIds = new Set(submissions.map((s) => s.studentId));
       return {
         ...assignment,
+        questions: bankQuestions,
         submissions,
         students: enrolled.map((e) => ({
           ...e.student,
@@ -309,9 +445,50 @@ export class AssignmentsService {
         assignmentId_studentId: { assignmentId, studentId: userId },
       },
     });
+    const me = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { className: true },
+    });
     const showAnswers = this.showAnswersRule(assignment as any, mine);
+    // Thông tin quyền nộp lại: số lượt sửa còn lại, đã bị khoá sau khi chấm chưa
+    const histCount = mine
+      ? await this.prisma.assignmentSubmissionHistory.count({
+          where: { submissionId: mine.id },
+        })
+      : 0;
+    const versionsUsed = mine ? Math.max(1, histCount) : 0;
+    const editsUsed = Math.max(0, versionsUsed - 1);
+    const maxResubmit =
+      (assignment as any).maxResubmit === null ||
+      (assignment as any).maxResubmit === undefined
+        ? null
+        : Number((assignment as any).maxResubmit);
+    const gradedNow = mine
+      ? mine.gradedAt != null || mine.status === 'GRADED' || mine.published === true
+      : false;
+    const dueNow = this.effectiveDueDate(assignment as any, me?.className || null);
+    const pastDueNow = dueNow ? dueNow.getTime() < Date.now() : false;
+    const lockedAfterGraded = (assignment as any).lockAfterGraded !== false;
+    const resubmit = {
+      isEssay: assignment.kind !== 'EXAM',
+      editsUsed,
+      maxResubmit,
+      editsLeft: maxResubmit === null ? null : Math.max(0, maxResubmit - editsUsed),
+      graded: gradedNow,
+      lockedAfterGraded,
+      pastDue: pastDueNow,
+      canEdit: Boolean(
+        assignment.kind !== 'EXAM' &&
+          !pastDueNow &&
+          (maxResubmit === null || editsUsed < maxResubmit) &&
+          !(lockedAfterGraded && gradedNow),
+      ),
+    };
     return {
       ...assignment,
+      questions: bankQuestions,
+      resubmit,
+      dueDate: this.effectiveDueDate(assignment as any, me?.className || null),
       mySubmission: mine,
       showAnswers,
       // KHÔNG gửi đáp án câu trắc nghiệm cho HS khi chưa được xem đáp án
@@ -353,14 +530,53 @@ export class AssignmentsService {
     const existing = await this.prisma.assignmentSubmission.findUnique({
       where: { assignmentId_studentId: { assignmentId, studentId } },
     });
-    if (
-      existing &&
-      !assignment.allowResubmit &&
-      existing.status !== 'RETURNED'
-    ) {
-      throw new ForbiddenException(
-        'Bạn đã nộp bài này rồi (chờ giáo viên yêu cầu nộp lại nếu cần sửa)',
-      );
+    // Cho phép học sinh SỬA / NỘP LẠI bài TỰ LUẬN khi CÒN HẠN NỘP
+    const stu = await this.prisma.user.findUnique({
+      where: { id: studentId },
+      select: { className: true },
+    });
+    const dueAt = this.effectiveDueDate(assignment as any, stu?.className || null);
+    const pastDue = dueAt ? dueAt.getTime() < Date.now() : false;
+    const canEditBeforeDue = assignment.kind !== 'EXAM' && !pastDue;
+
+    // Số lần đã nộp (mỗi lần nộp/sửa = 1 phiên bản trong lịch sử)
+    let versionsUsed = existing
+      ? await this.prisma.assignmentSubmissionHistory.count({
+          where: { submissionId: existing.id },
+        })
+      : 0;
+    // Tương thích dữ liệu cũ: đã có bài nộp nhưng chưa có lịch sử ⇒ coi như đã nộp 1 lần
+    if (existing && versionsUsed === 0) versionsUsed = 1;
+    const editsUsed = Math.max(0, versionsUsed - 1);
+
+    if (existing && !assignment.allowResubmit && existing.status !== 'RETURNED') {
+      if (!canEditBeforeDue) {
+        throw new ForbiddenException(
+          pastDue
+            ? 'Đã hết hạn nộp nên không thể sửa bài. Hãy liên hệ giáo viên nếu cần nộp lại.'
+            : 'Bạn đã nộp bài này rồi (chờ giáo viên yêu cầu nộp lại nếu cần sửa)',
+        );
+      }
+      // Giới hạn số lần sửa
+      const maxResubmit = (assignment as any).maxResubmit;
+      if (maxResubmit !== null && maxResubmit !== undefined && editsUsed >= maxResubmit) {
+        throw new ForbiddenException(
+          maxResubmit === 0
+            ? 'Bài giao này không cho phép sửa lại sau khi đã nộp.'
+            : `Bạn đã dùng hết ${maxResubmit} lượt sửa bài. Hãy liên hệ giáo viên nếu cần nộp lại.`,
+        );
+      }
+      // Khoá sửa khi giáo viên đã chấm
+      const locked = (assignment as any).lockAfterGraded !== false;
+      const graded =
+        existing.gradedAt != null ||
+        existing.status === 'GRADED' ||
+        existing.published === true;
+      if (locked && graded) {
+        throw new ForbiddenException(
+          'Giáo viên đã chấm bài nên không thể sửa. Hãy liên hệ giáo viên nếu cần nộp lại.',
+        );
+      }
     }
 
     const data: any = {
@@ -391,11 +607,59 @@ export class AssignmentsService {
           },
         });
 
+    // Ghi LỊCH SỬ mỗi lần nộp (để giáo viên đối chiếu)
+    try {
+      await this.prisma.assignmentSubmissionHistory.create({
+        data: {
+          submissionId: submission.id,
+          assignmentId,
+          version: versionsUsed + 1,
+          content: data.content,
+          imageUrls: data.imageUrls,
+          pdfUrl: data.pdfUrl,
+          answers: data.answers,
+        },
+      });
+    } catch {
+      /* trùng version (nộp đồng thời) — bỏ qua, không chặn nộp bài */
+    }
+
     // Thưởng XP nộp bài
     await this.gamification.awardXp(studentId, 15);
 
     // KHÔNG tự chấm AI nữa — giáo viên bấm nút "Chấm bằng AI" để chấm câu tự luận
     return submission;
+  }
+
+  // Lịch sử các lần nộp/sửa bài (để đối chiếu)
+  async submissionHistory(
+    courseId: string,
+    assignmentId: string,
+    submissionId: string,
+    userId: string,
+  ) {
+    const assignment = await this.prisma.assignment.findUnique({
+      where: { id: assignmentId },
+      select: { id: true, courseId: true },
+    });
+    if (!assignment || assignment.courseId !== courseId) {
+      throw new NotFoundException('Không tìm thấy bài giao');
+    }
+    const sub = await this.prisma.assignmentSubmission.findUnique({
+      where: { id: submissionId },
+      select: { id: true, assignmentId: true, studentId: true },
+    });
+    if (!sub || sub.assignmentId !== assignmentId) {
+      throw new NotFoundException('Không tìm thấy bài nộp');
+    }
+    const isTeacher = await this.isCourseManager(courseId, userId);
+    if (!isTeacher && sub.studentId !== userId) {
+      throw new ForbiddenException('Không có quyền xem lịch sử bài nộp này');
+    }
+    return this.prisma.assignmentSubmissionHistory.findMany({
+      where: { submissionId },
+      orderBy: { version: 'asc' },
+    });
   }
 
   // GV bấm nút → AI chấm các câu TỰ LUẬN (trắc nghiệm tính điểm tự động từ đáp án đã lưu)
@@ -409,13 +673,59 @@ export class AssignmentsService {
     return this.runAiGrade(submissionId);
   }
 
+  // Tự động đồng bộ điểm thi vào TẤT CẢ bài giao (kind=EXAM) mà học sinh đã đăng ký.
+  // Gọi ngay sau khi học sinh nộp bài thi trên giao diện thi online.
+  async autoSyncExam(
+    studentId: string,
+    examId: string,
+  ): Promise<{ synced: number; total: number }> {
+    const attempt = await this.prisma.examAttempt.findFirst({
+      where: {
+        examId,
+        studentId,
+        submittedAt: { not: null },
+        score: { not: null },
+      },
+      // Luôn lấy lần thi ĐIỂM CAO NHẤT (đề cho thi lại nhiều lần)
+      orderBy: [{ score: 'desc' }, { submittedAt: 'desc' }],
+    });
+    if (!attempt) return { synced: 0, total: 0 };
+
+    const enrollments = await this.prisma.enrollment.findMany({
+      where: { studentId },
+      select: { courseId: true },
+    });
+    const courseIds = enrollments.map((e) => e.courseId);
+    if (!courseIds.length) return { synced: 0, total: 0 };
+
+    const assignments = await this.prisma.assignment.findMany({
+      where: { examId, kind: 'EXAM', courseId: { in: courseIds } },
+      select: { id: true, courseId: true },
+    });
+
+    let synced = 0;
+    for (const a of assignments) {
+      const existing = await this.prisma.assignmentSubmission.findUnique({
+        where: {
+          assignmentId_studentId: { assignmentId: a.id, studentId },
+        },
+      });
+      // Đã đồng bộ đúng lần làm này rồi → bỏ qua (tránh cộng XP lặp)
+      if (existing && (existing.answers as any)?.attemptId === attempt.id) {
+        continue;
+      }
+      await this.submitExamResult(a.courseId, a.id, studentId);
+      synced++;
+    }
+    return { synced, total: assignments.length };
+  }
+
   // HS làm đề thi qua giao diện THI ONLINE rồi bấm nộp kết quả vào bài giao
   async submitExamResult(
     courseId: string,
     assignmentId: string,
     studentId: string,
-  ) {
-    const assignment = await this.prisma.assignment.findUnique({
+  ) {    const assignment = await this.prisma.assignment.findUnique({
       where: { id: assignmentId },
     });
     if (!assignment || assignment.courseId !== courseId) {
@@ -436,7 +746,8 @@ export class AssignmentsService {
         submittedAt: { not: null },
         score: { not: null },
       },
-      orderBy: { submittedAt: 'desc' },
+      // Luôn lấy lần thi ĐIỂM CAO NHẤT (đề cho thi lại nhiều lần)
+      orderBy: [{ score: 'desc' }, { submittedAt: 'desc' }],
     });
     if (!attempt) {
       throw new ForbiddenException(
@@ -448,11 +759,22 @@ export class AssignmentsService {
       content: '(làm trực tuyến trên hệ thống thi online)',
       answers: { __fromExam: true, attemptId: attempt.id, raw: attempt.answers },
       aiScore: attempt.score,
+      aiComment: null, // điểm đổi → xoá nhận xét cũ để tạo lại
       aiFeedback: 'Điểm do hệ thống thi online chấm (trắc nghiệm tự động + tự luận AI). Giáo viên chốt điểm cuối.',
       status: 'SUBMITTED',
       published: false,
       submittedAt: new Date(),
     };
+
+    // ===== TỰ CHỐT ĐIỂM: đề KHÔNG có câu tự luận → chốt ngay, không cần GV chỉnh =====
+    const essayCount = await this.prisma.examItem.count({
+      where: { examId: assignment.examId, question: { type: QuestionType.ESSAY } },
+    });
+    if (essayCount === 0) {
+      data.score = attempt.score;
+      data.published = true;
+      data.aiFeedback = 'Điểm đã được hệ thống chốt tự động (đề chỉ có trắc nghiệm/điền số/đúng-sai, không có câu tự luận).';
+    }
     const existing = await this.prisma.assignmentSubmission.findUnique({
       where: { assignmentId_studentId: { assignmentId, studentId } },
     });
@@ -590,9 +912,32 @@ export class AssignmentsService {
         : `Chấm tự động toàn bộ trắc nghiệm.`;
     } else {
       // Tự luận / tự gõ đề: AI chấm thô toàn bài
+      // Nếu bài giao chọn câu từ NGÂN HÀNG ĐỀ → nạp đề + lời giải làm căn cứ chấm
+      const qIds: string[] = Array.isArray((assignment as any).questionIds)
+        ? ((assignment as any).questionIds as string[])
+        : [];
+      let bankPrompt = '';
+      if (qIds.length) {
+        const rows = await this.prisma.question.findMany({
+          where: { id: { in: qIds } },
+          select: { id: true, content: true, answer: true, solution: true },
+        });
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        bankPrompt = qIds
+          .map((id, i) => {
+            const q: any = byId.get(id);
+            if (!q) return '';
+            const ans = q.answer ? `\nĐÁP ÁN: ${JSON.stringify(q.answer)}` : '';
+            const sol = q.solution ? `\nLỜI GIẢI: ${q.solution}` : '';
+            return `Câu ${i + 1}. ${q.content}${ans}${sol}`;
+          })
+          .filter(Boolean)
+          .join('\n\n');
+      }
       const promptText = [
         assignment.customContent,
         ...(assignment.customQuestions || []),
+        bankPrompt,
       ]
         .filter(Boolean)
         .join('\n\n');
@@ -610,7 +955,7 @@ export class AssignmentsService {
 
     const updated = await this.prisma.assignmentSubmission.update({
       where: { id: submissionId },
-      data: { aiScore: score, aiFeedback },
+      data: { aiScore: score, aiFeedback, aiComment: null },
     });
     return updated;
   }
@@ -710,13 +1055,23 @@ export class AssignmentsService {
     const assignment = await this.prisma.assignment.findUnique({
       where: { id: submission!.assignmentId },
     });
+    const studentRec = submission?.studentId
+      ? await this.prisma.user.findUnique({
+          where: { id: submission.studentId },
+          select: { className: true },
+        })
+      : null;
+    const effDue = this.effectiveDueDate(
+      assignment as any,
+      studentRec?.className || null,
+    );
     if (
-      assignment?.dueDate &&
+      effDue &&
       assignment.lateDeductionPercent &&
       submission?.submittedAt &&
       data.score != null
     ) {
-      const due = new Date(assignment.dueDate).getTime();
+      const due = effDue.getTime();
       const sub = new Date(submission.submittedAt).getTime();
       if (sub > due) {
         const intervals = Math.ceil(
@@ -734,11 +1089,11 @@ export class AssignmentsService {
     }
     // Bài KHÔNG nộp (quá hạn): trừ riêng theo missing_deduction
     if (
-      assignment?.dueDate &&
+      effDue &&
       assignment.missingDeductionPercent &&
       !submission?.submittedAt &&
       data.score != null &&
-      new Date(assignment.dueDate).getTime() < Date.now()
+      effDue.getTime() < Date.now()
     ) {
       const base = Number(data.score);
       const final = Math.max(
@@ -748,6 +1103,9 @@ export class AssignmentsService {
       data.score = Math.round(final * 100) / 100;
       data.penaltyPoints = Math.round((base - Number(data.score)) * 100) / 100;
     }
+
+    // Điểm có thể đổi → xoá nhận xét cũ để lần xuất sau tạo lại theo điểm mới
+    data.aiComment = null;
 
     const updated = await this.prisma.assignmentSubmission.update({
       where: { id: submissionId },
@@ -841,10 +1199,339 @@ export class AssignmentsService {
         data: {
           aiScore: result.scores[aid],
           ...(s.score == null ? { score: result.scores[aid] } : {}),
+          aiComment: null, // điểm đổi → xoá nhận xét cũ
         },
       });
     }
     return { total: result.total, changed: result.changed, synced, scores: result.scores };
+  }
+
+  // Xuất bảng điểm của bài tập (PDF / Excel) — gồm toàn bộ học sinh đã đăng ký khóa học
+  async exportScores(
+    courseId: string,
+    assignmentId: string,
+    teacherId: string,
+    format: string,
+    className?: string,
+  ) {
+    await this.ensureTeacher(courseId, teacherId);
+    const assignment = await this.prisma.assignment.findUnique({
+      where: { id: assignmentId },
+    });
+    if (!assignment) throw new NotFoundException('Không tìm thấy bài giao');
+    const course = await this.prisma.course.findUnique({
+      where: { id: courseId },
+      select: { title: true },
+    });
+
+    const cls = className && className.trim() ? className.trim() : '';
+    const enrollments = await this.prisma.enrollment.findMany({
+      where: {
+        courseId,
+        ...(cls ? { student: { className: cls } } : {}),
+      },
+      include: { student: true },
+      orderBy: { student: { fullName: 'asc' } },
+    });
+    const submissions = await this.prisma.assignmentSubmission.findMany({
+      where: { assignmentId },
+    });
+    // Đồng bộ điểm theo bài thi (nếu lệch) để bảng điểm khớp với chi tiết chấm bài
+    await this.syncSubmissionScores(submissions);
+    const subByStudent = new Map(submissions.map((s) => [s.studentId, s]));
+
+    // Gom dữ liệu đúng/sai theo chủ đề (nếu bài giao là đề thi) để AI nhận xét sát
+    const examItemsWithTopic = assignment.examId
+      ? await this.prisma.examItem.findMany({
+          where: { examId: assignment.examId },
+          include: { question: { include: { topic: true } } },
+          orderBy: { order: 'asc' },
+        })
+      : [];
+    const attemptIds = submissions
+      .map((s) => (s.answers as any)?.attemptId)
+      .filter((x): x is string => typeof x === 'string' && !!x);
+    const attemptsMap = new Map<string, any>();
+    if (attemptIds.length) {
+      const ats = await this.prisma.examAttempt.findMany({
+        where: { id: { in: attemptIds } },
+      });
+      for (const a of ats) attemptsMap.set(a.id, a);
+    }
+    const perfOf = (s: any) => {
+      const attemptId = (s?.answers as any)?.attemptId;
+      const attempt = attemptId ? attemptsMap.get(attemptId) : null;
+      if (!attempt || !examItemsWithTopic.length) {
+        return {
+          correctTopics: [] as string[],
+          wrongTopics: [] as string[],
+          weakTypes: [] as string[],
+        };
+      }
+      const ans = (attempt.answers as any) || {};
+      const correct = new Set<string>();
+      const wrong = new Set<string>();
+      const weakTypes = new Set<string>();
+      for (const it of examItemsWithTopic) {
+        const q = it.question as any;
+        if (!q || q.type === 'ESSAY') continue; // tự luận không chấm tự động
+        const label = q.topic?.name || q.form || 'Dạng khác';
+        if (this.exams.isAnswerCorrect(q, ans[it.id])) {
+          correct.add(label);
+        } else {
+          wrong.add(label);
+          weakTypes.add(
+            q.type === 'TRUE_FALSE'
+              ? 'Đúng/Sai'
+              : q.type === 'SHORT_ANSWER'
+                ? 'Trả lời ngắn'
+                : 'Trắc nghiệm',
+          );
+        }
+      }
+      return {
+        correctTopics: [...correct],
+        wrongTopics: [...wrong],
+        weakTypes: [...weakTypes],
+      };
+    };
+
+    // Gom + tính điểm hiệu dụng để SẮP XẾP CAO → THẤP (chưa nộp xếp cuối)
+    const scored = enrollments.map((en) => {
+      const st = en.student as any;
+      const s = subByStudent.get(st.id) || null;
+      const eff = s ? (s.score ?? s.aiScore) : null;
+      return { st, s, eff };
+    });
+    scored.sort((a, b) => {
+      const an = a.eff == null ? -Infinity : a.eff;
+      const bn = b.eff == null ? -Infinity : b.eff;
+      if (bn !== an) return bn - an;
+      return String(a.st.fullName || '').localeCompare(String(b.st.fullName || ''));
+    });
+
+    // Xác định trạng thái nộp
+    const statusOf = (s: any, className: string | null) => {
+      if (!s) return 'Chưa nộp';
+      const due = this.effectiveDueDate(assignment as any, className);
+      if (due && s.submittedAt) {
+        return new Date(s.submittedAt).getTime() > due.getTime()
+          ? 'Nộp muộn'
+          : 'Đúng hạn';
+      }
+      return 'Đã nộp';
+    };
+
+    // Tự động tạo nhận xét (AI) cho học sinh đã có điểm nhưng GV chưa nhận xét
+    const needComment = scored.filter(
+      ({ s, eff }) => s && eff != null && !s.teacherComment && !s.aiComment,
+    );
+    if (needComment.length) {
+      const gens = needComment.map(({ st, s, eff }) => {
+        const perf = perfOf(s);
+        return {
+          fullName: st.fullName || 'Học sinh',
+          score: typeof eff === 'number' ? eff : null,
+          status: statusOf(s, st.className || null),
+          correctTopics: perf.correctTopics,
+          wrongTopics: perf.wrongTopics,
+          weakTypes: perf.weakTypes,
+        };
+      });
+      const gen = await this.ai.generateShortComments(gens);
+      for (let i = 0; i < needComment.length; i++) {
+        const c = gen[i];
+        const sub = needComment[i].s;
+        if (c && sub) {
+          sub.aiComment = c;
+          await this.prisma.assignmentSubmission.update({
+            where: { id: sub.id },
+            data: { aiComment: c },
+          });
+        }
+      }
+    }
+
+    const fallbackComment = (score: number | null): string => {
+      if (score == null) {
+        return 'Điểm mạnh: —\nĐiểm yếu: Chưa nộp bài.\nLời khuyên: Cần nộp bài đúng hạn.';
+      }
+      if (score >= 9) {
+        return 'Điểm mạnh: Nắm chắc kiến thức, làm bài tốt.\nĐiểm yếu: Cần cẩn thận hơn ở các câu khó.\nLời khuyên: Tiếp tục phát huy, luyện thêm câu vận dụng cao.';
+      }
+      if (score >= 7) {
+        return 'Điểm mạnh: Hiểu bài, làm được phần lớn câu hỏi.\nĐiểm yếu: Còn vài lỗi tính toán nhỏ.\nLời khuyên: Kiểm tra lại bài trước khi nộp.';
+      }
+      if (score >= 5) {
+        return 'Điểm mạnh: Nắm được kiến thức cơ bản.\nĐiểm yếu: Còn yếu phần vận dụng.\nLời khuyên: Ôn lại lý thuyết và luyện thêm bài tập cơ bản.';
+      }
+      return 'Điểm mạnh: —\nĐiểm yếu: Chưa nắm chắc kiến thức cơ bản.\nLời khuyên: Cần ôn lại lý thuyết và nhờ thầy hướng dẫn thêm.';
+    };
+
+    const rows: Record<string, any>[] = [];
+    const scores: number[] = [];
+    for (const { st, s, eff } of scored) {
+      const status = statusOf(s, st.className || null);
+      if (eff != null && typeof eff === 'number') scores.push(eff);
+      const comment =
+        (s?.teacherComment && String(s.teacherComment).trim()) ||
+        (s?.aiComment && String(s.aiComment).trim()) ||
+        (s ? fallbackComment(eff) : 'Chưa nộp bài.');
+      rows.push({
+        STT: rows.length + 1,
+        'Họ và tên': st.fullName || '',
+        'Lớp': st.className || '',
+        'Điểm': eff != null ? eff : '—',
+        'Nhận xét của GV': comment,
+        'Trạng thái': status,
+      });
+    }
+
+    // ===== Thống kê =====
+    const sorted = [...scores].sort((a, b) => a - b);
+    const n = sorted.length;
+    const quantile = (p: number) => {
+      if (!n) return 0;
+      const idx = (n - 1) * p;
+      const lo = Math.floor(idx);
+      const hi = Math.ceil(idx);
+      if (lo === hi) return round1(sorted[lo]);
+      return round1(sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo));
+    };
+    const round1 = (x: number) => Math.round(x * 100) / 100;
+    const mean = n ? round1(sorted.reduce((a, b) => a + b, 0) / n) : 0;
+    const median = quantile(0.5);
+    const q1 = quantile(0.25);
+    const q2 = median;
+    const q3 = quantile(0.75);
+    const variance = n
+      ? round1(sorted.reduce((a, b) => a + (b - mean) ** 2, 0) / n)
+      : 0;
+    const std = round1(Math.sqrt(variance));
+    const min = n ? sorted[0] : 0;
+    const max = n ? sorted[n - 1] : 0;
+
+    // Phổ điểm theo 10 khoảng: 0-1, 1-2, ..., 9-10
+    const bins = Array.from({ length: 10 }, (_, i) => ({
+      label: `${i}-${i + 1}`,
+      lo: i,
+      hi: i === 9 ? 10.01 : i + 1,
+      count: 0,
+    }));
+    for (const sc of scores) {
+      const b = bins.find((b) => sc >= b.lo && sc < b.hi);
+      if (b) b.count++;
+    }
+
+    const subtitle = `${assignment.title} — ${course?.title || ''}${cls ? ` — Lớp: ${cls}` : ''} (${enrollments.length} học sinh)`;
+    const baseName = safeFilename(`bang-diem-${assignment.title}${cls ? '-' + cls : ''}`);
+
+    if (format === 'xlsx') {
+      const statRows: Record<string, any>[] = [
+        { 'Chỉ số': 'Số bài đã nộp', 'Giá trị': n },
+        { 'Chỉ số': 'Chưa nộp', 'Giá trị': enrollments.length - n },
+        { 'Chỉ số': 'Điểm trung bình', 'Giá trị': mean },
+        { 'Chỉ số': 'Điểm trung vị', 'Giá trị': median },
+        { 'Chỉ số': 'Tứ phân vị Q1 (25%)', 'Giá trị': q1 },
+        { 'Chỉ số': 'Tứ phân vị Q2 (50%)', 'Giá trị': q2 },
+        { 'Chỉ số': 'Tứ phân vị Q3 (75%)', 'Giá trị': q3 },
+        { 'Chỉ số': 'Phương sai', 'Giá trị': variance },
+        { 'Chỉ số': 'Độ lệch chuẩn', 'Giá trị': std },
+        { 'Chỉ số': 'Cao nhất', 'Giá trị': max },
+        { 'Chỉ số': 'Thấp nhất', 'Giá trị': min },
+      ];
+      const distRows = bins.map((b) => ({
+        'Khoảng điểm': b.label,
+        'Số học sinh': b.count,
+      }));
+      const ws1 = XLSX.utils.json_to_sheet(rows);
+      const ws2 = XLSX.utils.json_to_sheet(statRows);
+      const ws3 = XLSX.utils.json_to_sheet(distRows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws1, 'Bảng điểm');
+      XLSX.utils.book_append_sheet(wb, ws2, 'Thống kê');
+      XLSX.utils.book_append_sheet(wb, ws3, 'Phổ điểm');
+      return {
+        buffer: XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+        filename: `${baseName}.xlsx`,
+        contentType:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      };
+    }
+
+    // ===== PDF: thống kê + phổ điểm (biểu đồ) + bảng chi tiết =====
+    const maxCount = Math.max(1, ...bins.map((b) => b.count));
+    const BAR_W = 0.62;
+    const STEP = 0.9;
+    const bars = bins
+      .map((b, i) => {
+        const h = ((b.count / maxCount) * 4.5).toFixed(2);
+        const x = (i * STEP).toFixed(2);
+        const cx = (i * STEP + BAR_W / 2).toFixed(2);
+        return [
+          `\\fill[red!70!black,opacity=0.8] (${x},0) rectangle ++(${BAR_W},${h});`,
+          `\\node[below,font=\\scriptsize] at (${cx},0) {${b.label}};`,
+          `\\node[above,font=\\scriptsize] at (${cx},${h}) {${b.count}};`,
+        ].join('\n');
+      })
+      .join('\n');
+
+    const headers = ['STT', 'Họ và tên', 'Lớp', 'Điểm', 'Nhận xét của GV', 'Trạng thái'];
+    const tex = [
+      '\\documentclass[12pt,a4paper]{article}',
+      '\\usepackage{vntex}',
+      '\\usepackage{amsmath}',
+      '\\usepackage{amssymb}',
+      '\\usepackage{longtable}',
+      '\\usepackage{geometry}',
+      '\\usepackage{tikz}',
+      '\\usetikzlibrary{patterns}',
+      '\\geometry{margin=1.5cm}',
+      '\\begin{document}',
+      '\\begin{center}',
+      '{\\Large\\bfseries BẢNG ĐIỂM BÀI TẬP} \\\\[4pt]',
+      `\\textit{${escapeTex(subtitle)}}`,
+      '\\end{center}',
+      '\\vspace{6pt}',
+      '\\section*{Thống kê}',
+      '\\begin{tabular}{|l|c|l|c|}',
+      '\\hline',
+      `Số bài đã nộp & ${n} & Chưa nộp & ${enrollments.length - n} \\\\ \\hline`,
+      `Điểm trung bình & ${mean} & Điểm trung vị & ${median} \\\\ \\hline`,
+      `Tứ phân vị Q1 & ${q1} & Tứ phân vị Q3 & ${q3} \\\\ \\hline`,
+      `Phương sai & ${variance} & Độ lệch chuẩn & ${std} \\\\ \\hline`,
+      `Cao nhất & ${max} & Thấp nhất & ${min} \\\\ \\hline`,
+      '\\end{tabular}',
+      '\\section*{Phổ điểm}',
+      '\\begin{center}',
+      '\\begin{tikzpicture}[scale=0.95]',
+      bars,
+      '\\end{tikzpicture}',
+      '\\end{center}',
+      '\\section*{Danh sách chi tiết}',
+      `\\begin{longtable}{|c|p{4.2cm}|c|c|p{6.5cm}|c|}`,
+      '\\hline',
+      `${headers.map((h) => `\\textbf{${escapeTex(h)}}`).join(' & ')} \\\\ \\hline`,
+      '\\endfirsthead',
+      '\\hline',
+      `${headers.map((h) => `\\textbf{${escapeTex(h)}}`).join(' & ')} \\\\ \\hline`,
+      '\\endhead',
+      '\\hline',
+      '\\endfoot',
+      ...rows.map(
+        (r) =>
+          headers.map((h) => escapeTex(String(r[h] ?? ''))).join(' & ') +
+          ' \\\\ \\hline',
+      ),
+      '\\end{longtable}',
+      '\\end{document}',
+    ].join('\n');
+
+    return {
+      buffer: await this.exams.compileRaw(tex),
+      filename: `${baseName}.pdf`,
+      contentType: 'application/pdf',
+    };
   }
 
   // ===== NGÂN HÀNG NHẬN XÉT =====
@@ -919,7 +1606,7 @@ export class AssignmentsService {
     if (!assignment || assignment.courseId !== courseId) {
       throw new NotFoundException('Không tìm thấy bài giao');
     }
-    const isTeacher = assignment.course.teacherId === userId;
+    const isTeacher = await this.isCourseManager(courseId, userId);
     if (!assignment.showLeaderboard && !isTeacher) {
       throw new ForbiddenException('Bảng xếp hạng của bài này đã bị ẩn');
     }

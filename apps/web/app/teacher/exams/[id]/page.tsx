@@ -22,6 +22,110 @@ const PART_LABEL: Record<number, string> = {
   4: 'Tự luận',
 };
 
+// Ô chọn câu thay thế: gõ MÃ câu (VD: B634088) hoặc nội dung để tìm nhanh
+function QuestionPicker({
+  questions,
+  currentType,
+  onPick,
+}: {
+  questions: any[];
+  currentType: string;
+  onPick: (id: string) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const list = questions.filter((bq) => bq.type === currentType);
+  const term = q.trim().toLowerCase();
+  const results = term
+    ? list.filter(
+        (bq) =>
+          String(bq.code || '').toLowerCase().includes(term) ||
+          String(bq.content || '').toLowerCase().includes(term),
+      )
+    : list;
+  const shown = results.slice(0, 30);
+  const pick = (id: string) => {
+    onPick(id);
+    setQ('');
+    setOpen(false);
+  };
+  return (
+    <div style={{ position: 'relative', flex: 1, minWidth: 240 }}>
+      <input
+        value={q}
+        onChange={(e) => {
+          setQ(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 180)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            const exact = list.find(
+              (bq) => String(bq.code || '').toLowerCase() === term,
+            );
+            if (exact) pick(exact.id);
+            else if (shown[0]) pick(shown[0].id);
+          }
+          if (e.key === 'Escape') setOpen(false);
+        }}
+        placeholder="Gõ mã câu (VD: B634088) hoặc nội dung để đổi câu…"
+        style={{
+          width: '100%',
+          padding: '6px 8px',
+          fontSize: 13,
+          border: '1px solid var(--color-rule)',
+          borderRadius: 6,
+          background: 'var(--color-paper)',
+          color: 'var(--color-ink)',
+        }}
+      />
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 60,
+            top: '100%',
+            left: 0,
+            right: 0,
+            marginTop: 4,
+            maxHeight: 260,
+            overflowY: 'auto',
+            background: 'var(--color-paper)',
+            border: '1px solid var(--color-rule)',
+            borderRadius: 6,
+            boxShadow: '0 8px 24px rgba(0,0,0,.18)',
+          }}
+        >
+          {shown.length === 0 ? (
+            <div style={{ padding: 8, fontSize: 12, color: 'var(--color-muted)' }}>
+              Không tìm thấy câu phù hợp
+            </div>
+          ) : (
+            shown.map((bq) => (
+              <div
+                key={bq.id}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(bq.id);
+                }}
+                style={{
+                  padding: '6px 8px',
+                  fontSize: 12.5,
+                  cursor: 'pointer',
+                  borderBottom: '1px solid var(--color-rule)',
+                }}
+              >
+                <b>{bq.code}</b> — {String(bq.content || '').slice(0, 80)}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ExamDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -726,22 +830,11 @@ export default function ExamDetailPage() {
                     style={{ width: 70, padding: '6px 8px', fontSize: 13, border: '1px solid var(--color-rule)', borderRadius: 6, background: 'var(--color-paper)', color: 'var(--color-ink)' }}
                   />
                   <label style={{ fontSize: 12, color: 'var(--color-muted)' }}>Đổi câu hỏi:</label>
-                  <select
-                    defaultValue=""
-                    onChange={(e) => {
-                      if (e.target.value) updateItem(item.id, { questionId: e.target.value });
-                    }}
-                    style={{ flex: 1, minWidth: 200, padding: '6px 8px', fontSize: 13, border: '1px solid var(--color-rule)', borderRadius: 6, background: 'var(--color-paper)', color: 'var(--color-ink)' }}
-                  >
-                    <option value="">— Chọn câu khác từ ngân hàng —</option>
-                    {bankQuestions
-                      .filter((bq) => bq.type === q.type)
-                      .map((bq) => (
-                        <option key={bq.id} value={bq.id}>
-                          {bq.code} — {bq.content.slice(0, 60)}
-                        </option>
-                      ))}
-                  </select>
+                  <QuestionPicker
+                    questions={bankQuestions}
+                    currentType={q.type}
+                    onPick={(qid) => updateItem(item.id, { questionId: qid })}
+                  />
                   <button
                     className="btn btn-danger"
                     style={{ width: 'auto', padding: '6px 12px', fontSize: 12 }}

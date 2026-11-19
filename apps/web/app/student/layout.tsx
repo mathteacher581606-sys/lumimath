@@ -7,6 +7,7 @@ import { getUser, logout } from '@/lib/api';
 import NotificationBell from '@/components/NotificationBell';
 import Logo from '@/components/Logo';
 import {
+  IconHome,
   IconBook,
   IconCompass,
   IconPen,
@@ -39,18 +40,22 @@ export default function StudentLayout({
     );
 
   const navItems = [
-    { href: '/student', label: 'Khóa học của tôi', icon: <IconBook /> },
+    // Tách riêng: Trang chủ (bảng điều khiển) và Khóa học của tôi (danh sách khóa đã đăng ký)
+    { href: '/student', label: 'Trang chủ', icon: <IconHome /> },
+    { href: '/student/my-courses', label: 'Khóa học của tôi', icon: <IconBook /> },
     { href: '/student/courses', label: 'Khám phá', icon: <IconCompass /> },
     { href: '/student/exams', label: 'Thi thử online', icon: <IconPen /> },
+    { href: '/student/practice', label: 'Phòng luyện đề', icon: <IconTrophy /> },
     { href: '/student/attempts', label: 'Lịch sử làm bài', icon: <IconHistory /> },
     { href: '/student/leaderboard', label: 'Bảng xếp hạng', icon: <IconTrophy /> },
     { href: '/settings', label: 'Cài đặt', icon: <IconSettings /> },
   ];
 
-  const isActive = (href: string) =>
-    href === '/student'
-      ? pathname === '/student'
-      : pathname === href || pathname.startsWith(href + '/');
+  // '/student' chỉ active khi ĐÚNG trang chủ (không lan sang các trang con)
+  const isActive = (href: string) => {
+    if (href === '/student') return pathname === '/student';
+    return pathname === href || pathname.startsWith(href + '/');
+  };
 
   return (
     <div className="app-shell">
@@ -65,9 +70,10 @@ export default function StudentLayout({
               key={item.href}
               href={item.href}
               className={`nav-link ${isActive(item.href) ? 'active' : ''}`}
+              title={item.label}
             >
               <span className="nav-icon">{item.icon}</span>
-              {item.label}
+              <span className="nav-label">{item.label}</span>
             </Link>
           ))}
         </nav>

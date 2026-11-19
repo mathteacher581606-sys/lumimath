@@ -42,37 +42,51 @@ const TYPE_BY_EXT: Record<string, string> = {
   svg: 'image/svg+xml',
 };
 
-// Nén ảnh > 1MB: thu nhỏ (cạnh dài tối đa 1280px) + chuyển JPEG với chất lượng giảm dần
+// Nén ảnh > 1MB: thu nhỏ (cạnh dài tối đa 1600px) + chuyển JPEG.
+//
+// LƯU Ý 1: @napi-rs/canvas dùng thang chất lượng 0–100 (KHÔNG phải 0–1 như canvas trình duyệt).
+//   Trước đây truyền 0.75 → JPEG gần như rỗng (≈13 KB) khiến ảnh bài làm bị vỡ hoàn toàn.
+// LƯU Ý 2: loadImage() của @napi-rs/canvas ĐÃ tự áp EXIF Orientation → KHÔNG xoay thêm,
+//   nếu không ảnh sẽ bị quay 2 lần.
 async function compressImage(
   buffer: Buffer,
   contentType: string,
 ): Promise<{ buffer: Buffer; ext: string; compressed: boolean }> {
   const type = contentType.split(';')[0].trim();
+  const ext = EXT_BY_TYPE[type] || 'png';
   if (buffer.length <= COMPRESS_THRESHOLD) {
-    return { buffer, ext: EXT_BY_TYPE[type] || 'png', compressed: false };
+    return { buffer, ext, compressed: false };
   }
   try {
     const img = await loadImage(buffer);
-    const maxDim = 1280;
-    let { width, height } = img;
+
+    const maxDim = 1600;
+    let width = img.width;
+    let height = img.height;
     if (Math.max(width, height) > maxDim) {
       const scale = maxDim / Math.max(width, height);
       width = Math.max(1, Math.round(width * scale));
       height = Math.max(1, Math.round(height * scale));
     }
+
     const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, width, height);
-    for (const quality of [0.75, 0.6, 0.5, 0.4]) {
+    canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+
+    // Thang 0–100; hạ dần cho tới khi < 1MB
+    for (const quality of [85, 75, 65, 55]) {
       const out = canvas.toBuffer('image/jpeg', quality);
-      if (out.length <= COMPRESS_THRESHOLD || quality === 0.4) {
+      // Chốt an toàn: bỏ kết quả nhỏ bất thường (ảnh rỗng/hỏng)
+      if (out.length < 8 * 1024) continue;
+      if (out.length <= COMPRESS_THRESHOLD) {
         return { buffer: out, ext: 'jpg', compressed: true };
       }
     }
+    // Không nén được mà vẫn giữ chất lượng → giữ ảnh gốc (thà nặng còn hơn hỏng)
+    return { buffer, ext, compressed: false };
   } catch (e) {
     // Không giải mã được (gif động, svg...) → giữ nguyên file gốc
+    return { buffer, ext, compressed: false };
   }
-  return { buffer, ext: EXT_BY_TYPE[type] || 'png', compressed: false };
 }
 
 @Controller('uploads')

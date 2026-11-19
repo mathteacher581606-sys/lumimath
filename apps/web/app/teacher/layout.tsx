@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { getUser, logout } from '@/lib/api';
+import { useMe } from '@/lib/use-me';
 import NotificationBell from '@/components/NotificationBell';
 import Logo from '@/components/Logo';
 import {
@@ -26,6 +27,8 @@ export default function TeacherLayout({
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
+  const me = useMe();
+  const assistantOnly = !!me?.assistantOnly;
 
   useEffect(() => {
     const u = getUser();
@@ -41,7 +44,7 @@ export default function TeacherLayout({
       <div style={{ padding: 40, textAlign: 'center' }}>Đang tải…</div>
     );
 
-  const navItems = [
+  const navItemsAll = [
     { href: '/teacher', label: 'Khóa học', icon: <IconBook /> },
     { href: '/teacher/classes', label: 'Điểm theo lớp', icon: <IconUsers /> },
     { href: '/teacher/bank', label: 'Ngân hàng đề', icon: <IconLibrary /> },
@@ -52,6 +55,18 @@ export default function TeacherLayout({
     { href: '/teacher/exams/import', label: 'Nhập đề thi', icon: <IconUpload /> },
     { href: '/settings', label: 'Cài đặt', icon: <IconSettings /> },
   ];
+
+  // Trợ giảng thuần: chỉ thao tác trong khóa học được giao → ẩn ngân hàng đề + công cụ đề thi
+  const assistantBlocked = new Set([
+    '/teacher/bank',
+    '/teacher/exams',
+    '/teacher/exams/matrix',
+    '/teacher/exams/compose',
+    '/teacher/exams/import',
+  ]);
+  const navItems = assistantOnly
+    ? navItemsAll.filter((it) => !assistantBlocked.has(it.href))
+    : navItemsAll;
 
   const isActive = (href: string) =>
     href === '/teacher'
@@ -71,9 +86,10 @@ export default function TeacherLayout({
               key={item.href}
               href={item.href}
               className={`nav-link ${isActive(item.href) ? 'active' : ''}`}
+              title={item.label}
             >
               <span className="nav-icon">{item.icon}</span>
-              {item.label}
+              <span className="nav-label">{item.label}</span>
             </Link>
           ))}
         </nav>

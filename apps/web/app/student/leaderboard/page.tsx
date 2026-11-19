@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch, getUser } from '@/lib/api';
+import { SkeletonRows } from '@/components/Skeleton';
 
 export default function LeaderboardPage() {
   const [tab, setTab] = useState<'rank' | 'achievements'>('rank');
@@ -32,7 +33,13 @@ export default function LeaderboardPage() {
     }
   }
 
-  if (loading) return <div className="page-container">Đang tải…</div>;
+  if (loading)
+    return (
+      <div className="page-container">
+        <h1 className="page-title">Bảng xếp hạng</h1>
+        <SkeletonRows count={8} />
+      </div>
+    );
 
   return (
     <div className="page-container">

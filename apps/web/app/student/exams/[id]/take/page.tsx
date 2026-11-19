@@ -30,6 +30,18 @@ export default function TakeExam() {
   const answersRef = useRef<any>({});
   // Chấm ngay từng câu (chế độ luyện tập / xem đáp án từng câu)
   const [checks, setChecks] = useState<Record<string, any>>({});
+  // Phòng thi: câu đang xem + câu đánh dấu (flag)
+  const [current, setCurrent] = useState(0);
+  const [marked, setMarked] = useState<Set<string>>(new Set());
+
+  function toggleMark(itemId: string) {
+    setMarked((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }
 
   answersRef.current = answers;
 
@@ -195,6 +207,19 @@ export default function TakeExam() {
     checkItem(itemId, value);
   }
 
+  // Trắc nghiệm NHIỀU đáp án: bật/tắt một lựa chọn (mảng)
+  function toggleMulti(itemId: string, optId: string) {
+    const cur: string[] = Array.isArray(answers[itemId])
+      ? answers[itemId]
+      : answers[itemId]
+        ? [answers[itemId]]
+        : [];
+    const next = cur.includes(optId)
+      ? cur.filter((x) => x !== optId)
+      : [...cur, optId];
+    setAnswer(itemId, next);
+  }
+
   function setTrueFalse(itemId: string, key: string, value: boolean) {
     setAnswers((prev: any) => {
       const current = { ...(prev[itemId] || {}) };
@@ -258,6 +283,14 @@ export default function TakeExam() {
         }),
       });
       setResult(data);
+
+      // ===== TỰ ĐỘNG NỘP ĐIỂM vào bài tập (nếu đề được giao trong khóa học) =====
+      // Học sinh không cần bấm "Nộp kết quả" nữa — điểm tự đồng bộ lên web.
+      try {
+        await apiFetch(`/exam-assignments/${examId}/sync`, { method: 'POST' });
+      } catch (e) {
+        /* đề không thuộc bài giao nào → bỏ qua */
+      }
     } catch (e: any) {
       alert(e.message);
       submittedRef.current = false;
@@ -265,6 +298,41 @@ export default function TakeExam() {
       setSubmitting(false);
     }
   }
+
+  // ===== TỰ ĐỘNG NỘP BÀI khi học sinh THỰC SỰ thoát ra (đóng tab / rời trang) =====
+  // KHÔNG nộp khi chỉ chuyển tab (học sinh thường mở máy tính/ghi chú) — tránh nộp non.
+  useEffect(() => {
+    if (!exam || result) return;
+    const token = localStorage.getItem('token');
+    const submitNow = () => {
+      if (submittedRef.current || result) return;
+      submittedRef.current = true;
+      const timeSpent = Math.round((Date.now() - startTimeRef.current) / 1000);
+      const body = JSON.stringify({
+        attemptId: exam.attemptId,
+        answers: answersRef.current,
+        timeSpent,
+      });
+      try {
+        fetch(`/api/exams/${examId}/submit`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body,
+          keepalive: true,
+        });
+      } catch (e) {
+        /* bỏ qua — đã có autosave */
+      }
+    };
+    window.addEventListener('beforeunload', submitNow);
+    return () => {
+      window.removeEventListener('beforeunload', submitNow);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exam, result, examId]);
 
   function formatTime(sec: number): string {
     const m = Math.floor(sec / 60);
@@ -480,7 +548,7 @@ export default function TakeExam() {
             <p>
               {exam?.oneTimeResults
                 ? 'Đáp án của đề này chỉ được xem đúng 1 lần — bạn đã xem rồi.'
-                : 'Đáp án đã bị khóa (giáo viên đặt thời hạn hoặc chưa đến thời gian công bố).'}
+                : 'Đáp án đang bị khóa: chưa đạt điểm tối thiểu để xem đáp án, hoặc giáo viên đặt thời hạn công bố.'}
             </p>
           </div>
         ) : (
@@ -622,16 +690,25 @@ export default function TakeExam() {
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
+          {/* Đồng hồ thi: chữ số đều (tabular-nums) + đổi màu theo mốc thời gian */}
           <div
+            className={timeLeft < 60 ? 'exam-timer is-danger' : timeLeft < 300 ? 'exam-timer is-warn' : 'exam-timer'}
             style={{
-              fontSize: 22,
+              fontSize: 24,
               fontWeight: 800,
-              color: timeLeft < 60 ? '#dc2626' : '#4f46e5',
-              fontFamily: 'monospace',
+              color: timeLeft < 60 ? '#dc2626' : timeLeft < 300 ? '#d97706' : '#4f46e5',
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '0.01em',
             }}
+            aria-live="off"
           >
             ⏱ {formatTime(timeLeft)}
           </div>
+          {timeLeft > 0 && timeLeft < 300 && (
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: timeLeft < 60 ? '#dc2626' : '#d97706' }}>
+              {timeLeft < 60 ? 'Sắp hết giờ!' : 'Còn dưới 5 phút'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -654,15 +731,102 @@ export default function TakeExam() {
         </div>
       )}
 
+      {/* Bảng điều hướng câu hỏi (phòng thi) */}
+      <div
+        style={{
+          position: 'fixed',
+          right: 16,
+          top: 88,
+          width: 192,
+          zIndex: 50,
+          background: 'var(--color-paper)',
+          border: '1px solid var(--color-rule)',
+          borderRadius: 12,
+          padding: 12,
+          boxShadow: '0 6px 20px rgba(0,0,0,0.14)',
+          maxHeight: '70vh',
+          overflow: 'auto',
+        }}
+      >
+        <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 8 }}>📋 Điều hướng câu hỏi</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 5 }}>
+          {exam.questions.map((qq: any, i: number) => {
+            const a = answers[qq.itemId];
+            const done =
+              a !== undefined &&
+              a !== '' &&
+              !(Array.isArray(a) && a.length === 0);
+            const isMarked = marked.has(qq.itemId);
+            return (
+              <button
+                key={qq.itemId}
+                type="button"
+                onClick={() => {
+                  setCurrent(i);
+                  document
+                    .getElementById(`q-${qq.itemId}`)
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+                title={`Câu ${i + 1}${isMarked ? ' (đã đánh dấu)' : ''}`}
+                style={{
+                  height: 30,
+                  borderRadius: 6,
+                  border: current === i ? '2px solid var(--lm-maroon)' : '1px solid var(--color-rule)',
+                  background: done ? 'var(--color-success)' : isMarked ? 'var(--lm-amber)' : '#fff',
+                  color: done || isMarked ? '#fff' : 'var(--color-ink)',
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {i + 1}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--color-muted)', lineHeight: 1.6 }}>
+          {(() => {
+            const done = exam.questions.filter((qq: any) => {
+              const a = answers[qq.itemId];
+              return a !== undefined && a !== '' && !(Array.isArray(a) && a.length === 0);
+            }).length;
+            return (
+              <>
+                {done}/{exam.questions.length} đã trả lời
+                <br />🚩 {marked.size} đánh dấu
+              </>
+            );
+          })()}
+        </div>
+      </div>
+
       {/* Câu hỏi */}
       {exam.questions.map((q: any, idx: number) => (
-        <div key={q.itemId} className="card" style={{ marginBottom: 16, padding: 20 }}>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <div key={q.itemId} id={`q-${q.itemId}`} className="card" style={{ marginBottom: 16, padding: 20 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="badge badge-accent">Câu {idx + 1}</span>
             <span className="badge">{PART_LABEL[q.part] || 'Phần'}</span>
             <span className="mono" style={{ fontSize: 12, color: 'var(--color-muted)', alignSelf: 'center' }}>
               +{q.score} điểm
             </span>
+            <button
+              type="button"
+              onClick={() => toggleMark(q.itemId)}
+              title="Đánh dấu câu này để xem lại"
+              style={{
+                marginLeft: 'auto',
+                border: '1px solid var(--color-rule)',
+                background: marked.has(q.itemId) ? 'var(--lm-amber)' : 'transparent',
+                color: marked.has(q.itemId) ? '#fff' : 'var(--color-muted)',
+                borderRadius: 8,
+                padding: '4px 10px',
+                fontSize: 12.5,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              🚩 {marked.has(q.itemId) ? 'Đã đánh dấu' : 'Đánh dấu'}
+            </button>
           </div>
 
           <div style={{ marginBottom: 12 }}>
@@ -832,6 +996,46 @@ export default function TakeExam() {
                 fontSize: 15,
               }}
             />
+          )}
+
+          {q.type === 'MULTI_ANSWER' && q.options && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <p style={{ fontSize: 12, color: 'var(--color-muted)', margin: 0 }}>
+                ☑️ Chọn TẤT CẢ các đáp án đúng (có thể chọn nhiều)
+              </p>
+              {q.options.map((opt: any) => {
+                const selected = Array.isArray(answers[q.itemId])
+                  ? answers[q.itemId].includes(opt.id)
+                  : answers[q.itemId] === opt.id;
+                return (
+                  <label
+                    key={opt.id}
+                    style={{
+                      display: 'flex',
+                      gap: 10,
+                      alignItems: 'flex-start',
+                      padding: '10px 14px',
+                      border: '1.5px solid var(--color-rule)',
+                      borderRadius: 10,
+                      cursor: 'pointer',
+                      background: selected
+                        ? 'color-mix(in oklch, var(--color-accent) 12%, var(--color-paper))'
+                        : 'transparent',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleMulti(q.itemId, opt.id)}
+                      style={{ marginTop: 4 }}
+                    />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <strong>{opt.id}.</strong> <LatexRenderer content={opt.text} />
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
           )}
 
           {q.type === 'ESSAY' && (

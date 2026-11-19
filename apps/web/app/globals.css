@@ -1012,6 +1012,18 @@ li {
   margin-top: 2px;
 }
 
+/* Nút viền trong band đỏ đô: nền sáng + chữ đậm để dễ nhìn */
+.lm-band .btn-outline {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  border-color: var(--color-rule);
+  font-weight: 700;
+}
+
+.lm-band .btn-outline:hover {
+  background: #fff;
+}
+
 /* Ô thống kê nhỏ trong thanh tiêu đề */
 .lm-stat {
   background: rgba(255, 255, 255, 0.12);
@@ -1705,4 +1717,826 @@ label,
   .page-title {
     font-size: 22px;
   }
+}
+
+/* ============================================================
+   TỐI ƯU ĐIỆN THOẠI / IPAD / MÁY TÍNH BẢNG (không đổi thiết kế)
+   ============================================================ */
+
+/* ---------- Máy tính bảng (769px – 1100px) ---------- */
+@media (min-width: 769px) and (max-width: 1100px) {
+  .main-content {
+    padding: 28px 24px;
+  }
+  .lm-detail {
+    width: min(860px, 100%);
+  }
+}
+
+/* ---------- Điện thoại (≤ 768px) ---------- */
+@media (max-width: 768px) {
+  /* Chặn cuộn ngang toàn trang do bảng/ảnh/công thức tràn */
+  html,
+  body {
+    overflow-x: hidden;
+  }
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+  table {
+    max-width: 100%;
+  }
+  /* Cho phép cuộn ngang TRONG vùng chứa bảng (nếu trình duyệt hỗ trợ :has) */
+  :has(> table) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Vùng chạm tối thiểu ~44px cho nút/liên kết chính (không đụng icon nhỏ) */
+  .btn,
+  .btn-lm,
+  .btn-outline,
+  .lm-filter-btn,
+  .lm-tree-row,
+  .chip,
+  .lm-stats-pill,
+  .sidebar .nav-link {
+    min-height: 44px;
+  }
+
+  /* Modal chi tiết → toàn màn hình */
+  .lm-detail-backdrop {
+    padding: 0;
+  }
+  .lm-detail {
+    width: 100%;
+    max-height: 100vh;
+    height: 100vh;
+    border-radius: 0;
+  }
+
+  /* Header band xuống dòng, không tràn ngang */
+  .lm-band {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 14px;
+  }
+  .lm-band h2 {
+    font-size: 18px;
+  }
+  /* Nhóm nút trong band: xuống dòng, chia đều, không tràn */
+  .lm-band > div:last-child {
+    width: 100%;
+    flex-shrink: 1 !important;
+    min-width: 0;
+  }
+  .lm-band > div:last-child > .btn-lm,
+  .lm-band > div:last-child > .btn-outline,
+  .lm-band > div:last-child > .btn,
+  .lm-band > div:last-child > a,
+  .lm-band > div:last-child > button {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
+  }
+  /* Sidebar thu về icon cho gọn màn hình điện thoại */
+  .sidebar {
+    width: 58px;
+    padding: 16px 6px;
+  }
+  .sidebar .nav-label {
+    display: none;
+  }
+  .sidebar .nav-link {
+    justify-content: center;
+    padding: 10px 4px;
+    gap: 0;
+  }
+  .sidebar .brand {
+    display: none;
+  }
+  .sidebar .nav-link.active::before {
+    display: none;
+  }
+  .main-content {
+    padding: 16px 12px;
+  }
+
+  /* Bảng thống kê (ngân hàng đề) co gọn */
+  .lm-stats-table {
+    flex-direction: column;
+  }
+  .lm-stats-row {
+    flex-wrap: wrap;
+  }
+
+  /* Khối chi tiết: chân/bố cục xuống dòng */
+  .lm-detail-foot {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+}
+
+
+/* =========================================================
+   THANH HÀNH ĐỘNG LỚN TRONG TRANG KHÓA HỌC (học sinh)
+   Nút BÀI TẬP nổi bật dưới banner + badge số bài chưa nộp
+   ========================================================= */
+.lm-course-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.lm-cta-assignments {
+  flex: 1 1 380px;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-radius: 14px;
+  text-decoration: none;
+  color: #3b2200;
+  background: linear-gradient(135deg, #fbe1a0 0%, #f0b355 55%, #e79a2b 100%);
+  border: 1px solid #d98f22;
+  box-shadow: 0 8px 22px rgba(231, 154, 43, 0.32);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.lm-cta-assignments:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px rgba(231, 154, 43, 0.42);
+}
+.lm-cta-icon {
+  font-size: 30px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.lm-cta-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.lm-cta-text b {
+  font-size: 17px;
+  letter-spacing: 0.06em;
+  color: #5a2d00;
+}
+.lm-cta-text small {
+  font-size: 12.5px;
+  color: #7a4a10;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lm-cta-badge {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #b91c1c;
+  color: #fff;
+  font-weight: 900;
+  font-size: 15px;
+  flex-shrink: 0;
+  box-shadow: 0 3px 10px rgba(185, 28, 28, 0.45);
+}
+.lm-cta-arrow {
+  font-size: 22px;
+  font-weight: 900;
+  color: #5a2d00;
+  flex-shrink: 0;
+}
+
+.lm-cta-news {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
+  min-height: 64px;
+  border-radius: 14px;
+  text-decoration: none;
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--lm-maroon, #7b1113);
+  background: #fff;
+  border: 2px solid var(--lm-maroon, #7b1113);
+  transition: background 0.12s ease, color 0.12s ease;
+  flex: 0 0 auto;
+}
+.lm-cta-news:hover {
+  background: var(--lm-maroon, #7b1113);
+  color: #fff;
+}
+
+@media (max-width: 768px) {
+  .lm-course-actions {
+    flex-direction: column;
+  }
+  .lm-cta-assignments {
+    flex: 1 1 auto;
+    min-height: 68px;
+  }
+  .lm-cta-news {
+    min-height: 46px;
+  }
+  .lm-cta-text b {
+    font-size: 16px;
+  }
+}
+
+
+/* =========================================================
+   GIAO DIỆN NỘP BÀI (học sinh): thông tin lớn, ảnh cỡ lớn,
+   nút đổi thứ tự ảnh ◀ ▶, nút "Nộp bài" to rõ
+   ========================================================= */
+.lm-sub-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: #faf7f1;
+  border: 1px solid var(--color-rule, #eee3cf);
+  border-radius: 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.lm-sub-meta b {
+  font-weight: 800;
+  color: var(--color-ink, #2a2118);
+}
+.lm-sub-ico {
+  display: inline-block;
+  width: 22px;
+  opacity: 0.85;
+}
+
+.lm-sub-imgs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin: 12px 0 14px;
+}
+.lm-sub-img-card {
+  border: 1px solid var(--color-rule, #e5dcc9);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+.lm-sub-img-card img {
+  display: block;
+  width: 100%;
+  height: 220px;
+  object-fit: contain;
+}
+.lm-sub-img-del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: #dc2626;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+.lm-sub-img-no {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.lm-sub-img-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--color-rule, #e5dcc9);
+  background: #f7f5f0;
+}
+.lm-sub-img-bar button {
+  flex: 0 0 46px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--lm-maroon, #7b1113);
+  cursor: pointer;
+}
+.lm-sub-img-bar button:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+.lm-sub-img-bar span {
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--color-muted, #7a6a55);
+}
+
+.lm-sub-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 34px 16px;
+  margin-top: 10px;
+  border: 2px dashed #cfc3ab;
+  border-radius: 12px;
+  background: #fcfbf8;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.lm-sub-drop:hover {
+  border-color: var(--lm-maroon, #7b1113);
+  background: #fff8ee;
+}
+.lm-sub-drop-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--color-accent, #1d4ed8);
+}
+.lm-sub-drop-hint {
+  font-size: 12.5px;
+  color: var(--color-muted, #7a6a55);
+}
+
+.lm-submit-big {
+  min-width: 210px;
+  padding: 14px 44px;
+  border: none;
+  border-radius: 10px;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(29, 78, 216, 0.35);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.lm-submit-big:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 9px 22px rgba(29, 78, 216, 0.45);
+}
+.lm-submit-big:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .lm-sub-imgs {
+    grid-template-columns: 1fr;
+  }
+  .lm-sub-img-card img {
+    height: 190px;
+  }
+  .lm-submit-big {
+    width: 100%;
+  }
+}
+
+
+/* ==========================================================================
+   LUMIMATH — MOTION & POLISH (Giai đoạn 0 + 1 + 2)
+   Nguồn: Emil Kowalski (design engineering) · Impeccable (craft floor)
+   Nguyên tắc: chỉ animate transform/opacity · UI < 300ms · ease-out · tôn trọng
+   prefers-reduced-motion · mobile-native
+   ========================================================================== */
+
+:root {
+  /* Easing tuỳ chỉnh — easing mặc định của CSS quá yếu */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Thời lượng */
+  --dur-press: 120ms;
+  --dur-pop: 180ms;
+  --dur-modal: 240ms;
+
+  /* Độ sâu — shadow có offset + blur mềm (không dùng halo offset 0) */
+  --shadow-1: 0 1px 2px rgba(43, 26, 20, 0.06), 0 1px 1px rgba(43, 26, 20, 0.04);
+  --shadow-2: 0 2px 6px rgba(43, 26, 20, 0.08), 0 1px 2px rgba(43, 26, 20, 0.05);
+  --shadow-3: 0 10px 30px rgba(43, 26, 20, 0.14), 0 2px 8px rgba(43, 26, 20, 0.06);
+  --shadow-4: 0 24px 60px rgba(43, 26, 20, 0.22), 0 4px 12px rgba(43, 26, 20, 0.08);
+
+  --ring: 2px;
+}
+
+/* ---------- 0. Tôn trọng người dùng giảm chuyển động ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100dvh;
+  /* Số liệu trong app (điểm, XP, đếm ngược) không được nhảy khi đổi giá trị */
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 1. Trạng thái tương tác ---------- */
+
+/* Nhấn phải có phản hồi tức thì */
+button,
+.nav-link,
+.btn,
+.btn-lm,
+.lm-filter-btn,
+.course-card,
+a.btn,
+a.btn-lm {
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    box-shadow var(--dur-pop) var(--ease-out),
+    background-color var(--dur-pop) var(--ease-out),
+    border-color var(--dur-pop) var(--ease-out),
+    color var(--dur-pop) var(--ease-out);
+  touch-action: manipulation;
+}
+
+button:not([disabled]):active,
+.nav-link:active,
+.btn:not([disabled]):active,
+.btn-lm:not([disabled]):active,
+.lm-filter-btn:not([disabled]):active,
+.course-card:active {
+  transform: scale(0.97);
+}
+
+/* Vòng focus rõ ràng cho điều hướng bàn phím */
+:focus-visible {
+  outline: var(--ring) solid var(--color-focus, #7b1113);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.btn:focus-visible,
+.btn-lm:focus-visible,
+button:focus-visible {
+  outline: var(--ring) solid var(--color-focus, #7b1113);
+  outline-offset: 2px;
+}
+
+/* Chỉ dùng hiệu ứng nâng khi thiết bị CÓ chuột (tránh sticky hover trên mobile) */
+@media (hover: hover) and (pointer: fine) {
+  .course-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-3);
+  }
+  tbody tr:hover {
+    background: color-mix(in oklch, var(--color-accent) 5%, transparent);
+  }
+}
+
+@media (hover: none) {
+  .course-card:hover {
+    transform: none;
+  }
+}
+
+/* ---------- 2. Browser surfaces (thứ AI hay bỏ quên) ---------- */
+
+::selection {
+  background: color-mix(in oklch, var(--color-accent, #7b1113) 22%, transparent);
+  color: var(--color-ink, #2b1a14);
+}
+
+textarea,
+input,
+select {
+  caret-color: var(--color-accent, #7b1113);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--color-rule, #e7dcc9) 92%, transparent) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--color-rule, #e7dcc9) 88%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklch, var(--color-neutral, #8a7a68) 55%, transparent);
+  background-clip: content-box;
+}
+
+a {
+  text-underline-offset: 2px;
+}
+
+/* ---------- 3. Kiểu chữ ---------- */
+
+h1,
+h2,
+h3,
+.page-title {
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+h1 {
+  text-wrap: balance;
+}
+
+/* Đoạn văn nội dung dài: không quá ~70 ký tự/dòng cho dễ đọc */
+.prose p,
+.lm-detail-body > p {
+  max-width: 70ch;
+}
+
+/* ---------- 4. Số liệu ---------- */
+
+.tnum,
+.mono,
+time,
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 5. Skeleton (thay "Đang tải…") ---------- */
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in oklch, var(--color-rule, #e7dcc9) 45%, var(--color-paper, #fffdf7));
+  border-radius: 8px;
+  color: transparent !important;
+  user-select: none;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, #fff 65%, transparent),
+    transparent
+  );
+  animation: skeleton-sweep 1.2s var(--ease-in-out) infinite;
+}
+@keyframes skeleton-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+.skeleton-line {
+  height: 12px;
+  margin-bottom: 8px;
+}
+.skeleton-line:last-child {
+  width: 62%;
+}
+
+/* ---------- 6. Modal / backdrop / toast (occasional → được animate) ---------- */
+
+.lm-detail-backdrop {
+  animation: backdrop-in var(--dur-pop) var(--ease-out) both;
+}
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.lm-detail {
+  animation: modal-in var(--dur-modal) var(--ease-out) both;
+}
+/* Không animate từ scale(0) — bắt đầu 0.985 + opacity */
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+.toast {
+  animation: toast-in var(--dur-pop) var(--ease-out) both;
+  box-shadow: var(--shadow-3);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}
+
+/* ---------- 7. Mobile-native ---------- */
+
+/* iOS tự zoom khi focus input có font < 16px → chặn bằng 16px trên mobile */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  /* Chừa chỗ cho tai thỏ / thanh gợi ý ở đáy */
+  .lm-submit-big,
+  .lm-detail-foot {
+    margin-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* Thanh hành động dính đáy trên điện thoại (nộp bài / lưu) */
+@media (max-width: 640px) {
+  .lm-sticky-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 40;
+    background: color-mix(in oklch, var(--color-paper, #fffdf7) 92%, transparent);
+    backdrop-filter: blur(8px);
+    border-top: 1px solid var(--color-rule, #e7dcc9);
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    margin: 0 -16px -16px;
+  }
+}
+
+/* Nút/ô bấm nhỏ vẫn đủ 44px vùng chạm trên mobile */
+@media (max-width: 640px) {
+  .nav-link,
+  .btn,
+  .btn-lm {
+    min-height: 44px;
+  }
+}
+
+
+/* ---------- 8. Trạng thái focus cho ô nhập liệu + chống tràn ngang ---------- */
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-focus, #7b1113);
+  outline-offset: 1px;
+  border-color: var(--color-focus, #7b1113);
+}
+
+/* Ảnh/bảng không được đẩy trang rộng ra (chống cuộn ngang ở 360px) */
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+}
+
+table {
+  max-width: 100%;
+}
+
+pre,
+code {
+  overflow-x: auto;
+}
+
+/* Khối nội dung dài: cho phép xuống dòng thay vì tràn */
+.lm-detail-body,
+.card,
+.lm-desc {
+  min-width: 0;
+}
+
+/* ---------- 9. Skeleton cho bảng danh sách ---------- */
+
+.skeleton-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skeleton-table .skeleton {
+  height: 44px;
+  border-radius: 8px;
+}
+
+/* ---------- 10. Tôn trọng người dùng giảm chuyển động (bổ sung) ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none !important;
+    content: none !important;
+  }
+  .lm-detail,
+  .lm-detail-backdrop,
+  .toast {
+    animation: none !important;
+  }
+}
+
+
+/* ---------- 11. Bảng dữ liệu (ngân hàng đề, điểm, submissions) ---------- */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+thead th {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: left;
+}
+
+td,
+th {
+  overflow-wrap: anywhere;
+}
+
+tbody td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sọc xen kẽ nhẹ — chỉ áp khi ô không có nền riêng (inline style vẫn thắng) */
+tbody tr:nth-child(even) {
+  background: color-mix(in oklch, var(--color-paper-2, #faf6ec) 55%, transparent);
+}
+
+/* Vùng cuộn bảng: header dính trên cùng khi cuộn dọc */
+.lm-table-scroll {
+  max-height: 70vh;
+  overflow: auto;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+.lm-table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-paper, #fffdf7);
+  box-shadow: inset 0 -1px 0 var(--color-rule, #e7dcc9);
+}
+
+
+/* ---------- 12. Bảng Ma trận: cuộn ngang trên màn hẹp ---------- */
+/* Lưới cột cố định (44+118+96+160+140+46 = 604px + 2 cột co giãn) không thể
+   nhồi vào 360px → cho cuộn ngang thay vì cắt mất nội dung. */
+@media (max-width: 900px) {
+  .matrix-scroll {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  .matrix-scroll > div {
+    min-width: 900px;
+  }
+  /* Gợi ý có thể cuộn: bóng mờ ở mép phải */
+  .matrix-scroll {
+    background-image: linear-gradient(to left, rgba(0, 0, 0, 0.06), transparent 24px);
+    background-repeat: no-repeat;
+    background-position: right center;
+    background-size: 24px 100%;
+  }
+}
+
+
+/* ---------- 13. Bảng dài: header dính khi cuộn trang ---------- */
+.lm-table-sticky thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--color-paper, #fffdf7);
+  box-shadow: inset 0 -1px 0 var(--color-rule, #e7dcc9);
 }

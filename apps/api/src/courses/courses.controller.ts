@@ -8,6 +8,7 @@ import {
   Post,
   Put,
   Query,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
@@ -110,6 +111,56 @@ export class CoursesController {
     @CurrentUser() user: any,
   ) {
     return this.coursesService.removeLesson(lessonId, user.id);
+  }
+
+  // ============ CHƯƠNG (sửa tên + sắp xếp lại thứ tự) ============
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Patch(':courseId/chapters/rename')
+  renameChapter(
+    @Param('courseId') courseId: string,
+    @CurrentUser() user: any,
+    @Body() body: { oldTitle?: string; newTitle?: string },
+  ) {
+    return this.coursesService.renameChapter(
+      courseId,
+      user.id,
+      body?.oldTitle || '',
+      body?.newTitle || '',
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post(':courseId/chapters/reorder')
+  reorderChapters(
+    @Param('courseId') courseId: string,
+    @CurrentUser() user: any,
+    @Body() body: { order?: string[] },
+  ) {
+    return this.coursesService.reorderChapters(
+      courseId,
+      user.id,
+      Array.isArray(body?.order) ? body!.order : [],
+    );
+  }
+
+  // Sao chép bài giảng từ khóa học khác vào khóa học này
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post(':courseId/copy-lessons')
+  copyLessons(
+    @Param('courseId') courseId: string,
+    @CurrentUser() user: any,
+    @Body() body: any,
+  ) {
+    return this.coursesService.copyLessons(
+      courseId,
+      user.id,
+      body?.sourceCourseId,
+      Array.isArray(body?.lessonIds) ? body.lessonIds : [],
+    );
   }
 
   // ============ ĐĂNG KÝ ============
@@ -274,6 +325,77 @@ export class CoursesController {
     return this.coursesService.listStudents(courseId, user.id);
   }
 
+  // Tải file mẫu nhập học sinh bằng Excel
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get(':courseId/import-students/template')
+  importStudentsTemplate(@Res() res: Response) {
+    const buffer = this.coursesService.importStudentsTemplateBuffer();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent('mau-nhap-hoc-sinh-khoa-hoc.xlsx')}`,
+    );
+    res.send(buffer);
+  }
+
+  // Nhập học sinh vào khóa học từ file Excel (.xlsx)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post(':courseId/import-students')
+  async importStudents(
+    @Param('courseId') courseId: string,
+    @CurrentUser() user: any,
+    @Req() req: any,
+  ) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return this.coursesService.importStudents(
+      courseId,
+      user.id,
+      Buffer.concat(chunks),
+    );
+  }
+
+  // ============ TRỢ GIẢNG (chỉ chủ khóa học quản lý) ============
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get(':courseId/assistants')
+  listAssistants(
+    @Param('courseId') courseId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.coursesService.listAssistants(courseId, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post(':courseId/assistants')
+  addAssistant(
+    @Param('courseId') courseId: string,
+    @CurrentUser() user: any,
+    @Body() body: any,
+  ) {
+    return this.coursesService.addAssistant(courseId, user.id, body?.email || '');
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Delete(':courseId/assistants/:assistantId')
+  removeAssistant(
+    @Param('courseId') courseId: string,
+    @Param('assistantId') assistantId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.coursesService.removeAssistant(courseId, user.id, assistantId);
+  }
+
   // Gỡ học sinh khỏi khóa học
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)
@@ -284,6 +406,19 @@ export class CoursesController {
     @CurrentUser() user: any,
   ) {
     return this.coursesService.removeStudent(courseId, user.id, studentId);
+  }
+
+  // Sửa thông tin tài khoản học sinh đã đăng ký khóa học
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Patch(':courseId/students/:studentId')
+  updateStudent(
+    @Param('courseId') courseId: string,
+    @Param('studentId') studentId: string,
+    @CurrentUser() user: any,
+    @Body() body: any,
+  ) {
+    return this.coursesService.updateStudent(courseId, user.id, studentId, body);
   }
 
   // Bảng điểm khóa học (giáo viên)

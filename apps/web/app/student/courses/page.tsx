@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
+import { SkeletonCards } from '@/components/Skeleton';
 
 const COVERS = ['📐', '📈', '🧮', '📊', '🔢', '✏️', '📏', '➗'];
 
@@ -67,7 +68,7 @@ export default function BrowseCourses() {
       <h1 className="page-title">Khám phá khóa học</h1>
 
       {loading ? (
-        <p>Đang tải...</p>
+        <SkeletonCards count={6} height={168} />
       ) : courses.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 48, color: 'var(--color-muted)' }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>🔍</div>

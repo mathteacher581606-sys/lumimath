@@ -15,6 +15,7 @@ import { AiService } from '../ai/ai.service';
 import { MailService } from '../mail/mail.service';
 import { CreateExamDto } from './dto/create-exam.dto';
 import { buildTablePdf, buildXlsx, escapeTex, safeFilename } from '../common/export.helper';
+import { fixFromLog, normalizeTex, texToPlainText } from '../common/tex-autofix';
 import * as XLSX from 'xlsx';
 
 // Thư mục lưu cache ảnh TikZ (dùng chung cho mọi người dùng, sống sót qua restart)
@@ -23,10 +24,38 @@ const TIKZ_DIR = path.join(process.cwd(), 'storage', 'tikz');
 // Trích các block tikz/tkz-tab VÀ bảng tabular từ nội dung câu hỏi
 export function extractTikzBlocks(text: string): string[] {
   const blocks: string[] = [];
+  // tikzpicture: khớp CÂN BẰNG (chịu lồng nhau, ví dụ \def\pica{\begin{tikzpicture}...})
+  const t = text || '';
+  const BEGIN = '\\begin{tikzpicture}';
+  const END = '\\end{tikzpicture}';
+  let idx = 0;
+  while ((idx = t.indexOf(BEGIN, idx)) !== -1) {
+    let depth = 1;
+    let pos = idx + BEGIN.length;
+    while (depth > 0) {
+      const nb = t.indexOf(BEGIN, pos);
+      const ne = t.indexOf(END, pos);
+      if (ne === -1) break;
+      if (nb !== -1 && nb < ne) {
+        depth++;
+        pos = nb + BEGIN.length;
+      } else {
+        depth--;
+        pos = ne + END.length;
+      }
+    }
+    if (depth === 0) {
+      blocks.push(t.slice(idx, pos));
+      idx = pos;
+    } else {
+      idx = idx + BEGIN.length;
+    }
+  }
+  // tabular (không lồng) + các biến thể tikz* còn lại
   const regex =
-    /\\begin\{(?:tikz[a-zA-Z]*|tabular)\}(\[[^\]]*\])?[\s\S]*?\\end\{(?:tikz[a-zA-Z]*|tabular)\}/g;
+    /\\begin\{(tabular|tikzcd|tikzto\w*)\}(\[[^\]]*\])?[\s\S]*?\\end\{\1\}/g;
   let m: RegExpExecArray | null;
-  while ((m = regex.exec(text || '')) !== null) {
+  while ((m = regex.exec(t)) !== null) {
     blocks.push(m[0]);
   }
   return blocks;
@@ -267,7 +296,18 @@ export class ExamsService {
     };
   }
 
+  // Trợ giảng thuần: chỉ thao tác trong khóa được giao → không dùng kho đề thi
+  private async isAssistantOnly(userId: string): Promise<boolean> {
+    const owned = await this.prisma.course.count({ where: { teacherId: userId } });
+    if (owned > 0) return false;
+    const assisted = await this.prisma.courseAssistant.count({ where: { userId } });
+    return assisted > 0;
+  }
+
   async create(teacherId: string, dto: CreateExamDto) {
+    if (await this.isAssistantOnly(teacherId)) {
+      throw new ForbiddenException('Trợ giảng không được tạo đề thi');
+    }
     const bank = await this.getBank(teacherId);
     const parts: any[] = dto.matrix?.parts || [];
 
@@ -622,6 +662,8 @@ export class ExamsService {
   }
 
   async findAll(teacherId: string, query?: any) {
+    // Trợ giảng không có kho đề riêng → trả rỗng (không chặn để trang không lỗi)
+    if (await this.isAssistantOnly(teacherId)) return [];
     const where: any = {
       teacherId,
       // Ẩn đề luyện tập do học sinh tự tạo (không phải đề của giáo viên)
@@ -874,13 +916,29 @@ export class ExamsService {
     lines.push('\\usepackage{amsmath}');
     lines.push('\\usepackage{amssymb}');
     lines.push('\\usepackage{amsfonts}');
+    lines.push('\\usepackage{mathtools}');
+    lines.push('\\usepackage{siunitx}');
+    lines.push('\\usepackage{cancel}');
+    lines.push('\\usepackage{empheq}');
+    lines.push('\\usepackage{systeme}');
     lines.push('\\usepackage{tikz}');
+    lines.push('\\usepackage{pgfplots}');
+    lines.push('\\pgfplotsset{compat=1.16}');
     lines.push(
-      '\\usetikzlibrary{arrows.meta,calc,patterns,decorations.pathreplacing,decorations.markings,angles,quotes,shapes.geometric,intersections}',
+      '\\usetikzlibrary{arrows.meta,calc,patterns,patterns.meta,decorations.pathreplacing,decorations.markings,decorations.pathmorphing,decorations.shapes,decorations.text,decorations.fractals,decorations.footprints,angles,quotes,shapes,shapes.geometric,shapes.misc,shapes.symbols,shapes.arrows,shapes.multipart,positioning,fit,matrix,chains,scopes,through,backgrounds,fadings,shadows,mindmap,trees,plotmarks,intersections,3d,perspective,math,spy,automata,er,petri,datavisualization,datavisualization.formats.functions,lindenmayersystems,calendar,folding,graphs,graphs.standard}',
     );
+    lines.push('\\usepackage{tkz-base}');
+    lines.push('\\usepackage{tkz-tab}');
+    lines.push('\\usepackage{tkz-euclide}');
+    lines.push('\\usepackage{circuitikz}');
+    lines.push('\\usepackage{tikz-cd}');
+    lines.push('\\usepackage{tikz-3dplot}');
+    lines.push('\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}');
+    lines.push('\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}');
     // Macro VN thường gặp trong đề của giáo viên (chỉ thêm nếu chưa có — tránh xung đột ex_test)
     lines.push('\\makeatletter');
-    lines.push('\\@ifundefined{heva}{\\newcommand{\\heva}[1]{$\\left\\{\\begin{aligned}#1\\end{aligned}\\right.$}}{}');
+    lines.push('\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}');
+    lines.push('\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}');
     lines.push('\\@ifundefined{itemch}{\\newenvironment{itemch}{\\begin{itemize}}{\\end{itemize}}}{}');
     lines.push('\\@ifundefined{itemchoice}{\\newenvironment{itemchoice}{\\begin{itemize}}{\\end{itemize}}}{}');
     lines.push('\\makeatother');
@@ -1026,6 +1084,223 @@ export class ExamsService {
     return Buffer.from(await res.arrayBuffer());
   }
 
+  // ===== BIÊN DỊCH PDF CÓ TỰ ĐỘNG SỬA LỖI LaTeX =====
+  // 1) Chuẩn hoá lệnh phổ biến (lq/rq, break/quad, ex_test, dapso, immini…)
+  // 2) Nếu TeX báo lỗi → sửa theo log (macro lạ, môi trường lạ, &, ngoặc) và thử lại (tối đa 3 lần)
+  // 3) Vẫn lỗi → xuất bản văn bản thuần để PDF luôn ra được
+  async compileWithAutoFix(
+    input: string,
+  ): Promise<{ buffer: Buffer; fixes: string[] }> {
+    const fixes: string[] = [];
+    const pre = normalizeTex(input);
+    let current = pre.tex;
+    fixes.push(...pre.fixes);
+
+    let lastError = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const buffer = await this.compileRaw(current);
+        return { buffer, fixes };
+      } catch (e: any) {
+        lastError = String(e?.message || e || '');
+        // Ghi lại bản LaTeX lỗi để chẩn đoán (không ảnh hưởng người dùng)
+        try {
+          fs.writeFileSync('/tmp/last-fail-answer.tex', current);
+        } catch {
+          /* bỏ qua */
+        }
+        const next = fixFromLog(current, lastError);
+        if (next.tex === current || !next.fixes.length) break;
+        current = next.tex;
+        fixes.push(...next.fixes);
+      }
+    }
+
+    // Fallback an toàn: bọc trong verbatim → LaTeX không diễn giải bất kỳ lệnh nào
+    try {
+      let plain = texToPlainText(input);
+      plain = plain.replace(/\\end\{verbatim\}/g, '');
+      const doc = [
+        '\\documentclass[11pt,a4paper]{article}',
+        '\\usepackage{vntex}',
+        '\\usepackage[margin=1.6cm]{geometry}',
+        '\\begin{document}',
+        '\\begin{verbatim}',
+        plain,
+        '\\end{verbatim}',
+        '\\end{document}',
+      ].join('\n');
+      const buffer = await this.compileRaw(doc);
+      fixes.push('không sửa được hoàn toàn — đã xuất dạng văn bản thuần');
+      return { buffer, fixes };
+    } catch (fbErr: any) {
+      throw new HttpException(
+        'Không xuất được PDF sau khi tự sửa.\n' +
+          'Lỗi gốc: ' +
+          lastError.slice(0, 300) +
+          '\nLỗi bản văn bản thuần: ' +
+          String(fbErr?.message || '').slice(0, 300),
+        500,
+      );
+    }
+  }
+
+  // Định dạng đáp án sang LaTeX (giữ nguyên công thức $...$)
+  private answerToTex(a: any): string {
+    if (a === null || a === undefined) return '—';
+    if (typeof a === 'string') return a || '—';
+    if (typeof a === 'boolean') return a ? 'Đúng' : 'Sai';
+    if (Array.isArray(a)) return a.map((x) => this.answerToTex(x)).join(', ');
+    if (typeof a === 'object') {
+      const anyA = a as any;
+      if (typeof anyA.text === 'string') return anyA.text;
+      const entries = Object.entries(anyA);
+      if (!entries.length) return '—';
+      if (entries.every(([, v]) => typeof v === 'boolean')) {
+        return entries
+          .sort(([x], [y]) =>
+            String(x).localeCompare(String(y), undefined, { numeric: true }),
+          )
+          .map(([, v]) => (v ? 'Đ' : 'S'))
+          .join('-');
+      }
+      return entries
+        .map(([k, v]) => `${String(k).toUpperCase()}: ${String(v)}`)
+        .join(' · ');
+    }
+    return String(a);
+  }
+
+  // Xuất PDF "ĐÁP ÁN & LỜI GIẢI" của một bài làm (học sinh tự tải lại từ lịch sử)
+  async buildAttemptAnswersPdf(
+    userId: string,
+    examId: string,
+    attemptId: string,
+  ): Promise<{ buffer: Buffer; filename: string; fixes: string[] }> {
+    const attempt = await this.prisma.examAttempt.findFirst({
+      where: { id: attemptId, examId },
+      select: { studentId: true },
+    });
+    if (!attempt) throw new NotFoundException('Không tìm thấy bài làm');
+
+    if (attempt.studentId !== userId) {
+      const u = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      });
+      if (u?.role !== Role.TEACHER && u?.role !== Role.ADMIN) {
+        throw new ForbiddenException('Không có quyền tải đáp án bài làm này');
+      }
+    }
+
+    const detail: any = await this.getAttemptDetail(
+      attempt.studentId,
+      examId,
+      attemptId,
+    );
+    const stu = await this.prisma.user.findUnique({
+      where: { id: attempt.studentId },
+      select: { fullName: true, className: true },
+    });
+
+    const results: any[] = detail.results || [];
+    const joined = results
+      .map((r) => String(r.content || '') + String(r.solution || ''))
+      .join('\n');
+    const hasTikz = /\\begin\{tikzpicture\}/.test(joined);
+    const hasTable = /\\begin\{(tabular|tabularx|array)\}/.test(joined);
+
+    const L: string[] = [];
+    L.push('\\documentclass[11pt,a4paper]{article}');
+    L.push('\\usepackage[utf8]{inputenc}');
+    L.push('\\usepackage[T5]{fontenc}');
+    L.push('\\usepackage{vntex}');
+    L.push('\\usepackage{amsmath,amssymb,amsfonts}');
+    L.push('\\usepackage[margin=1.6cm]{geometry}');
+    L.push('\\usepackage[shortlabels]{enumitem}');
+    L.push('\\usepackage{graphicx}');
+    L.push('\\usepackage{colortbl,xcolor}');
+    if (hasTable) L.push('\\usepackage{array,booktabs}');
+    if (hasTikz) L.push('\\usepackage{tikz}');
+    // Định nghĩa sẵn các macro toán Việt Nam hay dùng trong đề
+    L.push('\\makeatletter');
+    L.push(
+      '\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
+    );
+    L.push(
+      '\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
+    );
+    L.push(
+      '\\@ifundefined{itemchoice}{\\newenvironment{itemchoice}{\\begin{itemize}}{\\end{itemize}}}{}',
+    );
+    L.push('\\@ifundefined{itemch}{\\newcommand{\\itemch}{\\item}}{}');
+    L.push('\\@ifundefined{itemEX}{\\newcommand{\\itemEX}{\\item}}{}');
+    // KHÔNG định nghĩa \True/\False ở đây: bộ tự sửa đã đổi chúng thành "Đúng"/"Sai"
+    // trong nội dung, nếu khai báo lại sẽ bị chính bộ sửa ghi đè tên macro.
+    L.push('\\makeatother');
+    L.push('\\setlength{\\parindent}{0pt}');
+    L.push('\\begin{document}');
+    L.push('\\begin{center}');
+    L.push('{\\Large\\bfseries ĐÁP ÁN \\& LỜI GIẢI}');
+    L.push('\\\\[2pt]');
+    L.push(`{\\large ${escapeTex(detail.title || 'Đề thi')}}`);
+    L.push('\\\\[6pt]');
+    L.push(
+      `${escapeTex(stu?.fullName || 'Học sinh')}${
+        stu?.className ? ' --- Lớp ' + escapeTex(stu.className) : ''
+      }`,
+    );
+    L.push('\\\\[2pt]');
+    L.push(`Điểm: \\textbf{${detail.score}/${detail.totalScore}}`);
+    if (detail.submittedAt) {
+      L.push(
+        ` \\quad Nộp lúc: ${new Date(detail.submittedAt).toLocaleString('vi-VN')}`,
+      );
+    }
+    L.push('\\end{center}');
+    L.push('\\vspace{8pt}');
+
+    results.forEach((r, i) => {
+      L.push(`\\textbf{Câu ${i + 1}.} ${r.content || ''}`);
+      const opts: any[] = Array.isArray(r.options) ? r.options : [];
+      if (opts.length) {
+        L.push('\\begin{itemize}[leftmargin=*]');
+        opts.forEach((o, k) => {
+          // options có dạng [{id:'A', text:'...'}] hoặc mảng chuỗi
+          const text =
+            typeof o === 'string' ? o : (o?.text ?? o?.content ?? '');
+          const label =
+            o && typeof o === 'object' && (o as any).id
+              ? String((o as any).id)
+              : 'ABCDEFGH'[k] || String(k + 1);
+          L.push(`\\item[${label}.] ${text}`);
+        });
+        L.push('\\end{itemize}');
+      }
+      L.push(`\\textbf{Đáp án:} ${this.answerToTex(r.correctAnswer)}`);
+      L.push(`\\textbf{Bài làm của bạn:} ${this.answerToTex(r.studentAnswer)}`);
+      if (r.earned !== null && r.earned !== undefined) {
+        L.push(
+          `\\textbf{Điểm câu này:} ${r.earned}${r.maxScore ? '/' + r.maxScore : ''}`,
+        );
+      }
+      if (r.solution) {
+        L.push(`\\\\[2pt]\\textbf{Lời giải:}\\ ${r.solution}`);
+      }
+      L.push('\\vspace{6pt}');
+      L.push('\\hrule');
+      L.push('\\vspace{8pt}');
+    });
+
+    L.push('\\end{document}');
+
+    const { buffer, fixes } = await this.compileWithAutoFix(L.join('\n'));
+    const filename = `dap-an-${safeFilename(detail.title || 'de-thi')}-${String(
+      attemptId,
+    ).slice(-6)}.pdf`;
+    return { buffer, filename, fixes };
+  }
+
   // Quét ảnh đã upload trong mã LaTeX → chuyển thành \includegraphics + danh sách base64
   private async attachImages(
     tex: string,
@@ -1107,10 +1382,29 @@ export class ExamsService {
       '\\usepackage{amsmath}',
       '\\usepackage{amssymb}',
       '\\usepackage{amsfonts}',
-      '\\usepackage{vntex}',
+      '\\usepackage{mathtools}',
+      '\\usepackage{siunitx}',
+      '\\usepackage{cancel}',
+      '\\usepackage{empheq}',
+      '\\usepackage{systeme}',
       '\\usepackage{graphicx}',
       '\\usepackage{tikz}',
-      '\\usetikzlibrary{arrows.meta,calc,patterns,decorations.pathreplacing,decorations.markings,angles,quotes,shapes.geometric,intersections}',
+      '\\usepackage{pgfplots}',
+      '\\pgfplotsset{compat=1.16}',
+      '\\usepgfplotslibrary{fillbetween,polar,colormaps,statistics,dateplot,groupplots,units,patchplots,ternary}',
+      '\\usetikzlibrary{arrows.meta,calc,patterns,patterns.meta,decorations.pathreplacing,decorations.markings,decorations.pathmorphing,decorations.shapes,decorations.text,decorations.fractals,decorations.footprints,angles,quotes,shapes,shapes.geometric,shapes.misc,shapes.symbols,shapes.arrows,shapes.multipart,positioning,fit,matrix,chains,scopes,through,backgrounds,fadings,shadows,mindmap,trees,plotmarks,intersections,3d,perspective,math,spy,automata,er,petri,datavisualization,datavisualization.formats.functions,lindenmayersystems,calendar,folding,graphs,graphs.standard}',
+      '\\usepackage{tkz-base}',
+      '\\usepackage{tkz-tab}',
+      '\\usepackage{tkz-euclide}',
+      '\\usepackage{circuitikz}',
+      '\\usepackage{tikz-cd}',
+      '\\usepackage{tikz-3dplot}',
+      '\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}',
+      '\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}',
+      '\\makeatletter',
+      '\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
+      '\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
+      '\\makeatother',
       '\\begin{document}',
     ].join('\n');
   }
@@ -1138,10 +1432,85 @@ export class ExamsService {
     return this.compileRaw(source);
   }
 
+  // Dựng danh sách gói LaTeX cho 1 đoạn TikZ/văn bản.
+  // Chỉ nạp gói NẶNG khi snippet thực sự dùng → giữ tốc độ biên dịch nhanh.
+  private snippetPackages(s: string): string[] {
+    const p: string[] = [
+      '\\usepackage[dvipsnames,svgnames,x11names,table]{xcolor}',
+      '\\usepackage{amsmath}',
+      '\\usepackage{amssymb}',
+      '\\usepackage{amsfonts}',
+      '\\usepackage{vntex}',
+      '\\usepackage{array}',
+      '\\usepackage{booktabs}',
+      '\\usepackage{colortbl}',
+      '\\usepackage{graphicx}',
+      '\\usepackage[shortlabels]{enumitem}',
+      '\\usepackage{tikz}',
+      '\\usetikzlibrary{arrows,arrows.meta,calc,patterns,patterns.meta,decorations.pathreplacing,decorations.markings,decorations.pathmorphing,decorations.shapes,angles,quotes,shapes,shapes.geometric,shapes.misc,shapes.symbols,shapes.arrows,shapes.multipart,positioning,fit,matrix,chains,scopes,through,backgrounds,fadings,shadows,mindmap,trees,plotmarks,intersections,3d,perspective,math,spy,automata,er,petri,datavisualization,datavisualization.formats.functions,lindenmayersystems,calendar,folding,graphs,graphs.standard}',
+    ];
+
+    // ex_test: bộ macro của giáo viên VN (\IntervalLR, \IntervalGRF, enumEX, \dapso...).
+    // LƯU Ý 1: ex_test tự nạp vntex → nếu vẫn giữ \usepackage{vntex} sẽ lỗi
+    //   "Command \ifoptenc already defined" → gỡ vntex.
+    // LƯU Ý 2: ex_test phải nạp TRƯỚC enumitem/xcolor/tikz, nếu không các môi trường
+    //   của nó (listEX/enumEX) sẽ hỏng ("Undefined control sequence" ở \end{listEX}).
+    if (/\\Interval(LR|GRF?|LRF?)\b|\\dapso\b|\\dsh\b|\\itemEX\b|\\begin\{(?:enum|list)EX\}/.test(s)) {
+      const vi = p.indexOf('\\usepackage{vntex}');
+      if (vi >= 0) p.splice(vi, 1);
+      p.unshift('\\usepackage{ex_test}');
+    }
+
+    // mathtools (chỉ khi dùng các macro mở rộng)
+    if (/\\coloneqq|\\DeclarePairedDelimiter|\\mathclap|\\smashoperator|\\cramped|\\xmathstrut/.test(s)) {
+      p.splice(4, 0, '\\usepackage{mathtools}');
+    }
+    // tkz-* (hình học/khảo sát hàm — nặng, chỉ khi dùng)
+    if (/\\tkz|tkz-/.test(s)) {
+      p.push('\\usepackage{tkz-base}', '\\usepackage{tkz-tab}', '\\usepackage{tkz-euclide}');
+    }
+
+    // Gói NẶNG — chỉ nạp khi có dấu hiệu sử dụng
+    if (/\\begin\{axis|\addplot|\\pgfplots|\\begin\{(polar|semilog|loglog)axis\}|smithchart/.test(s)) {
+      p.push(
+        '\\usepackage{pgfplots}',
+        '\\pgfplotsset{compat=1.16}',
+        '\\usepgfplotslibrary{fillbetween,polar,colormaps,statistics,dateplot,groupplots,units,patchplots,ternary}',
+      );
+    }
+    if (/circuitikz/.test(s)) p.push('\\usepackage{circuitikz}');
+    if (/tikzcd/.test(s)) p.push('\\usepackage{tikz-cd}');
+    if (/tdplotset|\\tdplot|tikz-3dplot/.test(s)) p.push('\\usepackage{tikz-3dplot}');
+    if (/forest/.test(s)) p.push('\\usepackage{forest}');
+    if (/smartdiagram/.test(s)) p.push('\\usepackage{smartdiagram}');
+    if (/tcolorbox/.test(s)) p.push('\\usepackage[skins,breakable,raster,hooks]{tcolorbox}');
+    if (/\\SI\{|\\si\{|\\num\{/.test(s)) p.push('\\usepackage{siunitx}');
+    if (/\\cancel/.test(s)) p.push('\\usepackage{cancel}');
+    if (/empheq/.test(s)) p.push('\\usepackage{empheq}');
+    if (/\\systeme/.test(s)) p.push('\\usepackage{systeme}');
+    if (/\\multirow/.test(s)) p.push('\\usepackage{multirow}');
+    if (/\\begin\{multicols?\}/.test(s)) p.push('\\usepackage{multicol}');
+    if (/tabularx/.test(s)) p.push('\\usepackage{tabularx}');
+    if (/longtable/.test(s)) p.push('\\usepackage{longtable}');
+    if (/\\llbracket|\\shortrightarrow|stmaryrd/.test(s)) p.push('\\usepackage{stmaryrd}');
+    if (/\\wasysym|\\CheckedBox|\\Square/.test(s)) p.push('\\usepackage{wasysym}');
+    if (/\\ding\{/.test(s)) p.push('\\usepackage{pifont}');
+
+    p.push(
+      '\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}',
+      '\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}',
+    );
+    return p;
+  }
+
   // Biên dịch riêng một block TikZ → PNG cắt đúng kích thước hình
   // Cache 3 tầng: RAM → ĐĨA (sống sót qua restart, dùng chung mọi người dùng) → biên dịch
   async compileTikzSnippet(snippet: string): Promise<Buffer> {
-    const s = (snippet || '').trim();
+    // Chuẩn hoá mũi tên viết sai \<- / \-> / \<-\> → <- / -> / <-> (hay gặp khi copy từ Word)
+    const s = (snippet || '')
+      .trim()
+      .replace(/\\</g, '<')
+      .replace(/\\>/g, '>');
     if (!s) throw new HttpException('Không có nội dung TikZ', 400);
 
     const hash = createHash('md5').update(s).digest('hex');
@@ -1174,13 +1543,7 @@ export class ExamsService {
         ]
       : [
           '\\documentclass[border=4pt]{standalone}',
-          '\\usepackage{amsmath}',
-          '\\usepackage{amssymb}',
-          '\\usepackage{vntex}',
-          '\\usepackage{tikz}',
-          '\\usetikzlibrary{arrows.meta,calc,patterns,decorations.pathreplacing,decorations.markings,angles,quotes,shapes.geometric,intersections}',
-          '\\usepackage{tkz-base}',
-          '\\usepackage{tkz-tab}',
+          ...this.snippetPackages(s),
         ];
     const source = [
       ...packages,
@@ -1214,8 +1577,140 @@ export class ExamsService {
     return png;
   }
 
+  // Biên dịch 1 CÔNG THỨC toán (KaTeX không render được) → PNG bằng TeX Live
+  // Dùng cho chế độ dự phòng trên web: hỗ trợ mọi macro mà TeX Live hiểu
+  async compileMathSnippet(latex: string): Promise<Buffer> {
+    const s = String(latex || '')
+      .trim()
+      .replace(/\\</g, '<')
+      .replace(/\\>/g, '>');
+    if (!s) throw new HttpException('Không có công thức', 400);
+
+    // Bọc math mode nếu chưa có. Môi trường display (align/gather/eqnarray)
+    // → chuyển sang aligned/gathered trong $...$ (standalone không nhận align trần)
+    const disp = s.match(/^\\begin\{(align|gather|eqnarray)\*?\}/);
+    let body: string;
+    if (disp) {
+      const inner = s
+        .replace(/^\\begin\{[^}]+\}/, '')
+        .replace(/\\end\{[^}]+\}\s*$/, '');
+      const env = disp[1] === 'gather' ? 'gathered' : 'aligned';
+      body = `$\\begin{${env}}${inner}\\end{${env}}$`;
+    } else {
+      body = `$${s}$`;
+    }
+
+    const hash = createHash('md5').update('math:' + s).digest('hex');
+
+    const cached = this.tikzPngCache.get(hash);
+    if (cached) return cached;
+
+    const pngPath = path.join(TIKZ_DIR, hash + '.png');
+    if (fs.existsSync(pngPath)) {
+      const buf = fs.readFileSync(pngPath);
+      this.tikzPngCache.set(hash, buf);
+      return buf;
+    }
+
+    const source = [
+      '\\documentclass[border=3pt]{standalone}',
+      '\\usepackage{amsmath}',
+      '\\usepackage{amssymb}',
+      '\\usepackage{vntex}',
+      '\\usepackage{tikz}',
+      '\\usepackage{pgfplots}',
+      '\\pgfplotsset{compat=1.16}',
+      '\\usetikzlibrary{arrows.meta,calc,patterns,decorations.pathreplacing,decorations.markings,angles,quotes,shapes.geometric,intersections}',
+      '\\usepackage{tkz-base}',
+      '\\usepackage{tkz-tab}',
+      '\\usepackage{tkz-euclide}',
+      '\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}',
+      '\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}',
+      '\\makeatletter',
+      '\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
+      '\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
+      '\\makeatother',
+      '\\begin{document}',
+      body,
+      '\\end{document}',
+    ].join('\n');
+
+    const pdf = await this.compileRaw(source);
+    const png = await this.pdfToPng(pdf);
+
+    try {
+      fs.mkdirSync(TIKZ_DIR, { recursive: true });
+      fs.writeFileSync(pngPath, png);
+    } catch (e) {
+      console.warn('Không ghi được cache math:', (e as Error).message);
+    }
+
+    if (this.tikzPngCache.size >= 300) {
+      const firstKey = this.tikzPngCache.keys().next().value;
+      if (firstKey) this.tikzPngCache.delete(firstKey);
+    }
+    this.tikzPngCache.set(hash, png);
+
+    return png;
+  }
+
+  // Biên dịch 1 ĐOẠN LaTeX dạng VĂN BẢN (enumerate/center/itemize/itemchoice...) → PNG
+  // Dùng cho chế độ dự phòng trên web: mọi môi trường LaTeX đều chạy bằng TeX Live.
+  async compileLatexSnippet(fragment: string): Promise<Buffer> {
+    const s = String(fragment || '')
+      .trim()
+      .replace(/\\</g, '<')
+      .replace(/\\>/g, '>');
+    if (!s) throw new HttpException('Không có nội dung LaTeX', 400);
+
+    const hash = createHash('md5').update('latex:' + s).digest('hex');
+    const cached = this.tikzPngCache.get(hash);
+    if (cached) return cached;
+
+    const pngPath = path.join(TIKZ_DIR, hash + '.png');
+    if (fs.existsSync(pngPath)) {
+      const buf = fs.readFileSync(pngPath);
+      this.tikzPngCache.set(hash, buf);
+      return buf;
+    }
+
+    const source = [
+      '\\documentclass[varwidth=18cm,border=4pt]{standalone}',
+      ...this.snippetPackages(s),
+      '\\makeatletter',
+      '\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
+      '\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
+      '\\@ifundefined{itemchoice}{\\newenvironment{itemchoice}{\\begin{itemize}}{\\end{itemize}}}{}',
+      '\\@ifundefined{itemch}{\\newcommand{\\itemch}{\\item}}{}',
+      '\\makeatother',
+      '\\begin{document}',
+      s,
+      '\\end{document}',
+    ].join('\n');
+
+    const pdf = await this.compileRaw(source);
+    const png = await this.pdfToPng(pdf);
+
+    try {
+      fs.mkdirSync(TIKZ_DIR, { recursive: true });
+      fs.writeFileSync(pngPath, png);
+    } catch (e) {
+      console.warn('Không ghi được cache latex:', (e as Error).message);
+    }
+
+    if (this.tikzPngCache.size >= 300) {
+      const firstKey = this.tikzPngCache.keys().next().value;
+      if (firstKey) this.tikzPngCache.delete(firstKey);
+    }
+    this.tikzPngCache.set(hash, png);
+
+    return png;
+  }
+
   async compile(teacherId: string, id: string) {
-    const tex = await this.getTex(teacherId, id);
+    let tex = await this.getTex(teacherId, id);
+    tex = this.patchHevaDefinition(tex);
+    tex = this.fixInvalidMathDelims(tex);
     const pdf = await this.compileRaw(tex);
     const pdfUrl = `/api/exams/${id}/pdf`;
     await this.prisma.exam.update({
@@ -1223,6 +1718,116 @@ export class ExamsService {
       data: { pdfUrl },
     });
     return pdf;
+  }
+
+  // Bỏ \[ \] xuất hiện BÊN TRONG $...$ (không hợp lệ → lỗi "Bad math environment delimiter")
+  private fixInvalidMathDelims(tex: string): string {
+    let out = '';
+    let inMath = false;
+    let i = 0;
+    while (i < tex.length) {
+      const ch = tex[i];
+      if (ch === '\\') {
+        const next = tex[i + 1];
+        if (next === '$') {
+          out += '\\$';
+          i += 2;
+          continue;
+        }
+        if (inMath && (next === '[' || next === ']')) {
+          i += 2; // bỏ \[ hoặc \] trong math
+          continue;
+        }
+        out += ch + (next ?? '');
+        i += 2;
+        continue;
+      }
+      if (ch === '$') {
+        if (tex[i + 1] === '$') {
+          out += '$$';
+          i += 2;
+          inMath = !inMath;
+          continue;
+        }
+        inMath = !inMath;
+        out += '$';
+        i++;
+        continue;
+      }
+      out += ch;
+      i++;
+    }
+    return out;
+  }
+
+  // Sửa định nghĩa \heva trong .tex nguồn: bỏ $ thừa
+  // (câu hỏi luôn dùng $\heva{...}$ trong math mode, nếu macro tự bọc $...$ sẽ lỗi "Missing $ inserted")
+  private patchHevaDefinition(tex: string): string {
+    let out = String(tex || '');
+    // Chuẩn hoá mũi tên viết sai \<- / \-> / \<-\> → <- / -> / <-> (copy từ Word)
+    out = out.replace(/\\</g, '<').replace(/\\>/g, '>');
+    // Chuẩn hoá \heva để dùng được CẢ trong và ngoài math mode (\ifmmode)
+    const IFMMODE =
+      '\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}';
+    out = out.replace(
+      /\\newcommand\{\\heva\}\[1\]\{\$\\left\\\{\\begin\{aligned\}#1\\end\{aligned\}\\right\.\$\}/g,
+      '\\newcommand{\\heva}[1]{' + IFMMODE + '}',
+    );
+    out = out.replace(
+      /\\renewcommand\{\\heva\}\[1\]\{\$\\left\\\{\\begin\{aligned\}#1\\end\{aligned\}\\right\.\$\}/g,
+      '\\renewcommand{\\heva}[1]{' + IFMMODE + '}',
+    );
+    out = out.replace(
+      /\\providecommand\{\\heva\}\[1\]\{\\left\\\{\\begin\{aligned\}#1\\end\{aligned\}\\right\.\}/g,
+      '\\providecommand{\\heva}[1]{' + IFMMODE + '}',
+    );
+    out = out.replace(
+      /\\newcommand\{\\heva\}\[1\]\{\\left\\\{\\begin\{aligned\}#1\\end\{aligned\}\\right\.\}/g,
+      '\\newcommand{\\heva}[1]{' + IFMMODE + '}',
+    );
+
+    // Chuẩn hoá \hoac ("hoặc" VN) — dùng ngoặc vuông [
+    const IFMMODE_HOAC =
+      '\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}';
+    out = out.replace(
+      /\\newcommand\{\\hoac\}\[1\]\{\$\\left\\\[\{\\begin\{aligned\}#1\\end\{aligned\}\\right\.\$\}/g,
+      '\\newcommand{\\hoac}[1]{' + IFMMODE_HOAC + '}',
+    );
+    out = out.replace(
+      /\\renewcommand\{\\hoac\}\[1\]\{\$\\left\\\[\{\\begin\{aligned\}#1\\end\{aligned\}\\right\.\$\}/g,
+      '\\renewcommand{\\hoac}[1]{' + IFMMODE_HOAC + '}',
+    );
+    out = out.replace(
+      /\\providecommand\{\\hoac\}\[1\]\{\\left\\\[\{\\begin\{aligned\}#1\\end\{aligned\}\\right\.\}/g,
+      '\\providecommand{\\hoac}[1]{' + IFMMODE_HOAC + '}',
+    );
+    out = out.replace(
+      /\\newcommand\{\\hoac\}\[1\]\{\\left\\\[\{\\begin\{aligned\}#1\\end\{aligned\}\\right\.\}/g,
+      '\\newcommand{\\hoac}[1]{' + IFMMODE_HOAC + '}',
+    );
+
+    // Bổ sung \provideenvironment (không có trong LaTeX chuẩn, thường gặp trong đề của GV)
+    if (out.includes('\\provideenvironment')) {
+      out = out.replace(
+        /(\\documentclass(?:\[[^\]]*\])?\{[^}]*\}\s*)/,
+        '$1\n\\makeatletter\\@ifundefined{provideenvironment}{\\providecommand{\\provideenvironment}[3]{\\@ifundefined{#1}{\\newenvironment{#1}{#2}{#3}}{}}}{}\\makeatother\n',
+      );
+    }
+    // Bổ sung \wideparen (cung tròn rộng — từ gói yhmath, không có trong LaTeX chuẩn)
+    if (out.includes('\\wideparen')) {
+      out = out.replace(
+        /(\\documentclass(?:\[[^\]]*\])?\{[^}]*\}\s*)/,
+        '$1\n\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}\n',
+      );
+    }
+    // Bổ sung pgfplots khi đề dùng \begin{axis}/\addplot
+    if (out.includes('\\begin{axis}') || out.includes('\\addplot')) {
+      out = out.replace(
+        /(\\documentclass(?:\[[^\]]*\])?\{[^}]*\}\s*)/,
+        '$1\n\\usepackage{pgfplots}\\pgfplotsset{compat=1.16}\n',
+      );
+    }
+    return out;
   }
 
   // Biên dịch PDF đáp án (kèm lời giải)
@@ -1257,6 +1862,29 @@ export class ExamsService {
         throw new ForbiddenException(
           'Hãy hoàn thành bài thi để xem đáp án',
         );
+      }
+
+      // ===== Điểm tối thiểu để xem đáp án → chưa đủ điểm thì không tải được PDF đáp án =====
+      const minAsg = await this.prisma.assignment.findFirst({
+        where: {
+          examId,
+          minScoreForAnswers: { not: null },
+          course: { enrollments: { some: { studentId: user.id } } },
+        },
+        orderBy: { minScoreForAnswers: 'desc' },
+        select: { minScoreForAnswers: true },
+      });
+      if (minAsg && minAsg.minScoreForAnswers != null) {
+        const agg = await this.prisma.examAttempt.aggregate({
+          where: { examId, studentId: user.id, submittedAt: { not: null } },
+          _max: { score: true },
+        });
+        const best = agg._max.score ?? 0;
+        if (best < minAsg.minScoreForAnswers) {
+          throw new ForbiddenException(
+            `Bạn cần đạt ít nhất ${minAsg.minScoreForAnswers} điểm để xem đáp án (điểm cao nhất hiện tại: ${best}).`,
+          );
+        }
       }
     }
 
@@ -2290,6 +2918,7 @@ export class ExamsService {
           itemId: item.id,
           order: item.order,
           type: q.type,
+          code: q.code || null,
           content: q.content,
           options: q.options,
           correctAnswer: q.answer,
@@ -2319,6 +2948,7 @@ export class ExamsService {
           itemId: item.id,
           order: item.order,
           type: q.type,
+          code: q.code || null,
           content: q.content,
           options: q.options,
           correctAnswer: q.answer,
@@ -2338,6 +2968,7 @@ export class ExamsService {
         itemId: item.id,
         order: item.order,
         type: q.type,
+        code: q.code || null,
         content: q.content,
         options: q.options,
         correctAnswer: q.answer,
@@ -2384,6 +3015,23 @@ export class ExamsService {
   }
 
   // GIÁO VIÊN xem chi tiết bài làm của học sinh trong 1 lần thi (để chấm tự luận)
+  // Chủ đề thi HOẶC trợ giảng của khóa học có bài tập gắn đề này
+  private async hasExamAccess(examId: string, userId: string): Promise<boolean> {
+    const exam = await this.prisma.exam.findUnique({
+      where: { id: examId },
+      select: { teacherId: true },
+    });
+    if (!exam) return false;
+    if (exam.teacherId === userId) return true;
+    const assistant = await this.prisma.courseAssistant.findFirst({
+      where: {
+        userId,
+        course: { assignments: { some: { examId } } },
+      },
+    });
+    return !!assistant;
+  }
+
   async getAttemptDetailForTeacher(
     teacherId: string,
     examId: string,
@@ -2399,8 +3047,8 @@ export class ExamsService {
       },
     });
     if (!exam) throw new NotFoundException('Không tìm thấy đề thi');
-    if (exam.teacherId !== teacherId) {
-      throw new ForbiddenException('Bạn không sở hữu đề thi này');
+    if (!(await this.hasExamAccess(examId, teacherId))) {
+      throw new ForbiddenException('Bạn không có quyền truy cập đề thi này');
     }
     const attempt = await this.prisma.examAttempt.findFirst({
       where: { id: attemptId, examId },
@@ -2503,13 +3151,29 @@ export class ExamsService {
     lines.push('\\usepackage{amsmath}');
     lines.push('\\usepackage{amssymb}');
     lines.push('\\usepackage{amsfonts}');
+    lines.push('\\usepackage{mathtools}');
+    lines.push('\\usepackage{siunitx}');
+    lines.push('\\usepackage{cancel}');
+    lines.push('\\usepackage{empheq}');
+    lines.push('\\usepackage{systeme}');
     lines.push('\\usepackage{tikz}');
+    lines.push('\\usepackage{pgfplots}');
+    lines.push('\\pgfplotsset{compat=1.16}');
     lines.push(
-      '\\usetikzlibrary{arrows.meta,calc,patterns,decorations.pathreplacing,decorations.markings,angles,quotes,shapes.geometric,intersections}',
+      '\\usetikzlibrary{arrows.meta,calc,patterns,patterns.meta,decorations.pathreplacing,decorations.markings,decorations.pathmorphing,decorations.shapes,decorations.text,decorations.fractals,decorations.footprints,angles,quotes,shapes,shapes.geometric,shapes.misc,shapes.symbols,shapes.arrows,shapes.multipart,positioning,fit,matrix,chains,scopes,through,backgrounds,fadings,shadows,mindmap,trees,plotmarks,intersections,3d,perspective,math,spy,automata,er,petri,datavisualization,datavisualization.formats.functions,lindenmayersystems,calendar,folding,graphs,graphs.standard}',
     );
+    lines.push('\\usepackage{tkz-base}');
+    lines.push('\\usepackage{tkz-tab}');
+    lines.push('\\usepackage{tkz-euclide}');
+    lines.push('\\usepackage{circuitikz}');
+    lines.push('\\usepackage{tikz-cd}');
+    lines.push('\\usepackage{tikz-3dplot}');
+    lines.push('\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}');
+    lines.push('\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}');
     // Macro VN thường gặp trong đề của giáo viên (chỉ thêm nếu chưa có — tránh xung đột ex_test)
     lines.push('\\makeatletter');
-    lines.push('\\@ifundefined{heva}{\\newcommand{\\heva}[1]{$\\left\\{\\begin{aligned}#1\\end{aligned}\\right.$}}{}');
+    lines.push('\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}');
+    lines.push('\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}');
     lines.push('\\@ifundefined{itemch}{\\newenvironment{itemch}{\\begin{itemize}}{\\end{itemize}}}{}');
     lines.push('\\@ifundefined{itemchoice}{\\newenvironment{itemchoice}{\\begin{itemize}}{\\end{itemize}}}{}');
     lines.push('\\makeatother');
@@ -2595,6 +3259,45 @@ export class ExamsService {
       },
     );
 
+    return this.balanceMath(tex);
+  }
+
+  // Cân bằng các cấu trúc toán bị thiếu dấu đóng (lỗi "Missing $ inserted")
+  // - \heva{...} thiếu '}' → bổ sung '}'
+  // - số dấu $ lẻ → bổ sung '$' ở cuối
+  private balanceMath(s: string): string {
+    let tex = String(s || '');
+
+    const hasUnbalancedHeva = (str: string): boolean => {
+      let i = 0;
+      const token = '\\heva{';
+      while (true) {
+        const idx = str.indexOf(token, i);
+        if (idx === -1) return false;
+        let depth = 0;
+        let j = idx + token.length - 1;
+        for (; j < str.length; j++) {
+          if (str[j] === '\\') {
+            j++;
+            continue;
+          }
+          if (str[j] === '{') depth++;
+          else if (str[j] === '}') {
+            depth--;
+            if (depth === 0) break;
+          }
+        }
+        if (j >= str.length) return true;
+        i = j + 1;
+      }
+    };
+
+    if (hasUnbalancedHeva(tex)) tex += '}';
+
+    // Đếm số $ chưa escape (bỏ qua \$)
+    const dollars = (tex.match(/(?<!\\)\$/g) || []).length;
+    if (dollars % 2 === 1) tex += '$';
+
     return tex;
   }
 
@@ -2634,6 +3337,42 @@ export class ExamsService {
     return exams.map((e) => ({
       ...e,
       myAttempts: countByExam[e.id] || 0,
+    }));
+  }
+
+  // Phòng luyện đề: danh sách đề theo loại kỳ thi (PRACTICE_TSA / PRACTICE_HSA)
+  async listPracticeRoom(studentId: string, examKind: string) {
+    const kind = ['PRACTICE_TSA', 'PRACTICE_HSA'].includes(examKind)
+      ? examKind
+      : 'PRACTICE_TSA';
+    const exams = await this.prisma.exam.findMany({
+      where: { published: true, examKind: kind },
+      include: {
+        teacher: { select: { id: true, fullName: true } },
+        _count: { select: { items: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const attempts = await this.prisma.examAttempt.findMany({
+      where: { studentId, examId: { in: exams.map((e) => e.id) } },
+    });
+    const bestByExam: Record<string, number> = {};
+    for (const a of attempts) {
+      const s = a.score ?? 0;
+      if (!(a.examId in bestByExam) || s > bestByExam[a.examId]) {
+        bestByExam[a.examId] = s;
+      }
+    }
+    return exams.map((e) => ({
+      id: e.id,
+      title: e.title,
+      description: e.description,
+      duration: e.duration,
+      totalScore: e.totalScore,
+      sections: e.sections,
+      questionCount: e._count?.items ?? 0,
+      bestScore: bestByExam[e.id] ?? null,
+      attempts: attempts.filter((a) => a.examId === e.id).length,
     }));
   }
 
@@ -2790,8 +3529,8 @@ export class ExamsService {
       where: { id: examId },
       select: { teacherId: true },
     });
-    if (!exam || exam.teacherId !== teacherId) {
-      throw new ForbiddenException('Bạn không sở hữu đề thi này');
+    if (!exam || !(await this.hasExamAccess(examId, teacherId))) {
+      throw new ForbiddenException('Bạn không có quyền truy cập đề thi này');
     }
     const attempt = await this.prisma.examAttempt.findUnique({
       where: { id: attemptId },
@@ -2800,13 +3539,38 @@ export class ExamsService {
       throw new NotFoundException('Không tìm thấy bài làm');
     }
     const fudge = Math.round(Number(fudgePoints || 0) * 100) / 100;
-    const finalScore = Math.round(
-      ((attempt.rawScore ?? attempt.score ?? 0) + fudge - (attempt.penaltyPoints || 0)) * 100,
-    ) / 100;
-    return this.prisma.examAttempt.update({
+    const finalScore =
+      Math.max(
+        0,
+        Math.round(
+          ((attempt.rawScore ?? attempt.score ?? 0) + fudge - (attempt.penaltyPoints || 0)) * 100,
+        ) / 100,
+      );
+    const updated = await this.prisma.examAttempt.update({
       where: { id: attemptId },
-      data: { fudgePoints: fudge, score: Math.max(0, finalScore) },
+      data: { fudgePoints: fudge, score: finalScore },
     });
+    // Đồng bộ điểm mới vào bài giao (nếu đề này được giao trong khóa học)
+    try {
+      const subs = await this.prisma.assignmentSubmission.findMany({
+        where: { answers: { path: ['attemptId'], equals: attemptId } },
+        select: { id: true, score: true, answers: true },
+      });
+      for (const sub of subs) {
+        const fromExam = !!(sub.answers as any)?.__fromExam;
+        await this.prisma.assignmentSubmission.update({
+          where: { id: sub.id },
+          data: {
+            aiScore: finalScore,
+            ...(sub.score == null || fromExam ? { score: finalScore } : {}),
+            aiComment: null,
+          },
+        });
+      }
+    } catch {
+      /* bỏ qua */
+    }
+    return updated;
   }
 
   // Chấm lại TOÀN BỘ bài đã nộp của đề (sau khi GV sửa đáp án đề/câu hỏi)
@@ -2816,8 +3580,8 @@ export class ExamsService {
       where: { id: examId },
       select: { teacherId: true, totalScore: true },
     });
-    if (!exam || exam.teacherId !== teacherId) {
-      throw new ForbiddenException('Bạn không sở hữu đề thi này');
+    if (!exam || !(await this.hasExamAccess(examId, teacherId))) {
+      throw new ForbiddenException('Bạn không có quyền truy cập đề thi này');
     }
     const items = await this.prisma.examItem.findMany({
       where: { examId },
@@ -2892,8 +3656,8 @@ export class ExamsService {
       where: { id: examId },
       select: { teacherId: true, totalScore: true },
     });
-    if (!exam || exam.teacherId !== teacherId) {
-      throw new ForbiddenException('Bạn không sở hữu đề thi này');
+    if (!exam || !(await this.hasExamAccess(examId, teacherId))) {
+      throw new ForbiddenException('Bạn không có quyền truy cập đề thi này');
     }
     const attempt = await this.prisma.examAttempt.findUnique({
       where: { id: attemptId },
@@ -2936,6 +3700,27 @@ export class ExamsService {
           link: `/student/exams/${examId}`,
         },
       });
+    }
+    // Đồng bộ điểm mới vào bài giao (nếu đề này được giao trong khóa học)
+    try {
+      const subs = await this.prisma.assignmentSubmission.findMany({
+        where: { answers: { path: ['attemptId'], equals: attemptId } },
+        select: { id: true, score: true, answers: true },
+      });
+      for (const sub of subs) {
+        const fromExam = !!(sub.answers as any)?.__fromExam;
+        await this.prisma.assignmentSubmission.update({
+          where: { id: sub.id },
+          data: {
+            aiScore: newScore,
+            // Bài thi: điểm cuối lấy theo hệ thống; bài thường: chỉ điền nếu chưa có điểm tay
+            ...(sub.score == null || fromExam ? { score: newScore } : {}),
+            aiComment: null,
+          },
+        });
+      }
+    } catch {
+      /* bỏ qua nếu không có bài giao liên kết */
     }
     return { ...updated, oldScore, changed: oldScore !== newScore };
   }
@@ -3084,6 +3869,29 @@ export class ExamsService {
       exam.passMark != null
         ? exam.passMark
         : Math.round(exam.totalScore * 0.5 * 100) / 100;
+
+    // ===== Bài tập giao có yêu cầu ĐIỂM TỐI THIỂU để xem đáp án =====
+    // Nếu đề nằm trong bài giao có minScoreForAnswers và học sinh chưa đủ điểm → khóa đáp án
+    let answersVisible = this.canViewAnswers(exam, { resultsViewedAt: null }, false);
+    if (answersVisible) {
+      const minAsg = await this.prisma.assignment.findFirst({
+        where: {
+          examId,
+          minScoreForAnswers: { not: null },
+          course: { enrollments: { some: { studentId } } },
+        },
+        orderBy: { minScoreForAnswers: 'desc' },
+        select: { minScoreForAnswers: true },
+      });
+      if (
+        minAsg &&
+        minAsg.minScoreForAnswers != null &&
+        score < minAsg.minScoreForAnswers
+      ) {
+        answersVisible = false;
+      }
+    }
+
     return {
       attemptId,
       score,
@@ -3092,7 +3900,7 @@ export class ExamsService {
       passMark: passThreshold,
       late,
       results,
-      answersVisible: this.canViewAnswers(exam, { resultsViewedAt: null }, false),
+      answersVisible,
       xp: gamification,
       pending: essayCount > 0 ? { essays: essayCount, analysis: true } : { essays: 0, analysis: true },
     };
@@ -3434,9 +4242,28 @@ export class ExamsService {
     return { fraction, correctCount, total };
   }
 
+  // Công khai cho module khác kiểm tra đúng/sai 1 đáp án (phân tích điểm mạnh/yếu)
+  isAnswerCorrect(q: any, stuAns: any): boolean {
+    return this.gradeQuestion(q, stuAns);
+  }
+
   private gradeQuestion(q: any, stuAns: any): boolean {
     if (q.type === QuestionType.MCQ) {
       return stuAns === q.answer;
+    }
+    if (q.type === QuestionType.MULTI_ANSWER) {
+      const correct = Array.isArray(q.answer)
+        ? q.answer.map((x: any) => String(x))
+        : String(q.answer ?? '')
+            .split('')
+            .filter((c) => c.trim());
+      const chosen = Array.isArray(stuAns)
+        ? stuAns.map((x: any) => String(x))
+        : stuAns
+          ? [String(stuAns)]
+          : [];
+      if (!correct.length || chosen.length !== correct.length) return false;
+      return correct.every((c) => chosen.includes(c));
     }
     if (q.type === QuestionType.TRUE_FALSE) {
       const ans = q.answer as any;

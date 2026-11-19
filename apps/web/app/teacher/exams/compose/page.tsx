@@ -2,10 +2,18 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import LatexEditor from '@/components/LatexEditor';
+import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/api';
 import { findBraceIssue } from '@/lib/texCheck';
 import BackButton from '@/components/BackButton';
+
+// CodeMirror nạp lười — không chặn lần hiển thị đầu
+const LatexEditor = dynamic(() => import('@/components/LatexEditor'), {
+  ssr: false,
+  loading: () => (
+    <div className="skeleton" style={{ height: 420, borderRadius: 10 }} aria-label="Đang tải trình soạn LaTeX" />
+  ),
+});
 
 const INITIAL_TEX = `\\documentclass[12pt]{article}
 \\usepackage{ex_test}
