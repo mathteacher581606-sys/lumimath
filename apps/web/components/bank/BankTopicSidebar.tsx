@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { apiFetch } from '@/lib/api';
 
 // Mục lục ngân hàng câu hỏi (theo mẫu đã duyệt): chọn lớp dạng nút gạt, cây gọn,
@@ -387,6 +388,9 @@ export default function BankTopicSidebar(props: {
         )}
       </div>
 
+      {/* Hộp thoại đưa ra <body> để không bị lớp xếp chồng của mục lục (sticky) che */}
+      {(moving || tidyOpen) && typeof document !== 'undefined' && createPortal(
+        <>
       {moving && (
         <MoveDialog
           node={moving}
@@ -407,6 +411,9 @@ export default function BankTopicSidebar(props: {
             await props.onReload();
           }}
         />
+      )}
+        </>,
+        document.body,
       )}
     </aside>
   );
