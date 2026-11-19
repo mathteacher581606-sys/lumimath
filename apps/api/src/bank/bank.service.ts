@@ -2217,8 +2217,12 @@ export class BankService {
     }
 
     // 2. \shortans (trả lời ngắn) — nhận cả dạng \shortans[oly]{6,36}
-    // \SA là lệnh tắt của \shortans trong ex_test.sty
-    const saMatch = /\\(?:shortans|SA)(?![a-zA-Z])(?:\[[^\]]*\])?\s*\{/.exec(raw);
+    // Trả lời ngắn: \shortans, \SA (lệnh tắt) và \dapso (ghi đáp số) của ex_test.sty
+    // — chỉ khi câu KHÔNG có \choice/\choiceTF
+    const hasChoice = /\\choice(?:TF)?(?![a-zA-Z])/.test(raw);
+    const saMatch = hasChoice
+      ? null
+      : /\\(?:shortans|SA|dapso)(?![a-zA-Z])(?:\[[^\]]*\])?\s*\{/.exec(raw);
     if (saMatch) {
       const balanced = this.getBalancedContent(
         raw,

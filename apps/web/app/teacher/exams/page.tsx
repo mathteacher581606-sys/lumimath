@@ -13,6 +13,10 @@ const DIFF_LABEL: Record<string, string> = {
 
 export default function ExamLibraryPage() {
   const [exams, setExams] = useState<any[]>([]);
+  // Xem kho "Đề đã lưu trữ" (ẩn khỏi học sinh, vẫn giữ bài làm)
+  const [showArchived, setShowArchived] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleting, setDeleting] = useState(false);
   const [topics, setTopics] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
   const [folders, setFolders] = useState<any[]>([]);
@@ -57,7 +61,8 @@ export default function ExamLibraryPage() {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showArchived]);
 
   // Tự mở rộng mọi thư mục có thư mục con (để nhánh nhỏ luôn nhìn thấy)
   useEffect(() => {
@@ -75,7 +80,7 @@ export default function ExamLibraryPage() {
     setLoading(true);
     try {
       const [examData, topicData, courseData, folderData] = await Promise.all([
-        apiFetch('/exams'),
+        apiFetch(showArchived ? '/exams?archived=1' : '/exams'),
         apiFetch('/bank/topics'),
         apiFetch('/courses'),
         apiFetch('/exams/folders'),
@@ -385,11 +390,30 @@ export default function ExamLibraryPage() {
     }
   }
 
-  async function deleteExam(ex: any) {
-    if (!confirm(`Xóa đề thi "${ex.title}"?`)) return;
+  // Xoá đề: mở hộp chọn Lưu trữ (giữ bài làm) / Xoá hẳn
+  function deleteExam(ex: any) {
+    setDeleteTarget(ex);
+  }
+
+  async function confirmDelete(mode: 'archive' | 'delete') {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await apiFetch(`/exams/${ex.id}`, { method: 'DELETE' });
-      showToast('Đã xóa đề thi');
+      await apiFetch(`/exams/${deleteTarget.id}?mode=${mode}`, { method: 'DELETE' });
+      showToast(mode === 'archive' ? 'Đã lưu trữ đề thi, bài làm của học sinh vẫn được giữ' : 'Đã xóa hẳn đề thi');
+      setDeleteTarget(null);
+      load();
+    } catch (e: any) {
+      showToast(e.message);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function restoreExam(ex: any) {
+    try {
+      await apiFetch(`/exams/${ex.id}/restore`, { method: 'POST' });
+      showToast('Đã khôi phục đề (ở trạng thái Nháp, bấm Công khai để học sinh làm lại)');
       load();
     } catch (e: any) {
       showToast(e.message);
@@ -616,8 +640,16 @@ export default function ExamLibraryPage() {
         >
           📋 Chỉ template
         </button>
+        <button
+          type="button"
+          className={`toolbar-btn${showArchived ? ' active' : ''}`}
+          aria-pressed={showArchived}
+          onClick={() => setShowArchived(!showArchived)}
+        >
+          {showArchived ? '← Về kho đề đang dùng' : 'Đề đã lưu trữ'}
+        </button>
         <span className="pager-pill" style={{ marginLeft: 'auto' }}>
-          {filtered.length} đề
+          {filtered.length} đề{showArchived ? ' đã lưu trữ' : ''}
         </span>
       </div>
 
@@ -752,6 +784,11 @@ export default function ExamLibraryPage() {
                   >
                     🗑️ Xóa
                   </button>
+                  {showArchived && (
+                    <button type="button" className="lm-filter-btn" style={{ padding: '6px 11px', fontSize: 12 }} onClick={() => restoreExam(ex)}>
+                      ↩ Khôi phục
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1091,6 +1128,53 @@ export default function ExamLibraryPage() {
               </button>
               <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setBulkTarget(null)}>
                 Hủy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="ex-modal-backdrop" onClick={() => !deleting && setDeleteTarget(null)}>
+          <div
+            className="ex-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="del-h"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && !deleting) setDeleteTarget(null);
+            }}
+          >
+            <h2 id="del-h">Xóa đề “{deleteTarget.title}”?</h2>
+            {(deleteTarget._count?.attempts ?? 0) > 0 ? (
+              <>
+                <p>
+                  Đề này đã có <strong>{deleteTarget._count.attempts} lượt làm bài</strong> của học sinh.
+                </p>
+                <ul className="xl-rules">
+                  <li>
+                    <strong>Lưu trữ</strong>: ẩn đề khỏi kho và khỏi học sinh, <strong>giữ nguyên bài làm và điểm</strong>. Khôi phục được bất cứ lúc nào.
+                  </li>
+                  <li>
+                    <strong>Xóa hẳn</strong>: xóa đề cùng <strong>toàn bộ bài làm, điểm</strong> của học sinh. Không hoàn tác được.
+                  </li>
+                </ul>
+              </>
+            ) : (
+              <p>Đề chưa có ai làm. Bạn có thể lưu trữ để dùng sau hoặc xóa hẳn.</p>
+            )}
+            <div className="st-actions">
+              <button type="button" className="btn btn-outline" autoFocus disabled={deleting} onClick={() => setDeleteTarget(null)}>
+                Hủy
+              </button>
+              {!deleteTarget.archivedAt && (
+                <button type="button" className="btn sh-btn-accent" disabled={deleting} onClick={() => confirmDelete('archive')}>
+                  Lưu trữ
+                </button>
+              )}
+              <button type="button" className="btn btn-danger" disabled={deleting} onClick={() => confirmDelete('delete')}>
+                {deleting ? 'Đang xử lý…' : 'Xóa hẳn'}
               </button>
             </div>
           </div>

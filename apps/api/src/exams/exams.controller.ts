@@ -519,8 +519,15 @@ export class ExamsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)
   @Delete(':id')
-  remove(@CurrentUser() user: any, @Param('id') id: string) {
-    return this.examsService.remove(user.id, id);
+  remove(@CurrentUser() user: any, @Param('id') id: string, @Query('mode') mode?: string) {
+    return this.examsService.remove(user.id, id, mode);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post(':id/restore')
+  restore(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.examsService.restore(user.id, id);
   }
 
   // Tải file .tex

@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   BadRequestException,
   ForbiddenException,
   HttpException,
@@ -668,6 +669,8 @@ export class ExamsService {
       teacherId,
       // Ẩn đề luyện tập do học sinh tự tạo (không phải đề của giáo viên)
       OR: [{ source: null }, { source: { not: 'PRACTICE' } }],
+      // Mặc định chỉ đề đang dùng; ?archived=1 → danh sách đề đã lưu trữ
+      archivedAt: query?.archived === '1' || query?.archived === 'true' ? { not: null } : null,
     };
     // Lọc theo thư mục (bao gồm cả đề trong các thư mục con)
     if (query?.folderId) {
@@ -1027,12 +1030,43 @@ export class ExamsService {
     return exam;
   }
 
-  async remove(teacherId: string, id: string) {
+  /**
+   * Xoá / lưu trữ đề.
+   * - mode 'archive': ẩn đề khỏi kho và khỏi học sinh, GIỮ NGUYÊN bài làm + điểm.
+   * - mode 'delete' : xoá hẳn (kèm toàn bộ bài làm của học sinh).
+   * - không truyền mode: đề CHƯA có bài làm → xoá; đã có bài làm → từ chối (409) để
+   *   giao diện hỏi giáo viên chọn lưu trữ hay xoá hẳn.
+   */
+  async remove(teacherId: string, id: string, mode?: string) {
     const exam = await this.prisma.exam.findFirst({
       where: { id, teacherId },
+      include: { _count: { select: { attempts: true } } },
     });
     if (!exam) throw new NotFoundException('Không tìm thấy đề thi');
-    return this.prisma.exam.delete({ where: { id } });
+    if (mode === 'archive') {
+      await this.prisma.exam.update({
+        where: { id },
+        data: { archivedAt: new Date(), status: 'DRAFT', published: false },
+      });
+      return { archived: true };
+    }
+    if (mode !== 'delete' && exam._count.attempts > 0) {
+      throw new ConflictException(
+        `Đề đã có ${exam._count.attempts} lượt làm bài. Chọn "Lưu trữ" để giữ điểm của học sinh, hoặc "Xóa hẳn".`,
+      );
+    }
+    await this.prisma.exam.delete({ where: { id } });
+    return { deleted: true };
+  }
+
+  // Khôi phục đề đã lưu trữ (về trạng thái Nháp, giáo viên tự công khai lại)
+  async restore(teacherId: string, id: string) {
+    const r = await this.prisma.exam.updateMany({
+      where: { id, teacherId, archivedAt: { not: null } },
+      data: { archivedAt: null },
+    });
+    if (!r.count) throw new NotFoundException('Không tìm thấy đề đã lưu trữ');
+    return { restored: true };
   }
 
   async getTex(teacherId: string, id: string) {
@@ -3362,7 +3396,7 @@ export class ExamsService {
   // ============ THI ONLINE (học sinh) ============
 
   async listAvailableForStudent(studentId: string, grade?: number) {
-    const where: any = { status: 'PUBLISHED' };
+    const where: any = { status: 'PUBLISHED', archivedAt: null };
     if (grade) where.grade = grade;
 
     const exams = await this.prisma.exam.findMany({
@@ -3408,7 +3442,7 @@ export class ExamsService {
       ? examKind
       : 'PRACTICE_TSA';
     const exams = await this.prisma.exam.findMany({
-      where: { published: true, examKind: kind },
+      where: { published: true, examKind: kind, archivedAt: null },
       include: {
         teacher: { select: { id: true, fullName: true } },
         _count: { select: { items: true } },
@@ -3449,6 +3483,9 @@ export class ExamsService {
       },
     });
     if (!exam) throw new NotFoundException('Không tìm thấy đề thi');
+    if (exam.archivedAt) {
+      throw new ForbiddenException('Đề này đã được giáo viên lưu trữ, không làm bài được nữa');
+    }
 
     // Giới hạn số lần thi (0 = vô hạn)
     const maxAttempts = exam.maxAttempts ?? 3;

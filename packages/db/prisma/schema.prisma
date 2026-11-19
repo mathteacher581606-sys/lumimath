@@ -566,6 +566,7 @@ model Exam {
   // ===== Phòng luyện đề (TSA/HSA) =====
   examKind    String  @default("STANDARD") // STANDARD | PRACTICE_TSA | PRACTICE_HSA
   sections    Json?   // [{title, duration, count}] — thời gian từng phần của đề luyện
+  archivedAt  DateTime? // đã LƯU TRỮ (ẩn khỏi kho + học sinh, giữ nguyên bài làm); null = đang dùng
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
