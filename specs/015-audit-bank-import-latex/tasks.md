@@ -25,3 +25,12 @@
 - [ ] `\dapso{…}` trong ex_test có nên nhập thành câu Trả lời ngắn?
 - [ ] Xoá đề thi đang xoá kèm (cascade) toàn bộ bài làm của học sinh — có cần chặn/khoá thay vì xoá?
 - [ ] `docx-import.helper.ts` (1.031 dòng) mới đọc lướt, chưa rà sâu
+
+## Bổ sung 19/11 (chiều)
+- [x] `\dapso{…}` nhập thành Trả lời ngắn (khi câu không có \choice/\choiceTF)
+- [x] Lưu trữ đề (`Exam.archivedAt`) thay vì xoá; vẫn có "Xóa hẳn"; xem + khôi phục đề đã lưu trữ
+- [x] Rà câu trùng theo phạm vi: 1 khối, 1 thư mục (gồm thư mục con), hoặc chỉ so câu cùng chủ đề
+- [x] Tìm theo mã: gõ phần đầu ("A1") ra mọi câu có mã bắt đầu bằng A1
+- [x] Tìm theo nội dung hiểu LaTeX: bỏ dấu, khoảng trắng, `$`, `{}`, `\left/\right`, `\dfrac≡\frac`; khớp từng cụm; tìm cả trong lựa chọn/lời giải; chờ 300ms sau phím cuối
+- [x] Sửa câu hỏi & đáp án ngay trong đề (`PATCH /exams/:id/items/:itemId/question`): cập nhật câu gốc trong ngân hàng,
+      tạo lại .tex mọi đề dùng câu đó, cảnh báo số đề/bài nộp bị ảnh hưởng, tuỳ chọn chấm lại khi đổi đáp án

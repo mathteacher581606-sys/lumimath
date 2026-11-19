@@ -281,8 +281,12 @@ export class BankController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)
   @Get('duplicates')
-  findDuplicatePairs(@CurrentUser() user: any) {
-    return this.bankService.findDuplicatePairs(user.id);
+  findDuplicatePairs(@CurrentUser() user: any, @Query() q: any) {
+    return this.bankService.findDuplicatePairs(user.id, {
+      topicId: q?.topicId ? String(q.topicId) : undefined,
+      grade: q?.grade ? Number(q.grade) : undefined,
+      sameTopic: q?.sameTopic === '1' || q?.sameTopic === 'true',
+    });
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

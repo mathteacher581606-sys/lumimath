@@ -226,12 +226,31 @@ export default function BankPage() {
   const [showDupes, setShowDupes] = useState(false);
   const [dupPairs, setDupPairs] = useState<any[]>([]);
   const [dupeBusy, setDupeBusy] = useState(false);
+  // Phạm vi rà: cả kho / 1 khối / 1 thư mục; tuỳ chọn chỉ so câu cùng chủ đề
+  const [dupGrade, setDupGrade] = useState('');
+  const [dupTopic, setDupTopic] = useState('');
+  const [dupSameTopic, setDupSameTopic] = useState(false);
+  const [dupScanned, setDupScanned] = useState(false);
+
+  function openDuplicates() {
+    // Mặc định lấy theo bộ lọc đang xem để rà nhanh đúng chỗ giáo viên đang làm
+    setDupGrade(fGrade || '');
+    setDupTopic(fTopic || '');
+    setDupPairs([]);
+    setDupScanned(false);
+    setShowDupes(true);
+  }
 
   async function scanDuplicates() {
     setShowDupes(true);
     setDupeBusy(true);
     try {
-      const pairs = await apiFetch('/bank/duplicates');
+      const p = new URLSearchParams();
+      if (dupGrade) p.set('grade', dupGrade);
+      if (dupTopic) p.set('topicId', dupTopic);
+      if (dupSameTopic) p.set('sameTopic', '1');
+      const pairs = await apiFetch(`/bank/duplicates?${p.toString()}`);
+      setDupScanned(true);
       setDupPairs(pairs || []);
     } catch (e: any) {
       alert(e.message);
@@ -965,12 +984,19 @@ export default function BankPage() {
   }
 
   // Tìm kiếm thông minh: hiểu "lớp X", "mức Y", tên dạng bài trong 1 câu gõ
+  // Gõ tới đâu tìm tới đó nhưng chờ 300ms sau phím cuối (tránh gọi máy chủ mỗi ký tự)
+  const searchTimer = useRef<any>(null);
   function smartSearch(raw: string) {
     setSearch(raw);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => runSmartSearch(raw), 300);
+  }
+
+  function runSmartSearch(raw: string) {
     const q = raw.trim();
     const overrides: any = {};
-    // Tìm theo ID/mã câu hỏi: A398335, TSA-01, a398335... (chữ + tùy dấu gạch + số)
-    const codeHit = q.match(/^([A-Za-z]{1,4}-?\d{2,6})$/);
+    // Tìm theo mã câu hỏi — gõ 1 PHẦN ĐẦU cũng được: "A1" ra mọi câu có mã bắt đầu bằng A1
+    const codeHit = q.match(/^([A-Za-z]{1,4}-?\d{1,6})$/);
     if (codeHit) {
       const code = codeHit[1].toUpperCase();
       overrides.code = code;
@@ -3013,7 +3039,7 @@ export default function BankPage() {
         <input
           value={search}
           onChange={(e) => smartSearch(e.target.value)}
-          placeholder="🔍 Tìm câu hỏi hoặc ID câu (vd: A398335, lớp 12, mức 3, tên dạng bài)…"
+          placeholder="🔍 Tìm nội dung (gõ LaTeX thoải mái: x^2+1, \\frac12…) hoặc mã câu (A1, A398…), lớp 12, mức 3, tên dạng bài…"
           style={{ flex: 2, minWidth: 220, padding: 10, border: '1.5px solid var(--lm-line-2)', borderRadius: 8, fontSize: 14, background: 'var(--color-surface)' }}
         />
         <button
@@ -3037,7 +3063,7 @@ export default function BankPage() {
         <button className="toolbar-btn" onClick={openFormsManager} title="Quản lý kho dạng bài: đổi tên, gộp dạng trùng, xóa">
           📐 Kho dạng bài
         </button>
-        <button className="toolbar-btn" onClick={scanDuplicates} title="Dò các câu hỏi trùng nhau trong kho để dọn">
+        <button className="toolbar-btn" onClick={openDuplicates} title="Dò các câu hỏi trùng nhau trong kho để dọn">
           🔍 Dò câu trùng
         </button>
       </div>
@@ -3647,18 +3673,58 @@ export default function BankPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
               <h2 style={{ fontSize: 16, margin: 0 }}>🔍 Dò câu hỏi trùng</h2>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                <button className="toolbar-btn" onClick={scanDuplicates}>🔄 Quét lại</button>
+                <button className="toolbar-btn" onClick={scanDuplicates} disabled={dupeBusy}>
+                  {dupScanned ? '🔄 Quét lại' : '▶ Bắt đầu rà'}
+                </button>
                 <button className="toolbar-btn" onClick={() => setShowDupes(false)}>✕ Đóng</button>
               </div>
             </div>
             <p style={{ fontSize: 12, color: 'var(--color-muted)', marginBottom: 10 }}>
-              So khớp chuẩn hóa nội dung (bỏ lệnh LaTeX, dấu, hoa thường). Xóa câu trùng: đề thi/bài tập đang dùng sẽ tự chuyển sang câu giữ lại cùng nội dung — không mất đề.
+              So khớp chuẩn hóa nội dung (bỏ dấu, hoa thường, định dạng LaTeX; vẫn phân biệt \\sin/\\cos, \\le/\\ge…). Xóa câu trùng: đề thi/bài tập đang dùng sẽ tự chuyển sang câu giữ lại cùng nội dung — không mất đề.
             </p>
+            <div className="xl-quick" style={{ marginBottom: 12 }}>
+              <div className="st-field" style={{ flex: '0 1 140px' }}>
+                <label htmlFor="dup-grade">Khối</label>
+                <select id="dup-grade" value={dupGrade} onChange={(e) => { setDupGrade(e.target.value); setDupTopic(''); }}>
+                  <option value="">Tất cả khối</option>
+                  <option value="10">Lớp 10</option>
+                  <option value="11">Lớp 11</option>
+                  <option value="12">Lớp 12</option>
+                </select>
+              </div>
+              <div className="st-field" style={{ flex: '1 1 260px' }}>
+                <label htmlFor="dup-topic">Thư mục (gồm cả thư mục con)</label>
+                <select id="dup-topic" value={dupTopic} onChange={(e) => setDupTopic(e.target.value)}>
+                  <option value="">Toàn bộ {dupGrade ? `lớp ${dupGrade}` : 'kho'}</option>
+                  {(function flat(nodes: any[], depth: number): any[] {
+                    return (nodes || []).flatMap((n: any) =>
+                      dupGrade && n.grade && String(n.grade) !== dupGrade
+                        ? []
+                        : [
+                            <option key={n.id} value={n.id}>
+                              {'— '.repeat(depth)}
+                              {n.name} ({n.count})
+                            </option>,
+                            ...flat(n.children, depth + 1),
+                          ],
+                    );
+                  })(topicTree, 0)}
+                </select>
+              </div>
+              <label className="st-switch" style={{ flex: '1 1 220px', fontSize: 14 }}>
+                <input type="checkbox" checked={dupSameTopic} onChange={(e) => setDupSameTopic(e.target.checked)} />
+                Chỉ so các câu cùng chủ đề (nhanh hơn)
+              </label>
+            </div>
             {dupeBusy ? (
               <p style={{ color: 'var(--color-muted)' }}>Đang quét…</p>
+            ) : !dupScanned ? (
+              <p style={{ color: 'var(--color-muted)', fontSize: 13 }}>
+                Chọn phạm vi rồi bấm “Bắt đầu rà”. Rà trong 1 thư mục hoặc 1 khối nhanh hơn nhiều so với cả kho.
+              </p>
             ) : dupPairs.length === 0 ? (
               <p style={{ color: 'var(--color-muted)', fontSize: 13 }}>
-                🎉 Không tìm thấy câu hỏi nào trùng nhau trong kho.
+                🎉 Không tìm thấy câu hỏi nào trùng nhau trong phạm vi đã chọn.
               </p>
             ) : (
               <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>

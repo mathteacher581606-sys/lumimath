@@ -878,6 +878,96 @@ export class ExamsService {
     return { updated: true };
   }
 
+  /**
+   * Sửa NỘI DUNG / ĐÁP ÁN câu hỏi ngay trong đề → cập nhật luôn câu gốc trong ngân hàng
+   * (một nguồn dữ liệu duy nhất) và tạo lại mã .tex của MỌI đề đang dùng câu này.
+   * regrade=true: chấm lại các bài đã nộp của những đề đó theo đáp án mới.
+   */
+  async updateItemQuestion(
+    teacherId: string,
+    examId: string,
+    itemId: string,
+    body: { content?: string; options?: any; answer?: any; solution?: string | null; regrade?: boolean },
+  ) {
+    const exam = await this.prisma.exam.findFirst({ where: { id: examId, teacherId } });
+    if (!exam) throw new NotFoundException('Không tìm thấy đề thi');
+    const item = await this.prisma.examItem.findFirst({
+      where: { id: itemId, examId },
+      include: { question: { include: { bank: { select: { teacherId: true } } } } },
+    });
+    if (!item) throw new NotFoundException('Không tìm thấy câu trong đề');
+    if ((item.question as any).bank?.teacherId !== teacherId) {
+      throw new ForbiddenException('Câu hỏi này không thuộc ngân hàng của bạn');
+    }
+    const q: any = item.question;
+    const data: any = {};
+    if (typeof body.content === 'string') {
+      if (!body.content.trim()) throw new BadRequestException('Nội dung câu hỏi không được trống');
+      data.content = body.content;
+    }
+    if (body.solution !== undefined) data.solution = body.solution || null;
+    if (body.options !== undefined) {
+      if (body.options !== null && !Array.isArray(body.options)) {
+        throw new BadRequestException('Danh sách lựa chọn không hợp lệ');
+      }
+      data.options = body.options;
+    }
+    if (body.answer !== undefined) {
+      const a = body.answer;
+      const opts: any[] = Array.isArray(data.options ?? q.options) ? (data.options ?? q.options) : [];
+      const ids = opts.map((o) => String(o?.id));
+      if (q.type === 'MCQ' && !ids.includes(String(a))) {
+        throw new BadRequestException('Đáp án phải là một trong các lựa chọn');
+      }
+      if (q.type === 'TRUE_FALSE' && (typeof a !== 'object' || !a || ids.some((id) => typeof a[id] !== 'boolean'))) {
+        throw new BadRequestException('Câu Đúng/Sai cần chọn Đúng hoặc Sai cho từng ý');
+      }
+      if (q.type === 'SHORT_ANSWER' && !String(a ?? '').trim()) {
+        throw new BadRequestException('Câu trả lời ngắn cần có đáp án');
+      }
+      data.answer = a;
+    }
+    if (!Object.keys(data).length) return { updated: false };
+
+    await this.prisma.question.update({ where: { id: q.id }, data });
+
+    // Tạo lại .tex cho mọi đề của GV đang dùng câu này
+    const examIds = (
+      await this.prisma.examItem.findMany({
+        where: { questionId: q.id, exam: { teacherId } },
+        select: { examId: true },
+        distinct: ['examId'],
+      })
+    ).map((x) => x.examId);
+    for (const id of examIds) await this.regenerateTex(teacherId, id);
+
+    let regraded = 0;
+    if (body.regrade && data.answer !== undefined) {
+      for (const id of examIds) {
+        const r: any = await this.regradeExam(id, teacherId).catch(() => null);
+        regraded += Number(r?.total ?? 0) || 0;
+      }
+    }
+    return { updated: true, exams: examIds.length, regraded };
+  }
+
+  // Câu này đang dùng ở bao nhiêu đề / đã có bao nhiêu bài nộp (để cảnh báo trước khi sửa)
+  async itemQuestionUsage(teacherId: string, examId: string, itemId: string) {
+    const item = await this.prisma.examItem.findFirst({
+      where: { id: itemId, examId, exam: { teacherId } },
+      select: { questionId: true },
+    });
+    if (!item) throw new NotFoundException('Không tìm thấy câu trong đề');
+    const items = await this.prisma.examItem.findMany({
+      where: { questionId: item.questionId },
+      select: { examId: true, exam: { select: { title: true, _count: { select: { attempts: true } } } } },
+      distinct: ['examId'],
+    });
+    return {
+      exams: items.map((i) => ({ id: i.examId, title: i.exam.title, attempts: i.exam._count.attempts })),
+    };
+  }
+
   // Xóa câu hỏi khỏi đề
   async removeItem(teacherId: string, examId: string, itemId: string) {
     const exam = await this.prisma.exam.findFirst({

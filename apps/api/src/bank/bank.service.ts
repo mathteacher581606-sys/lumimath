@@ -1198,13 +1198,18 @@ export class BankService {
     if (query.form) where.form = query.form;
     if (query.source) where.source = query.source;
     if (query.difficulty) where.difficulty = query.difficulty;
-    if (query.q) where.content = { contains: query.q };
     if (query.code) {
-      // Tìm theo ID/mã câu hỏi (vd: A398335) — khớp CHÍNH XÁC, không phân biệt hoa thường
+      // Tìm theo mã câu: gõ 1 phần đầu (vd "A1") ra mọi câu có mã BẮT ĐẦU bằng "A1"
       where.code = {
-        equals: String(query.code).toUpperCase(),
+        startsWith: String(query.code).trim().toUpperCase(),
         mode: 'insensitive',
       };
+    }
+    if (query.q && String(query.q).trim()) {
+      // Tìm theo nội dung, HIỂU LaTeX: bỏ dấu tiếng Việt, khoảng trắng, $, {}, \left/\right,
+      // \dfrac≡\frac… rồi khớp TỪNG cụm từ khoá → "x^2 + 1" tìm được "$x^{2}+1$"
+      const ids = await this.searchContentIds(where, String(query.q));
+      where.id = { in: ids };
     }
 
     const page = Math.max(1, Number(query.page) || 1);
@@ -1238,6 +1243,50 @@ export class BankService {
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
     };
+  }
+
+  // Chuẩn hoá để TÌM KIẾM (khác chuẩn hoá chống trùng): bỏ hết khoảng trắng và ký hiệu
+  // định dạng LaTeX để cách gõ khác nhau vẫn khớp nhau
+  private searchNorm(s: string): string {
+    return String(s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/\\[dt]frac(?![a-z])/g, '\\frac')
+      .replace(/\\(?:left|right|displaystyle|limits|nolimits|mathrm|text|textit|textbf|quad|qquad)(?![a-z])/g, '')
+      .replace(/\\[,;:! ]/g, '')
+      .replace(/\\[()\[\]]/g, '')
+      .replace(/[\s${}\\]/g, '');
+  }
+
+  private async searchContentIds(where: any, raw: string): Promise<string[]> {
+    const tokens = raw
+      .trim()
+      .split(/\s+/)
+      .map((t) => this.searchNorm(t))
+      .filter(Boolean);
+    if (!tokens.length) return [];
+    const whole = this.searchNorm(raw);
+    const rows = await this.prisma.question.findMany({
+      where,
+      select: { id: true, content: true, options: true, solution: true },
+    });
+    const hits: { id: string; rank: number }[] = [];
+    for (const r of rows) {
+      const opts = Array.isArray(r.options)
+        ? (r.options as any[]).map((o) => (o && o.text) || '').join(' ')
+        : '';
+      const main = this.searchNorm(r.content + ' ' + opts);
+      const sol = this.searchNorm(r.solution || '');
+      if (tokens.every((t) => main.includes(t))) {
+        hits.push({ id: r.id, rank: main.includes(whole) ? 0 : 1 });
+      } else if (tokens.every((t) => main.includes(t) || sol.includes(t))) {
+        hits.push({ id: r.id, rank: 2 }); // khớp nhờ lời giải → xếp sau
+      }
+    }
+    hits.sort((a, b) => a.rank - b.rank);
+    return hits.slice(0, 5000).map((h) => h.id);
   }
 
   // Xuất các câu hỏi đã chọn ra .docx (0 token AI)
@@ -1663,13 +1712,45 @@ export class BankService {
   }
 
   // Quét toàn kho tìm các CẶP câu trùng nhau
-  async findDuplicatePairs(teacherId: string) {
+  /**
+   * Rà câu trùng trong kho, có thể THU HẸP phạm vi để nhanh hơn:
+   * - topicId: chỉ trong 1 thư mục (gồm cả thư mục con); grade: chỉ 1 khối lớp
+   * - sameTopic: chỉ so các câu nằm CÙNG chủ đề với nhau
+   */
+  async findDuplicatePairs(
+    teacherId: string,
+    opts: { topicId?: string; grade?: number; sameTopic?: boolean } = {},
+  ) {
     const bank = await this.getBank(teacherId);
+    const where: any = { bankId: bank.id };
+    if (opts.grade) where.grade = opts.grade;
+    if (opts.topicId) {
+      await this.ensureOwnTopic(teacherId, opts.topicId);
+      where.topicId = { in: await this.topicWithDescendants(bank.id, opts.topicId) };
+    }
     const questions = await this.prisma.question.findMany({
-      where: { bankId: bank.id },
-      select: { id: true, code: true, content: true, createdAt: true },
+      where,
+      select: { id: true, code: true, content: true, createdAt: true, topicId: true },
       orderBy: { createdAt: 'asc' },
     });
+    if (!opts.sameTopic) return this.duplicatePairsIn(questions);
+    // So riêng từng chủ đề
+    const byTopic = new Map<string, any[]>();
+    for (const q of questions) {
+      const k = q.topicId || '_';
+      if (!byTopic.has(k)) byTopic.set(k, []);
+      byTopic.get(k)!.push(q);
+    }
+    const all: any[] = [];
+    for (const list of byTopic.values()) {
+      if (list.length < 2) continue;
+      all.push(...(await this.duplicatePairsIn(list)));
+      if (all.length > 2000) break;
+    }
+    return all;
+  }
+
+  private async duplicatePairsIn(questions: any[]) {
     const pairs: {
       keep: { id: string; code: string; content: string };
       dup: { id: string; code: string; content: string };

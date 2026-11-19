@@ -7,6 +7,7 @@ import { apiFetch } from '@/lib/api';
 import { formatAnswer } from '@/lib/answer';
 import LatexRenderer from '@/components/LatexRenderer';
 import EssayFinalize from '@/components/EssayFinalize';
+import ExamItemEditor from '@/components/ExamItemEditor';
 
 const DIFF_LABEL: Record<string, string> = {
   NHAN_BIET: 'Nhận biết',
@@ -133,6 +134,8 @@ export default function ExamDetailPage() {
 
   const [exam, setExam] = useState<any>(null);
   const [bankQuestions, setBankQuestions] = useState<any[]>([]);
+  // Câu đang được sửa trực tiếp trong đề
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const [showResults, setShowResults] = useState(false);
@@ -814,8 +817,30 @@ export default function ExamDetailPage() {
                   )}
                 </div>
 
+                {editingItemId === item.id && (
+                  <ExamItemEditor
+                    examId={examId}
+                    item={item}
+                    onCancel={() => setEditingItemId(null)}
+                    onSaved={(msg) => {
+                      setEditingItemId(null);
+                      showToast(msg);
+                      load();
+                    }}
+                  />
+                )}
+
                 {/* Công cụ sửa câu hỏi */}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: '1px solid var(--color-rule)', paddingTop: 10 }}>
+                  <button
+                    type="button"
+                    className="btn sh-btn-accent"
+                    style={{ width: 'auto', minHeight: 36, padding: '0 14px', fontSize: 13 }}
+                    aria-expanded={editingItemId === item.id}
+                    onClick={() => setEditingItemId(editingItemId === item.id ? null : item.id)}
+                  >
+                    {editingItemId === item.id ? 'Đóng sửa' : '✏️ Sửa câu hỏi & đáp án'}
+                  </button>
                   <label style={{ fontSize: 12, color: 'var(--color-muted)' }}>Điểm:</label>
                   <input
                     type="number"

@@ -657,6 +657,26 @@ export class ExamsController {
     res.send(pdf);
   }
 
+  // Sửa nội dung/đáp án câu hỏi ngay trong đề (cập nhật luôn ngân hàng câu hỏi)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Patch(':id/items/:itemId/question')
+  updateItemQuestion(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() body: any,
+  ) {
+    return this.examsService.updateItemQuestion(user.id, id, itemId, body || {});
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get(':id/items/:itemId/usage')
+  itemUsage(@CurrentUser() user: any, @Param('id') id: string, @Param('itemId') itemId: string) {
+    return this.examsService.itemQuestionUsage(user.id, id, itemId);
+  }
+
   // Biên dịch thử LaTeX bất kỳ (tự bọc preamble nếu là snippet, hỗ trợ TikZ)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)
