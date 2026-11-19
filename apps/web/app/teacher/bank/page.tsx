@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/api';
 import LatexRenderer from '@/components/LatexRenderer';
 import { formatAnswer } from '@/lib/answer';
+import BankTopicSidebar from '@/components/bank/BankTopicSidebar';
 
 // Trình soạn LaTeX (CodeMirror ≈ 200KB) chỉ cần khi mở khung sửa → nạp lười để giảm tải trang đầu
 const LatexEditor = dynamic(() => import('@/components/LatexEditor'), {
@@ -1721,202 +1722,38 @@ export default function BankPage() {
     <div className="page-container lm-bank">
       <div className="lm-layout">
         {/* ================= SIDEBAR: CÂY MỤC LỤC ================= */}
-        <aside className="lm-sidebar">
-          <div className="lm-sidebar-head" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ flex: 1 }}>Cây mục lục</span>
-            <button
-              type="button"
-              className="lm-filter-btn"
-              style={{ fontSize: 11, padding: '3px 8px' }}
-              title="Cập nhật cây mục lục lớp 10 + 11 + 12 (CHƯƠNG → Bài → Dạng)"
-              disabled={seeding}
-              onClick={seedGrade10}
-            >
-              {seeding ? '⏳' : '🔄'} Mục lục
-            </button>
-            <button
-              type="button"
-              className="lm-filter-btn"
-              style={{ fontSize: 11, padding: '3px 8px' }}
-              title="AI phân loại lại toàn bộ câu hỏi trong ngân hàng theo cây mục lục"
-              disabled={reclassifying}
-              onClick={reclassifyAll}
-            >
-              {reclassifying ? '⏳ AI…' : '🤖'} Phân loại lại
-            </button>
-          </div>
-          <div className="lm-sidebar-search">
-            <input
-              value={folderQuery}
-              onChange={(e) => setFolderQuery(e.target.value)}
-              placeholder="🔍 Tìm thư mục..."
-            />
-          </div>
-          {/* Dạng bài (tìm kiếm nhanh theo dạng) */}
-          <div style={{ borderBottom: '1px solid var(--lm-line)', padding: '8px 10px', background: 'var(--color-paper-2)' }}>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <select
-                value={fForm}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setFForm(v);
-                  loadQuestions({ form: v });
-                }}
-                style={{ flex: 1, minWidth: 0, padding: '7px 8px', border: '1px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: 'var(--color-surface)', color: 'var(--lm-maroon)' }}
-              >
-                <option value="">📐 Dạng bài: Tất cả</option>
-                {forms.map((f) => (
-                  <option key={f.name} value={f.name}>
-                    {f.name} ({f.count})
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="lm-filter-add"
-                onClick={openFormsManager}
-                title="Mở Kho dạng bài"
-              >
-                ⚙
-              </button>
-            </div>
-          </div>
-
-          {/* Nguồn đề (Trường/Sở/Đề HKI...) */}
-          <div style={{ borderBottom: '1px solid var(--lm-line)', padding: '8px 10px', background: 'var(--color-paper-2)' }}>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <select
-                value={fSource}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setFSource(v);
-                  loadQuestions({ source: v });
-                }}
-                style={{ flex: 1, minWidth: 0, padding: '7px 8px', border: '1px solid var(--lm-line-2)', borderRadius: 6, fontSize: 12.5, fontWeight: 700, background: 'var(--color-surface)', color: 'var(--lm-maroon)' }}
-              >
-                <option value="">🏫 Nguồn đề: Tất cả</option>
-                {sources.map((s) => (
-                  <option key={s.name} value={s.name}>
-                    {s.name} ({s.count})
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="lm-filter-add"
-                onClick={quickAddSource}
-                title="Thêm nguồn đề mới"
-              >
-                ＋
-              </button>
-            </div>
-            {sources.length > 0 && (
-              <div style={{ marginTop: 6, maxHeight: 130, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-                {sources.map((s) => (
-                  <button
-                    key={s.name}
-                    type="button"
-                    className={`lm-tree-row${fSource === s.name ? ' active' : ''}`}
-                    style={{ padding: '4px 8px', fontSize: 12 }}
-                    onClick={() => {
-                      const v = fSource === s.name ? '' : s.name;
-                      setFSource(v);
-                      loadQuestions({ source: v });
-                    }}
-                  >
-                    <span className="lm-tree-label">{s.name}</span>
-                    <span className="lm-tree-count">{s.count}</span>
-                    <span
-                      className="lm-tree-action"
-                      title="Xóa nguồn đề này"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeSourceByName(s.name);
-                      }}
-                    >
-                      🗑️
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="lm-tree">
-            {/* Tất cả */}
-            {(() => {
-              const q = folderQuery.trim().toLowerCase();
-              const allActive = !fGrade && !fTopic;
-              return (
-                <button
-                  type="button"
-                  className={`lm-tree-row all${allActive ? ' active' : ''}`}
-                  onClick={selectAll}
-                >
-                  <span className="lm-tree-toggle">▤</span>
-                  <span className="lm-tree-label">Tất cả</span>
-                  <span className="lm-tree-count">{summary?.total ?? 0}</span>
-                </button>
-              );
-            })()}
-
-            {/* Từng lớp → CÂY MỤC LỤC (CHƯƠNG → Bài → Dạng) */}
-            {GRADE_ROWS.map(({ key, label }) => {
-              const q = folderQuery.trim().toLowerCase();
-              const subtreeMatches = (n: any): boolean =>
-                !q ||
-                String(n.name).toLowerCase().includes(q) ||
-                (n.children || []).some((c: any) => subtreeMatches(c));
-              const roots = topicTree.filter(
-                (t) =>
-                  String(t.grade ?? 'none') === key &&
-                  !t.parentId &&
-                  subtreeMatches(t),
-              );
-              const gradeCount =
-                key === 'none'
-                  ? summary?.byGrade?.none ?? 0
-                  : summary?.byGrade?.[key] ?? 0;
-              if (key !== 'none' && !roots.length && !gradeCount) return null;
-              if (key === 'none' && !roots.length) return null;
-              const expanded = expandedGrades.has(key);
-              const isGradeActive =
-                fGrade === (key === 'none' ? '' : key) && !fTopic && key !== 'none';
-              return (
-                <div key={key}>
-                  <button
-                    type="button"
-                    className={`lm-tree-row lm-grade-row${isGradeActive ? ' active' : ''}`}
-                    onClick={() => {
-                      toggleGrade(key);
-                      if (key !== 'none') selectGrade(key);
-                    }}
-                  >
-                    <span className="lm-tree-toggle">{expanded ? '∨' : '›'}</span>
-                    <span className="lm-tree-label">{label}</span>
-                    <span className="lm-tree-count">{gradeCount}</span>
-                    {key !== 'none' && (
-                      <span
-                        className="lm-tree-action"
-                        title={`Thêm chủ đề vào ${label}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          quickAddTopic(key);
-                        }}
-                      >
-                        ＋
-                      </span>
-                    )}
-                  </button>
-                  {expanded && roots.length > 0 && (
-                    <div className="lm-tree-children">
-                      {roots.map((node: any) => renderTopicNode(node, 0))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </aside>
+        <BankTopicSidebar
+          tree={topicTree}
+          summary={summary}
+          fGrade={fGrade}
+          fTopic={fTopic}
+          onSelectAll={selectAll}
+          onSelectGrade={selectGrade}
+          onSelectTopic={(n: any) => selectTopic({ id: n.id, grade: n.grade })}
+          onReload={async () => {
+            await Promise.all([loadTopicTree(), loadTopics(), loadSummary()]);
+            loadQuestions();
+          }}
+          forms={forms}
+          fForm={fForm}
+          onPickForm={(v) => {
+            setFForm(v);
+            loadQuestions({ form: v });
+          }}
+          onOpenForms={openFormsManager}
+          sources={sources}
+          fSource={fSource}
+          onPickSource={(v) => {
+            setFSource(v);
+            loadQuestions({ source: v });
+          }}
+          onAddSource={quickAddSource}
+          onRemoveSource={removeSourceByName}
+          seeding={seeding}
+          onSeed={seedGrade10}
+          reclassifying={reclassifying}
+          onReclassify={reclassifyAll}
+        />
 
         {/* ================= VÙNG NỘI DUNG ================= */}
         <div className="lm-main">

@@ -13,6 +13,7 @@ import { UpdateTopicDto } from './dto/update-topic.dto';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
 
+import { compareTopics, coreKey, fullKey, isChapterName, tokenScore } from './topic-order';
 @Injectable()
 export class BankService {
   constructor(
@@ -390,6 +391,8 @@ export class BankService {
       if (!byParent.has(key)) byParent.set(key, []);
       byParent.get(key)!.push(t);
     }
+    // Sắp xếp tự nhiên: Chương I < II < … < IX, Bài 1 < … < 10, mục lẻ xuống cuối
+    byParent.forEach((list) => list.sort(compareTopics));
     const build = (parentId: string | null): any[] =>
       (byParent.get(parentId) || []).map((t) => {
         const children = build(t.id);
@@ -599,6 +602,161 @@ export class BankService {
       where: { id: topicId },
       data: { ...dto },
     });
+  }
+
+  // ===== SẮP XẾP LẠI MỤC LỤC: gợi ý (không đổi dữ liệu) =====
+  // 1) Mục trùng tên cùng cấp ("Dạng 2. X" và "Dạng 2: X") → gộp
+  // 2) Mục lẻ nằm ở gốc một lớp (không phải chương) → gộp vào mục cùng tên trong cây chuẩn,
+  //    hoặc chuyển vào chương gần nghĩa nhất
+  async topicTidyPlan(teacherId: string) {
+    const bank = await this.getBank(teacherId);
+    const topics = await this.prisma.topic.findMany({
+      where: { bankId: bank.id },
+      include: { _count: { select: { questions: true, children: true } } },
+    });
+    const byId = new Map(topics.map((t) => [t.id, t]));
+    const pathOf = (id: string | null): string => {
+      const names: string[] = [];
+      let cur = id ? byId.get(id) : undefined;
+      let guard = 0;
+      while (cur && guard++ < 10) {
+        names.unshift(cur.name);
+        cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+      }
+      return names.join(' › ');
+    };
+    const brief = (t: any) => ({
+      id: t.id,
+      name: t.name,
+      grade: t.grade,
+      path: pathOf(t.id),
+      questions: t._count.questions,
+      children: t._count.children,
+    });
+    const actions: any[] = [];
+    const used = new Set<string>();
+
+    // 1) Trùng tên cùng cấp
+    const groups = new Map<string, any[]>();
+    for (const t of topics) {
+      const k = `${t.parentId || 'root'}|${t.grade ?? ''}|${fullKey(t.name)}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(t);
+    }
+    groups.forEach((list) => {
+      if (list.length < 2) return;
+      // Giữ mục có nhiều con / nhiều câu nhất (thường là mục của cây chuẩn)
+      list.sort(
+        (a, b) =>
+          b._count.children - a._count.children ||
+          b._count.questions - a._count.questions ||
+          a.createdAt.getTime() - b.createdAt.getTime(),
+      );
+      const keep = list[0];
+      for (const t of list.slice(1)) {
+        used.add(t.id);
+        actions.push({
+          kind: 'merge',
+          reason: 'Trùng tên với mục cùng cấp',
+          from: brief(t),
+          into: brief(keep),
+          gradeChange: null,
+        });
+      }
+    });
+
+    // 2) Mục lẻ ở gốc
+    const nonRoot = topics.filter((t) => t.parentId);
+    for (const t of topics) {
+      if (t.parentId || used.has(t.id) || isChapterName(t.name)) continue;
+      const key = coreKey(t.name);
+      // Trùng tên lõi (bỏ nhãn/dấu) → khớp chắc; không thì tên gần giống ≥ 70% với một mục lá
+      const same = nonRoot
+        .filter((x) => x.id !== t.id && key && coreKey(x.name) === key)
+        .sort((a, b) => (a.grade === t.grade ? -1 : 0) - (b.grade === t.grade ? -1 : 0));
+      if (!same.length && t._count.children === 0) {
+        const near = nonRoot
+          .filter((x) => x.id !== t.id && x._count.children === 0)
+          .map((x) => ({ x, sc: tokenScore(t.name, x.name) + (x.grade === t.grade ? 0.05 : 0) }))
+          .filter((r) => r.sc >= 0.7)
+          .sort((a, b) => b.sc - a.sc);
+        if (near.length) same.push(near[0].x);
+      }
+      if (same.length) {
+        const into = same[0];
+        actions.push({
+          kind: 'merge',
+          reason: 'Đã có mục cùng (hoặc gần cùng) tên trong mục lục',
+          from: brief(t),
+          into: brief(into),
+          gradeChange: into.grade !== t.grade ? { from: t.grade, to: into.grade } : null,
+        });
+        continue;
+      }
+      // Chương cùng lớp có nội dung (tên chương + tên con cháu) gần nghĩa nhất
+      const chapters = topics.filter((c) => !c.parentId && c.grade === t.grade && isChapterName(c.name));
+      let best: any = null;
+      let bestScore = 0;
+      for (const c of chapters) {
+        const desc = nonRoot.filter((x) => pathOf(x.id).startsWith(c.name));
+        const score = Math.max(tokenScore(t.name, c.name), ...desc.map((d) => tokenScore(t.name, d.name)), 0);
+        if (score > bestScore) {
+          bestScore = score;
+          best = c;
+        }
+      }
+      actions.push(
+        best && bestScore >= 0.25
+          ? { kind: 'move', reason: 'Mục lẻ — gợi ý chương gần nghĩa nhất', from: brief(t), into: brief(best), gradeChange: null }
+          : { kind: 'manual', reason: 'Mục lẻ — chưa tìm được chương phù hợp, hãy chọn tay', from: brief(t), into: null, gradeChange: null },
+      );
+    }
+    return { actions };
+  }
+
+  // ===== SẮP XẾP LẠI MỤC LỤC: áp dụng các thao tác GV đã duyệt =====
+  async topicTidyApply(teacherId: string, body: any) {
+    const bank = await this.getBank(teacherId);
+    const list: any[] = Array.isArray(body?.actions) ? body.actions.slice(0, 300) : [];
+    let merged = 0;
+    let moved = 0;
+    let questions = 0;
+    for (const a of list) {
+      const fromId = String(a?.fromId || '');
+      const intoId = String(a?.intoId || '');
+      if (!fromId || !intoId || fromId === intoId) continue;
+      const [from, into] = await Promise.all([
+        this.prisma.topic.findFirst({ where: { id: fromId, bankId: bank.id } }),
+        this.prisma.topic.findFirst({ where: { id: intoId, bankId: bank.id } }),
+      ]);
+      if (!from || !into) continue; // đã bị gộp/xoá ở thao tác trước
+      const sub = await this.topicWithDescendants(bank.id, fromId);
+      if (sub.includes(intoId)) {
+        throw new BadRequestException(`Không thể đưa "${from.name}" vào chính mục con của nó`);
+      }
+      if (a.kind === 'merge') {
+        // Câu hỏi + đề + mục con của "from" chuyển sang "into", rồi xoá "from"
+        const r = await this.prisma.$transaction(async (tx) => {
+          const q = await tx.question.updateMany({
+            where: { topicId: fromId },
+            data: { topicId: intoId, ...(into.grade !== from.grade && into.grade ? { grade: into.grade } : {}) },
+          });
+          await tx.exam.updateMany({ where: { topicId: fromId }, data: { topicId: intoId } });
+          await tx.topic.updateMany({ where: { parentId: fromId }, data: { parentId: intoId } });
+          await tx.topic.delete({ where: { id: fromId } });
+          return q.count;
+        });
+        merged++;
+        questions += r;
+      } else {
+        await this.prisma.topic.update({
+          where: { id: fromId },
+          data: { parentId: intoId, ...(into.grade ? { grade: into.grade } : {}) },
+        });
+        moved++;
+      }
+    }
+    return { merged, moved, questions };
   }
 
   async removeTopic(teacherId: string, topicId: string) {

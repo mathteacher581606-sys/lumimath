@@ -98,6 +98,21 @@ export class BankController {
     return this.bankService.createTopic(user.id, dto);
   }
 
+  // Sắp xếp lại mục lục: xem gợi ý (không đổi dữ liệu) → áp dụng các mục GV đã tick
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get('topics/tidy')
+  topicTidyPlan(@CurrentUser() user: any) {
+    return this.bankService.topicTidyPlan(user.id);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post('topics/tidy')
+  topicTidyApply(@CurrentUser() user: any, @Body() body: any) {
+    return this.bankService.topicTidyApply(user.id, body);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)
   @Patch('topics/:id')

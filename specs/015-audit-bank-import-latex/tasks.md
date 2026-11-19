@@ -38,3 +38,10 @@
       (`GET /bank/matrix?grade=&topicId=`), chip bộ lọc có ×, thanh thao tác khi chọn câu, thẻ câu: mã nổi bật,
       phương án đúng tô xanh, ý Đúng/Sai gắn nhãn; bỏ emoji ở cây thư mục; CSS chỉ dùng token (5 bảng màu).
       Kiểm chứng: syntax pass; chưa build trên VPS.
+- [x] Mục lục ngân hàng câu hỏi (mẫu NganHang): nút gạt Lớp 10/11/12, tìm trong mục lục, tên VIẾT HOA hiển thị dạng câu
+      ("Chương I. Mệnh đề và tập hợp"), bấm tên để lọc cả chương/bài, nút ⋯ từng mục (thêm con / đổi tên / chuyển–gộp / xoá),
+      Dạng bài & Nguồn đề chuyển xuống dưới cây.
+- [x] Sắp xếp tự nhiên ở máy chủ: Chương I < II < … < IX, Bài 2 < Bài 10, mục lẻ không nhãn xuống cuối (`topic-order.ts`).
+- [x] "Sắp xếp lại": `GET /bank/topics/tidy` gợi ý (gộp mục trùng tên cùng cấp; mục lẻ ở gốc → gộp vào mục cùng/gần cùng tên
+      hoặc chuyển vào chương gần nghĩa nhất; còn lại GV chọn tay) → `POST /bank/topics/tidy` chỉ áp dụng mục GV tick.
+      Gộp: chuyển câu hỏi + đề + mục con rồi xoá mục cũ; báo trước nếu câu hỏi đổi lớp.
