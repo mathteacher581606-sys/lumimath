@@ -1768,16 +1768,17 @@ export default function BankPage() {
             </p>
           </div>
           <div className="bk-head-actions">
+            <button type="button" className="btn btn-outline bk-btn is-tool" onClick={openDuplicates}>
+              Rà câu trùng
+            </button>
+            <span className="bk-head-sep" aria-hidden="true" />
             <button type="button" className="btn btn-outline bk-btn" onClick={() => setShowDocxImport(true)}>
               Nhập từ Word
             </button>
             <button type="button" className="btn btn-outline bk-btn" aria-expanded={showImport} onClick={() => setShowImport(!showImport)}>
               Nhập đề .tex
             </button>
-            <button type="button" className="btn btn-outline bk-btn" onClick={openDuplicates}>
-              Rà câu trùng
-            </button>
-            <button type="button" className="btn sh-btn-accent bk-btn" aria-expanded={showForm} onClick={() => setShowForm(!showForm)}>
+            <button type="button" className="btn sh-btn-accent bk-btn is-primary" aria-expanded={showForm} onClick={() => setShowForm(!showForm)}>
               {showForm ? 'Đóng' : '+ Thêm câu hỏi'}
             </button>
           </div>

@@ -4634,8 +4634,13 @@ textarea.ex-input {
 }
 .bk-head p { margin: 4px 0 0; color: var(--color-muted); font-size: 13.5px; }
 .bk-head p b { color: var(--color-ink); }
-.bk-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.bk-btn { font-size: 13px; padding: 8px 14px; }
+.bk-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+/* .btn mặc định rộng 100% — ở đầu trang phải co theo nội dung */
+.bk-btn { width: auto; flex: 0 0 auto; white-space: nowrap; font-size: 13px; padding: 8px 14px; }
+.bk-btn.is-tool { border-color: transparent; background: transparent; color: var(--color-muted); }
+.bk-btn.is-tool:hover { background: var(--color-paper-2); color: var(--color-ink); }
+.bk-btn.is-primary { padding: 8px 18px; }
+.bk-head-sep { width: 1px; height: 22px; background: var(--color-rule-2); margin: 0 4px; }
 
 /* Bảng loại câu × mức độ */
 .bk-stats {
@@ -4820,6 +4825,8 @@ span.bk-stats-h { cursor: default; }
 
 @media (max-width: 720px) {
   .bk-head h1 { font-size: 22px; }
+  .bk-head-actions { justify-content: flex-start; }
+  .bk-head-sep { display: none; }
   .bk-stats { grid-template-columns: minmax(90px, 1.2fr) repeat(4, 1fr) 0.8fr; padding: 8px; }
   .bk-cell { font-size: 13px; padding: 6px 2px; }
 }
