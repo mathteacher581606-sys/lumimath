@@ -15,6 +15,8 @@ COPY server.js .
 COPY texmf/ /usr/local/texlive/texmf-local/
 RUN texhash
 
+# Trong container nghe mọi giao diện; docker-compose chỉ publish ra 127.0.0.1
+ENV HOST=0.0.0.0
 EXPOSE 8080
 
 CMD ["node", "server.js"]

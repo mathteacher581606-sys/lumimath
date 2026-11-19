@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Header,
+  HttpException,
   Param,
   Patch,
   Post,
@@ -25,6 +26,30 @@ import { CreateExamDto } from './dto/create-exam.dto';
 @Controller('exams')
 export class ExamsController {
   constructor(private readonly examsService: ExamsService) {}
+
+  // ===== Giới hạn biên dịch (chống làm treo TeX Live / đầy ổ đĩa) =====
+  // Mỗi tài khoản: tối đa N lần biên dịch / 10 phút (ảnh đã có trong bộ nhớ đệm vẫn được tính
+  // vì không biết trước) — học sinh 60, giáo viên 400.
+  private static compileHits = new Map<string, number[]>();
+  private rateLimit(user: any, limit?: number) {
+    const max = limit ?? (user?.role === 'STUDENT' ? 60 : 400);
+    const now = Date.now();
+    const key = String(user?.id || 'anon');
+    const arr = (ExamsController.compileHits.get(key) || []).filter((t) => now - t < 600000);
+    if (arr.length >= max) {
+      throw new HttpException('Bạn biên dịch quá nhiều trong thời gian ngắn, thử lại sau ít phút', 429);
+    }
+    arr.push(now);
+    ExamsController.compileHits.set(key, arr);
+    if (ExamsController.compileHits.size > 5000) ExamsController.compileHits.clear();
+  }
+
+  private checkSnippet(user: any, snippet: any): string {
+    const s = String(snippet || '');
+    if (s.length > 20000) throw new HttpException('Đoạn LaTeX quá dài (tối đa 20.000 ký tự)', 413);
+    this.rateLimit(user);
+    return s;
+  }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)
@@ -630,7 +655,8 @@ export class ExamsController {
   @Roles(Role.TEACHER)
   @Post('compile-preview')
   @Header('Content-Type', 'application/pdf')
-  async compilePreview(@Body() body: any, @Res() res: Response) {
+  async compilePreview(@CurrentUser() user: any, @Body() body: any, @Res() res: Response) {
+    this.rateLimit(user, 120);
     const pdf = await this.examsService.compileSmart(body?.source || '');
     res.setHeader('Content-Disposition', 'inline; filename="preview.pdf"');
     res.send(pdf);
@@ -640,8 +666,11 @@ export class ExamsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post('compile-tikz')
   @Header('Content-Type', 'image/png')
-  async compileTikz(@Body() body: any, @Res() res: Response) {
-    const png = await this.examsService.compileTikzSnippet(body?.snippet || '');
+  async compileTikz(@CurrentUser() user: any, @Body() body: any, @Res() res: Response) {
+    const snippet = this.checkSnippet(user, body?.snippet);
+    const png = await this.examsService.compileTikzSnippet(snippet, {
+      persist: user?.role !== 'STUDENT',
+    });
     res.setHeader('Content-Disposition', 'inline; filename="tikz.png"');
     res.send(png);
   }
@@ -651,8 +680,8 @@ export class ExamsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post('compile-math')
   @Header('Content-Type', 'image/png')
-  async compileMath(@Body() body: any, @Res() res: Response) {
-    const png = await this.examsService.compileMathSnippet(body?.latex || '');
+  async compileMath(@CurrentUser() user: any, @Body() body: any, @Res() res: Response) {
+    const png = await this.examsService.compileMathSnippet(this.checkSnippet(user, body?.latex));
     res.setHeader('Content-Disposition', 'inline; filename="math.png"');
     res.send(png);
   }
@@ -661,8 +690,8 @@ export class ExamsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post('compile-latex')
   @Header('Content-Type', 'image/png')
-  async compileLatex(@Body() body: any, @Res() res: Response) {
-    const png = await this.examsService.compileLatexSnippet(body?.latex || '');
+  async compileLatex(@CurrentUser() user: any, @Body() body: any, @Res() res: Response) {
+    const png = await this.examsService.compileLatexSnippet(this.checkSnippet(user, body?.latex));
     res.setHeader('Content-Disposition', 'inline; filename="latex.png"');
     res.send(png);
   }

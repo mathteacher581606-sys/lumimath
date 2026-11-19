@@ -850,8 +850,18 @@ export class ExamsService {
     });
     if (!exam) throw new NotFoundException('Không tìm thấy đề thi');
 
+    // Câu phải thuộc ĐÚNG đề này (trước đây chỉ kiểm tra đề → sửa được câu của đề người khác)
+    const item = await this.prisma.examItem.findFirst({ where: { id: itemId, examId } });
+    if (!item) throw new NotFoundException('Không tìm thấy câu trong đề');
+
     const data: any = {};
-    if (dto.score !== undefined) data.score = dto.score;
+    if (dto.score !== undefined) {
+      const sc = Number(dto.score);
+      if (!Number.isFinite(sc) || sc < 0 || sc > 100) {
+        throw new BadRequestException('Điểm câu hỏi không hợp lệ');
+      }
+      data.score = sc;
+    }
     if (dto.questionId) {
       const q = await this.prisma.question.findFirst({
         where: { id: dto.questionId, bank: { teacherId } },
@@ -872,7 +882,8 @@ export class ExamsService {
     });
     if (!exam) throw new NotFoundException('Không tìm thấy đề thi');
 
-    await this.prisma.examItem.delete({ where: { id: itemId } });
+    const r = await this.prisma.examItem.deleteMany({ where: { id: itemId, examId } });
+    if (!r.count) throw new NotFoundException('Không tìm thấy câu trong đề');
     await this.regenerateTex(teacherId, examId);
     return { deleted: true };
   }
@@ -1035,8 +1046,23 @@ export class ExamsService {
     return exam.texSource;
   }
 
+  // Chặn các lệnh TeX nguy hiểm trước khi gửi đi biên dịch (lớp bảo vệ thứ 2,
+  // lớp 1 là LaTeX service chạy không shell-escape + openin/openout paranoid).
+  private assertSafeTex(tex: string) {
+    const bad =
+      /\\(?:write18|immediate\s*\\write|openout|openin|directlua|latelua|ShellEscape|pdfshellescape)(?![a-zA-Z])|\\(?:input|include|InputIfFileExists|lstinputlisting|verbatiminput)\s*\{?\s*(?:\/|~|\.\.|\|)|\\read\s*\d/i;
+    const m = bad.exec(tex || '');
+    if (m) {
+      throw new HttpException(
+        `Mã LaTeX chứa lệnh không được phép: ${m[0].slice(0, 40)}`,
+        400,
+      );
+    }
+  }
+
   async compileRaw(tex: string): Promise<Buffer> {
     const url = process.env.LATEX_SERVICE_URL || 'http://localhost:8080';
+    this.assertSafeTex(tex);
 
     // Chèn ảnh upload (markdown ![]() / \includegraphics với link /api/uploads/...)
     // → đổi thành \includegraphics cục bộ + gửi ảnh base64 kèm theo
@@ -1516,7 +1542,7 @@ export class ExamsService {
 
   // Biên dịch riêng một block TikZ → PNG cắt đúng kích thước hình
   // Cache 3 tầng: RAM → ĐĨA (sống sót qua restart, dùng chung mọi người dùng) → biên dịch
-  async compileTikzSnippet(snippet: string): Promise<Buffer> {
+  async compileTikzSnippet(snippet: string, opts?: { persist?: boolean }): Promise<Buffer> {
     // Chuẩn hoá mũi tên viết sai \<- / \-> / \<-\> → <- / -> / <-> (hay gặp khi copy từ Word)
     const s = (snippet || '')
       .trim()
@@ -1567,14 +1593,19 @@ export class ExamsService {
     // PDF → PNG (độ phân giải 2x cho nét)
     const png = await this.pdfToPng(pdf);
 
+    // Chỉ lưu đĩa vĩnh viễn khi giáo viên biên dịch (nội dung đề thật); học sinh chỉ dùng
+    // bộ nhớ đệm RAM — tránh ai đó gửi hàng loạt hình rác làm đầy ổ đĩa.
     try {
+      if (opts?.persist === false) throw new Error('skip-persist');
       fs.mkdirSync(TIKZ_DIR, { recursive: true });
       fs.writeFileSync(pngPath, png);
       // Lưu kèm mã nguồn để debug / biên dịch lại nếu cần
       fs.writeFileSync(path.join(TIKZ_DIR, hash + '.tex'), s);
     } catch (e) {
       // Lỗi ghi đĩa không chặn việc trả ảnh
-      console.warn('Không ghi được cache tikz:', (e as Error).message);
+      if ((e as Error).message !== 'skip-persist') {
+        console.warn('Không ghi được cache tikz:', (e as Error).message);
+      }
     }
 
 

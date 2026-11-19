@@ -573,6 +573,7 @@ export class BankService {
 
   async createTopic(teacherId: string, dto: CreateTopicDto) {
     const bank = await this.getBank(teacherId);
+    if (dto.parentId) await this.ensureOwnTopic(teacherId, dto.parentId);
     return this.prisma.topic.create({
       data: {
         bankId: bank.id,
@@ -585,6 +586,15 @@ export class BankService {
 
   async updateTopic(teacherId: string, topicId: string, dto: UpdateTopicDto) {
     await this.ensureOwnTopic(teacherId, topicId);
+    if (dto.parentId) {
+      // Thư mục cha phải thuộc kho của mình và KHÔNG được là chính nó / thư mục con của nó
+      // (trước đây tạo vòng lặp → cả nhánh mục lục và câu hỏi bên trong biến mất khỏi cây)
+      const parent = await this.ensureOwnTopic(teacherId, dto.parentId);
+      const sub = await this.topicWithDescendants(parent.bankId, topicId);
+      if (sub.includes(dto.parentId)) {
+        throw new BadRequestException('Không thể chuyển chủ đề vào chính nó hoặc chủ đề con của nó');
+      }
+    }
     return this.prisma.topic.update({
       where: { id: topicId },
       data: { ...dto },
@@ -908,6 +918,7 @@ export class BankService {
 
     // Xử lý chủ đề: nếu gửi topicName thì tìm hoặc tạo Topic
     let topicId: string | undefined = dto.topicId;
+    if (topicId) await this.ensureOwnTopic(teacherId, topicId);
     if (!topicId && (dto as any).topicName) {
       const name = (dto as any).topicName.trim();
       let topic = await this.prisma.topic.findFirst({
@@ -976,6 +987,7 @@ export class BankService {
 
     // Xử lý chủ đề: gửi topicName (text) → tìm hoặc tạo Topic, CHUYỂN câu hỏi sang thư mục đó
     const data: any = { ...dto };
+    if (dto.topicId) await this.ensureOwnTopic(teacherId, dto.topicId);
     // Xoá \break / \qquad / \quad nếu có cập nhật nội dung/lời giải
     if (data.content !== undefined) data.content = this.stripSpacingCmds(data.content);
     if (data.solution !== undefined) data.solution = this.stripSpacingCmds(data.solution);
@@ -1017,15 +1029,9 @@ export class BankService {
       where: { bankId, id: { notIn: deletingIds } },
       select: { id: true, content: true },
     });
-    const match = candidates.find((c) => {
-      const cn = this.normalizeQuestion(c.content);
-      if (!cn) return false;
-      if (cn === n) return true;
-      return (
-        Math.abs(cn.length - n.length) <= Math.max(cn.length, n.length) * 0.3 &&
-        this.similar(cn, n)
-      );
-    });
+    // CHỈ chuyển đề thi sang câu có nội dung TRÙNG TUYỆT ĐỐI. Trước đây nhận cả câu
+    // "gần giống" (88%) → xoá 1 câu có thể làm đề thi lặng lẽ đổi sang câu khác số liệu/đáp án.
+    const match = candidates.find((c) => this.normalizeQuestion(c.content) === n);
     return match?.id ?? null;
   }
 
@@ -1094,16 +1100,37 @@ export class BankService {
     const ownedIds = owned.map((q) => q.id);
     if (!ownedIds.length) throw new NotFoundException('Không tìm thấy câu hỏi nào hợp lệ');
 
-    let examItems = 0;
-    await this.prisma.$transaction(async (tx) => {
-      for (const id of ownedIds) {
-        // Câu sống = câu cùng nội dung KHÔNG nằm trong danh sách xóa lần này
-        const survivor = await this.findSurvivor(bank.id, id, ownedIds);
-        const r = await this.relinkOrRemoveLinks(tx, id, survivor);
-        examItems += r.examItems;
-        await tx.question.delete({ where: { id } });
-      }
+    // Tìm "câu sống" cho từng câu TRƯỚC khi mở transaction (đọc cả kho 1 lần) —
+    // trước đây đọc lại cả kho cho mỗi câu bên trong transaction → xoá nhiều câu bị quá
+    // thời gian 5 giây mặc định của Prisma và thất bại.
+    const others = await this.prisma.question.findMany({
+      where: { bankId: bank.id, id: { notIn: ownedIds } },
+      select: { id: true, content: true },
     });
+    const byNorm = new Map<string, string>();
+    for (const o of others) {
+      const k = this.normalizeQuestion(o.content);
+      if (k && !byNorm.has(k)) byNorm.set(k, o.id);
+    }
+    const deleting = await this.prisma.question.findMany({
+      where: { id: { in: ownedIds } },
+      select: { id: true, content: true },
+    });
+    const survivorOf = new Map<string, string | null>(
+      deleting.map((q) => [q.id, byNorm.get(this.normalizeQuestion(q.content)) ?? null]),
+    );
+
+    let examItems = 0;
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const id of ownedIds) {
+          const r = await this.relinkOrRemoveLinks(tx, id, survivorOf.get(id) ?? null);
+          examItems += r.examItems;
+          await tx.question.delete({ where: { id } });
+        }
+      },
+      { timeout: 120000, maxWait: 10000 },
+    );
 
     return {
       deleted: ownedIds.length,
@@ -1534,29 +1561,52 @@ export class BankService {
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/đ/g, 'd')
-      .replace(/\\[a-zA-Z]+\*?/g, ' ')
-      .replace(/[{}()\[\]$&^_~|\\]/g, ' ')
+      // GIỮ tên lệnh (\sin ≠ \cos, \le ≠ \ge, \cup ≠ \cap) — trước đây xoá hết nên
+      // các câu chỉ khác hàm/dấu bị coi là "trùng tuyệt đối"
+      .replace(/\\(?:left|right|displaystyle|limits|mathrm|text|quad|qquad|,|;|!)(?![a-zA-Z])/g, ' ')
+      .replace(/\\([a-zA-Z]+)\*?/g, ' $1 ')
+      .replace(/\^/g, ' ^ ')
+      .replace(/_/g, ' _ ')
+      .replace(/[{}$&~|\\]/g, ' ')
       .replace(/\s+/g, ' ')
+      // bỏ khoảng trắng quanh dấu/toán tử: "y = x - 1" ≡ "y=x-1"
+      .replace(/\s*([=+\-*\/<>,.;:()\[\]^_'])\s*/g, '$1')
       .trim();
   }
 
-  private levenshtein(a: string, b: string): number {
+  // Khoảng cách Levenshtein có NGƯỠNG: chỉ tính trong dải ±max quanh đường chéo và dừng sớm
+  // khi chắc chắn vượt ngưỡng → O(n·max) thay vì O(n²), bộ nhớ O(n) thay vì O(n²).
+  private levenshtein(a: string, b: string, max = Infinity): number {
     const m = a.length;
     const n = b.length;
     if (!m) return n;
     if (!n) return m;
-    const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
-    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    if (Math.abs(m - n) > max) return max + 1;
+    const band = Number.isFinite(max) ? Math.ceil(max) : Math.max(m, n);
+    let prev = new Array(n + 1);
+    let cur = new Array(n + 1);
+    for (let j = 0; j <= n; j++) prev[j] = j;
     for (let i = 1; i <= m; i++) {
-      for (let j = 1; j <= n; j++) {
-        dp[i][j] = Math.min(
-          dp[i - 1][j] + 1,
-          dp[i][j - 1] + 1,
-          dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      const lo = Math.max(1, i - band);
+      const hi = Math.min(n, i + band);
+      cur.fill(Infinity);
+      cur[0] = i;
+      let rowMin = cur[0];
+      for (let j = lo; j <= hi; j++) {
+        const v = Math.min(
+          prev[j] + 1,
+          cur[j - 1] + 1,
+          prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
         );
+        cur[j] = v;
+        if (v < rowMin) rowMin = v;
       }
+      if (rowMin > max) return max + 1;
+      const t = prev;
+      prev = cur;
+      cur = t;
     }
-    return dp[m][n];
+    return prev[n];
   }
 
   private similar(a: string, b: string): boolean {
@@ -1564,7 +1614,8 @@ export class BankService {
     if (a === b) return true;
     const maxLen = Math.max(a.length, b.length);
     if (maxLen < 20) return false; // quá ngắn dễ dính nhầm
-    return 1 - this.levenshtein(a, b) / maxLen >= 0.88;
+    const allowed = Math.floor(maxLen * 0.12);
+    return this.levenshtein(a, b, allowed) <= allowed;
   }
 
   // Đối chiếu các câu mới với kho → trả về câu trùng (kèm nội dung để so sánh).
@@ -1616,7 +1667,7 @@ export class BankService {
     const bank = await this.getBank(teacherId);
     const questions = await this.prisma.question.findMany({
       where: { bankId: bank.id },
-      select: { id: true, code: true, content: true },
+      select: { id: true, code: true, content: true, createdAt: true },
       orderBy: { createdAt: 'asc' },
     });
     const pairs: {
@@ -1624,32 +1675,43 @@ export class BankService {
       dup: { id: string; code: string; content: string };
       exact: boolean;
     }[] = [];
-    const norms = questions.map((q) => ({
-      q,
-      n: this.normalizeQuestion(q.content),
-    }));
-    for (let i = 0; i < norms.length; i++) {
-      if (!norms[i].n) continue;
-      for (let j = i + 1; j < norms.length; j++) {
-        if (!norms[j].n) continue;
-        if (norms[i].n === norms[j].n) {
-          pairs.push({
-            keep: { id: norms[i].q.id, code: norms[i].q.code, content: norms[i].q.content },
-            dup: { id: norms[j].q.id, code: norms[j].q.code, content: norms[j].q.content },
-            exact: true,
-          });
-        } else if (
-          Math.abs(norms[i].n.length - norms[j].n.length) <=
-            Math.max(norms[i].n.length, norms[j].n.length) * 0.3 &&
-          this.similar(norms[i].n, norms[j].n)
-        ) {
-          pairs.push({
-            keep: { id: norms[i].q.id, code: norms[i].q.code, content: norms[i].q.content },
-            dup: { id: norms[j].q.id, code: norms[j].q.code, content: norms[j].q.content },
-            exact: false,
-          });
-        }
+    const norms = questions
+      .map((q) => ({ q, n: this.normalizeQuestion(q.content) }))
+      .filter((x) => !!x.n);
+    const pick = (x: any) => ({ id: x.q.id, code: x.q.code, content: x.q.content });
+
+    // 1) Trùng tuyệt đối: gom nhóm bằng Map (O(n)) thay vì so từng cặp
+    const groups = new Map<string, typeof norms>();
+    for (const x of norms) {
+      const g = groups.get(x.n);
+      if (g) g.push(x);
+      else groups.set(x.n, [x]);
+    }
+    const reps: typeof norms = [];
+    for (const g of groups.values()) {
+      reps.push(g[0]);
+      for (let k = 1; k < g.length; k++) {
+        pairs.push({ keep: pick(g[0]), dup: pick(g[k]), exact: true });
       }
+    }
+
+    // 2) Gần giống: chỉ so các câu có độ dài gần nhau (sắp theo độ dài, cửa sổ trượt),
+    //    nhường CPU định kỳ để API không bị treo khi kho lớn
+    reps.sort((x, y) => x.n.length - y.n.length);
+    let ops = 0;
+    for (let i = 0; i < reps.length; i++) {
+      const li = reps[i].n.length;
+      for (let j = i + 1; j < reps.length; j++) {
+        const lj = reps[j].n.length;
+        if (lj - li > Math.max(li, lj) * 0.12) break;
+        if (this.similar(reps[i].n, reps[j].n)) {
+          const [keep, dup] =
+            reps[i].q.createdAt <= reps[j].q.createdAt ? [reps[i], reps[j]] : [reps[j], reps[i]];
+          pairs.push({ keep: pick(keep), dup: pick(dup), exact: false });
+        }
+        if (++ops % 2000 === 0) await new Promise((r) => setImmediate(r));
+      }
+      if (pairs.length > 2000) break; // đủ để giáo viên xử lý, tránh trả về quá lớn
     }
     return pairs;
   }
@@ -2014,6 +2076,30 @@ export class BankService {
     };
   }
 
+  // Bỏ comment LaTeX: từ dấu % (không phải \%) tới hết dòng
+  private stripTexComments(tex: string): string {
+    return tex
+      .split('\n')
+      .map((line) => {
+        for (let i = 0; i < line.length; i++) {
+          if (line[i] === '\\') {
+            i++;
+            continue;
+          }
+          if (line[i] === '%') return line.slice(0, i);
+        }
+        return line;
+      })
+      .join('\n');
+  }
+
+  // Vị trí '{' của nhóm kế tiếp nếu nó nằm ngay sau pos (chỉ cách khoảng trắng), ngược lại -1
+  private nextGroupStart(text: string, pos: number): number {
+    let i = pos;
+    while (i < text.length && /\s/.test(text[i])) i++;
+    return text[i] === '{' ? i : -1;
+  }
+
   private getBalancedContent(
     text: string,
     startIndex: number,
@@ -2061,7 +2147,7 @@ export class BankService {
     failures?: { index: number; reason: string; preview: string }[],
   ): any[] {
     // Chuẩn hoá: \begin{vd} (ví dụ) và \begin{bt} (bài tập) → \begin{ex} (câu hỏi)
-    const normalized = String(tex || '')
+    const normalized = this.stripTexComments(String(tex || ''))
       .replace(/\\begin\{vd\}/g, '\\begin{ex}')
       .replace(/\\end\{vd\}/g, '\\end{ex}')
       .replace(/\\begin\{bt\}/g, '\\begin{ex}')
@@ -2131,7 +2217,8 @@ export class BankService {
     }
 
     // 2. \shortans (trả lời ngắn) — nhận cả dạng \shortans[oly]{6,36}
-    const saMatch = /\\shortans(?:\[[^\]]*\])?\s*\{/.exec(raw);
+    // \SA là lệnh tắt của \shortans trong ex_test.sty
+    const saMatch = /\\(?:shortans|SA)(?![a-zA-Z])(?:\[[^\]]*\])?\s*\{/.exec(raw);
     if (saMatch) {
       const balanced = this.getBalancedContent(
         raw,
@@ -2172,8 +2259,13 @@ export class BankService {
           }
           options.push({ id, text });
           lastEnd = balanced.endIndex + 1;
-          const nextBrace = raw.indexOf('{', balanced.endIndex + 1);
-          if (nextBrace !== -1) currentIndex = nextBrace;
+          // Lựa chọn tiếp theo phải nằm NGAY sau (chỉ cách khoảng trắng) — trước đây tìm '{'
+          // bất kỳ phía sau nên câu < 4 lựa chọn lấy nhầm {tikzpicture} làm phương án
+          const next = this.nextGroupStart(raw, lastEnd);
+          if (next === -1) break;
+          currentIndex = next;
+        } else {
+          break;
         }
       }
       // Phần còn lại sau lựa chọn cuối (hình tikz/bảng...) ghép vào nội dung câu hỏi
@@ -2224,8 +2316,13 @@ export class BankService {
           options.push({ id, text });
           answer[id] = isTrue;
           lastEnd = balanced.endIndex + 1;
-          const nextBrace = raw.indexOf('{', balanced.endIndex + 1);
-          if (nextBrace !== -1) currentIndex = nextBrace;
+          // Lựa chọn tiếp theo phải nằm NGAY sau (chỉ cách khoảng trắng) — trước đây tìm '{'
+          // bất kỳ phía sau nên câu < 4 lựa chọn lấy nhầm {tikzpicture} làm phương án
+          const next = this.nextGroupStart(raw, lastEnd);
+          if (next === -1) break;
+          currentIndex = next;
+        } else {
+          break;
         }
       }
       // Phần còn lại sau lựa chọn cuối (hình tikz/bảng...) ghép vào nội dung câu hỏi
