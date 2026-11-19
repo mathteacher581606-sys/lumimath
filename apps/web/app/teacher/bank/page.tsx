@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { apiFetch } from '@/lib/api';
 import LatexRenderer from '@/components/LatexRenderer';
@@ -20,6 +20,38 @@ const DIFFICULTY_LABEL: Record<string, string> = {
   VAN_DUNG: 'Vận dụng',
   VAN_DUNG_CAO: 'Vận dụng cao',
 };
+
+// Trục của bảng thống kê loại câu × mức độ
+const LEVELS = [
+  { id: 'NHAN_BIET', label: 'Mức 1', name: 'Nhận biết' },
+  { id: 'THONG_HIEU', label: 'Mức 2', name: 'Thông hiểu' },
+  { id: 'VAN_DUNG', label: 'Mức 3', name: 'Vận dụng' },
+  { id: 'VAN_DUNG_CAO', label: 'Mức 4', name: 'Vận dụng cao' },
+];
+const TYPES = [
+  { id: 'MCQ', label: 'Trắc nghiệm' },
+  { id: 'TRUE_FALSE', label: 'Đúng / Sai' },
+  { id: 'SHORT_ANSWER', label: 'Trả lời ngắn' },
+  { id: 'ESSAY', label: 'Tự luận' },
+];
+
+// Đáp án của từng phương án trên thẻ câu (kho của chính giáo viên nên hiện luôn):
+// trắc nghiệm → 'correct' cho phương án đúng; đúng/sai → 'true' | 'false' cho từng ý.
+function optionVerdict(q: any, optId: string): 'correct' | 'true' | 'false' | '' {
+  const ans = q?.answer;
+  const id = String(optId).trim().toLowerCase();
+  if (q?.type === 'TRUE_FALSE') {
+    if (!ans || typeof ans !== 'object' || Array.isArray(ans)) return '';
+    const hit = Object.entries(ans).find(([k]) => String(k).trim().toLowerCase() === id);
+    if (!hit || typeof hit[1] !== 'boolean') return '';
+    return hit[1] ? 'true' : 'false';
+  }
+  if (q?.type === 'MCQ') {
+    const list = Array.isArray(ans) ? ans : [ans];
+    return list.some((a) => typeof a === 'string' && a.trim().toLowerCase() === id) ? 'correct' : '';
+  }
+  return '';
+}
 
 // Nút pill lọc (theo thiết kế QuizBank bản cũ)
 function PillButton({
@@ -540,6 +572,34 @@ export default function BankPage() {
     } catch (e: any) {
       console.error(e);
     }
+    loadMatrix();
+  }
+
+  // Bảng loại câu × mức độ theo đúng khối / thư mục đang xem
+  const [matrix, setMatrix] = useState<any>(null);
+  async function loadMatrix(grade = fGrade, topicId = fTopic) {
+    try {
+      const p = new URLSearchParams();
+      if (grade) p.set('grade', grade);
+      if (topicId) p.set('topicId', topicId);
+      setMatrix(await apiFetch(`/bank/matrix?${p.toString()}`));
+    } catch {
+      /* bảng thống kê lỗi không chặn trang */
+    }
+  }
+  useEffect(() => {
+    loadMatrix(fGrade, fTopic);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fGrade, fTopic]);
+
+  // Bấm ô thống kê: lọc theo loại câu và/hoặc mức; bấm lại ô đang chọn để bỏ lọc
+  function pickStat(type: string, level: string) {
+    const same = fType === type && fDifficulty === level;
+    const t = same ? '' : type;
+    const d = same ? '' : level;
+    setFType(t);
+    setFDifficulty(d);
+    loadQuestions({ type: t, difficulty: d });
   }
 
   // ===== Cây mục lục (sidebar): Lớp → Chủ đề =====
@@ -1604,7 +1664,7 @@ export default function BankPage() {
         >
           <span className="lm-tree-toggle">{hasChildren ? (expanded ? '∨' : '›') : '·'}</span>
           <span className="lm-tree-label">
-            {hasChildren ? '📁' : '📄'} {node.name}
+            {node.name}
           </span>
           <span className="lm-tree-count">{node.count ?? 0}</span>
         </button>
@@ -1615,6 +1675,46 @@ export default function BankPage() {
         )}
       </div>
     );
+  }
+
+  // Phạm vi đang xem: "Lớp 12 · Chương I …" để đầu trang và bảng thống kê khớp nhau
+  function findTopicName(nodes: any[], id: string): string {
+    for (const n of nodes || []) {
+      if (n.id === id) return n.name;
+      const hit = findTopicName(n.children || [], id);
+      if (hit) return hit;
+    }
+    return '';
+  }
+  const scopeLabel = [
+    fGrade ? (fGrade === 'none' ? 'Chưa phân lớp' : `Lớp ${fGrade}`) : 'Tất cả các lớp',
+    fTopic ? findTopicName(topicTree, fTopic) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  // Các bộ lọc đang bật — hiện thành chip, bấm × để bỏ riêng từng cái
+  const activeChips: { key: string; k: string; v: string; clear: () => void }[] = [];
+  if (fGrade)
+    activeChips.push({ key: 'grade', k: 'Lớp', v: fGrade, clear: () => { setFGrade(''); setFTopic(''); loadQuestions({ grade: '', topicId: '' }); } });
+  if (fTopic)
+    activeChips.push({ key: 'topic', k: 'Thư mục', v: findTopicName(topicTree, fTopic) || '…', clear: () => { setFTopic(''); loadQuestions({ topicId: '' }); } });
+  if (fType)
+    activeChips.push({ key: 'type', k: 'Loại', v: TYPES.find((t) => t.id === fType)?.label || fType, clear: () => { setFType(''); loadQuestions({ type: '' }); } });
+  if (fDifficulty)
+    activeChips.push({ key: 'diff', k: 'Mức', v: DIFFICULTY_LABEL[fDifficulty] || fDifficulty, clear: () => { setFDifficulty(''); loadQuestions({ difficulty: '' }); } });
+  if (fForm)
+    activeChips.push({ key: 'form', k: 'Dạng', v: fForm, clear: () => { setFForm(''); loadQuestions({ form: '' }); } });
+  if (fSource)
+    activeChips.push({ key: 'source', k: 'Nguồn', v: fSource, clear: () => { setFSource(''); loadQuestions({ source: '' }); } });
+  if (fCode)
+    activeChips.push({ key: 'code', k: 'Mã', v: fCode, clear: () => { setFCode(''); loadQuestions({ code: '' }); } });
+  if (search.trim())
+    activeChips.push({ key: 'q', k: 'Tìm', v: search.trim(), clear: () => { setSearch(''); loadQuestions({ q: '' }); } });
+  function clearAllFilters() {
+    setFGrade(''); setFTopic(''); setFType(''); setFDifficulty('');
+    setFForm(''); setFSource(''); setFCode(''); setSearch('');
+    loadQuestions({ grade: '', topicId: '', type: '', difficulty: '', form: '', source: '', code: '', q: '' });
   }
 
   return (
@@ -1792,7 +1892,7 @@ export default function BankPage() {
                     }}
                   >
                     <span className="lm-tree-toggle">{expanded ? '∨' : '›'}</span>
-                    <span className="lm-tree-label">📁 {label}</span>
+                    <span className="lm-tree-label">{label}</span>
                     <span className="lm-tree-count">{gradeCount}</span>
                     {key !== 'none' && (
                       <span
@@ -1820,131 +1920,86 @@ export default function BankPage() {
 
         {/* ================= VÙNG NỘI DUNG ================= */}
         <div className="lm-main">
-        {/* ================= THANH TIÊU ĐỀ ĐỎ ĐÔ ================= */}
-        <div className="lm-band">
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: 'rgba(255,255,255,0.14)',
-              border: '1px solid rgba(255,255,255,0.18)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 20,
-            }}
-          >
-            🧮
-          </div>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <h2>
-              Ngân hàng đề thi
-              <span
-                style={{
-                  fontSize: 11,
-                  marginLeft: 10,
-                  padding: '3px 10px',
-                  borderRadius: 999,
-                  background: 'rgba(232,163,61,0.35)',
-                  border: '1px solid rgba(240,179,85,0.55)',
-                  fontWeight: 600,
-                  verticalAlign: 'middle',
-                }}
-              >
-                4 cấp độ phân loại
-              </span>
-            </h2>
-            <p className="lm-band-sub">
-              Phân loại theo: Khối lớp · Chủ đề · Dạng toán · Độ khó
+        {/* ================= ĐẦU TRANG: tên phạm vi + thao tác chính ================= */}
+        <header className="bk-head">
+          <div className="bk-head-text">
+            <h1>Ngân hàng câu hỏi</h1>
+            <p>
+              {scopeLabel}
+              {' · '}
+              <b>{totalCount}</b> câu
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="btn-lm" onClick={() => setShowDocxImport(true)}>
-              📄 Nhập từ Word
+          <div className="bk-head-actions">
+            <button type="button" className="btn btn-outline bk-btn" onClick={() => setShowDocxImport(true)}>
+              Nhập từ Word
             </button>
-            <button className="btn-lm ghost" onClick={() => setShowImport(!showImport)}>
-              📥 Nhập đề .tex
+            <button type="button" className="btn btn-outline bk-btn" aria-expanded={showImport} onClick={() => setShowImport(!showImport)}>
+              Nhập đề .tex
             </button>
-            <button className="btn-lm amber" onClick={() => setShowForm(!showForm)}>
+            <button type="button" className="btn btn-outline bk-btn" onClick={openDuplicates}>
+              Rà câu trùng
+            </button>
+            <button type="button" className="btn sh-btn-accent bk-btn" aria-expanded={showForm} onClick={() => setShowForm(!showForm)}>
               {showForm ? 'Đóng' : '+ Thêm câu hỏi'}
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* ================= BẢNG THỐNG KÊ MA TRẬN (Giai đoạn 3) ================= */}
-        <div className="lm-stats-table">
-          <div className="lm-stats-cell lm-stats-title">Thống kê</div>
-          <div className="lm-stats-body">
-            {/* Hàng 1: nhãn */}
-            <div className="lm-stats-row">
-              <span className="lm-stats-label">Mức</span>
-              {[
-                { id: 'NHAN_BIET', label: '1' },
-                { id: 'THONG_HIEU', label: '2' },
-                { id: 'VAN_DUNG', label: '3' },
-                { id: 'VAN_DUNG_CAO', label: '4' },
-              ].map((m) => (
+        {/* ================= THỐNG KÊ LOẠI CÂU × MỨC ĐỘ (bấm ô để lọc) ================= */}
+        <section className="bk-stats" aria-label="Thống kê theo loại câu và mức độ — bấm để lọc">
+          <span />
+          {LEVELS.map((lv) => (
+            <button
+              key={lv.id}
+              type="button"
+              className={`bk-stats-h${fDifficulty === lv.id && !fType ? ' on' : ''}`}
+              title={lv.name}
+              onClick={() => pickStat('', lv.id)}
+            >
+              {lv.label}
+            </button>
+          ))}
+          <span className="bk-stats-h">Tổng</span>
+          {TYPES.map((ty) => {
+            const row = matrix?.matrix?.[ty.id] || {};
+            const rowTotal = Object.values(row).reduce((s: number, n: any) => s + (n || 0), 0);
+            return (
+              <Fragment key={ty.id}>
                 <button
-                  key={m.id}
                   type="button"
-                  className={`lm-stats-pill${fDifficulty === m.id ? ' on' : ''}`}
-                  onClick={() => {
-                    const next = fDifficulty === m.id ? '' : m.id;
-                    setFDifficulty(next);
-                    loadQuestions({ difficulty: next });
-                  }}
-                  title={
-                    { NHAN_BIET: 'Nhận biết', THONG_HIEU: 'Thông hiểu', VAN_DUNG: 'Vận dụng', VAN_DUNG_CAO: 'Vận dụng cao' }[m.id]
-                  }
+                  className={`bk-stats-row${fType === ty.id && !fDifficulty ? ' on' : ''}`}
+                  onClick={() => pickStat(ty.id, '')}
                 >
-                  {m.label}
+                  {ty.label}
                 </button>
-              ))}
-              <span className="lm-stats-sep" />
-              <span className="lm-stats-label">Kiểu</span>
-              {[
-                { id: 'MCQ', label: 'Trắc nghiệm' },
-                { id: 'TRUE_FALSE', label: 'Đúng sai' },
-                { id: 'SHORT_ANSWER', label: 'Trả lời ngắn' },
-                { id: 'ESSAY', label: 'Tự luận' },
-              ].map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  className={`lm-stats-pill wide${fType === t.id ? ' on' : ''}`}
-                  onClick={() => {
-                    const next = fType === t.id ? '' : t.id;
-                    setFType(next);
-                    loadQuestions({ type: next });
-                  }}
-                >
-                  {t.label}
-                </button>
-              ))}
-              <span style={{ marginLeft: 'auto' }} />
-              <span className="lm-stats-pill wide on">Tổng</span>
-            </div>
-            {/* Hàng 2: số câu */}
-            <div className="lm-stats-row">
-              <span className="lm-stats-label">Số câu</span>
-              {['NHAN_BIET', 'THONG_HIEU', 'VAN_DUNG', 'VAN_DUNG_CAO'].map((d) => (
-                <span key={d} className="lm-stats-num">
-                  {summary?.byDifficulty?.[d] ?? 0}
-                </span>
-              ))}
-              <span className="lm-stats-sep" />
-              <span className="lm-stats-label">Số câu</span>
-              {['MCQ', 'TRUE_FALSE', 'SHORT_ANSWER', 'ESSAY'].map((t) => (
-                <span key={t} className="lm-stats-num wide">
-                  {summary?.byType?.[t] ?? 0}
-                </span>
-              ))}
-              <span style={{ marginLeft: 'auto' }} />
-              <span className="lm-stats-num wide total">{summary?.total ?? 0}</span>
-            </div>
-          </div>
-        </div>
+                {LEVELS.map((lv) => {
+                  const n = row[lv.id] || 0;
+                  const on = fType === ty.id && fDifficulty === lv.id;
+                  return (
+                    <button
+                      key={lv.id}
+                      type="button"
+                      className={`bk-cell${n ? '' : ' is-zero'}${on ? ' on' : ''}`}
+                      aria-pressed={on}
+                      aria-label={`${ty.label}, ${lv.name}: ${n} câu`}
+                      onClick={() => pickStat(ty.id, lv.id)}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+                <span className="bk-tot">{rowTotal as number}</span>
+              </Fragment>
+            );
+          })}
+          <span className="bk-stats-foot">
+            {TYPES.some((ty) => matrix?.matrix?.[ty.id]?.none)
+              ? `${TYPES.reduce((n, ty) => n + (matrix?.matrix?.[ty.id]?.none || 0), 0)} câu chưa gắn mức độ (không nằm trong 4 cột).`
+              : 'Bấm một ô để lọc; bấm lại để bỏ lọc.'}
+          </span>
+          <span className="bk-tot bk-grand">{matrix?.total ?? summary?.total ?? 0}</span>
+        </section>
 
       {showForm && (
         <form onSubmit={createQuestion} className="card" style={{ marginBottom: 20 }}>
@@ -2608,6 +2663,49 @@ export default function BankPage() {
         </div>
       )}
 
+      {/* ================= BỘ LỌC ĐANG ÁP DỤNG (bấm × để bỏ) ================= */}
+      {activeChips.length > 0 && (
+        <div className="bk-chips" aria-label="Bộ lọc đang áp dụng">
+          {activeChips.map((c) => (
+            <span key={c.key} className="bk-chip">
+              <span className="bk-chip-k">{c.k}</span>
+              {c.v}
+              <button type="button" aria-label={`Bỏ lọc ${c.k}`} onClick={c.clear}>
+                ×
+              </button>
+            </span>
+          ))}
+          {activeChips.length > 1 && (
+            <button type="button" className="bk-chip-clear" onClick={clearAllFilters}>
+              Xoá tất cả
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ================= THANH THAO TÁC KHI ĐÃ CHỌN CÂU ================= */}
+      {selectedIds.length > 0 && (
+        <div className="bk-selbar" role="region" aria-label="Thao tác với câu đã chọn">
+          <b>Đã chọn {selectedIds.length} câu</b>
+          <button type="button" className="bk-selbar-btn" onClick={() => exportSelected(false, 'omml')} disabled={exporting}>
+            Xuất Word
+          </button>
+          <button type="button" className="bk-selbar-btn" onClick={() => exportSelected(true, 'omml')} disabled={exporting}>
+            Xuất kèm đáp án
+          </button>
+          <button type="button" className="bk-selbar-btn" onClick={() => exportSelected(false, 'tex')} disabled={exporting}>
+            Xuất .tex
+          </button>
+          <span className="bk-selbar-sp" />
+          <button type="button" className="bk-selbar-btn is-danger" onClick={deleteSelected} disabled={deleting}>
+            {deleting ? 'Đang xoá…' : 'Xoá'}
+          </button>
+          <button type="button" className="bk-selbar-btn" onClick={() => setSelectedIds([])}>
+            Bỏ chọn
+          </button>
+        </div>
+      )}
+
       {/* ================= TOOLBAR + PANEL LỌC (Giai đoạn 2 & 4) ================= */}
       <div style={{ position: 'relative' }}>
       <div
@@ -2666,33 +2764,6 @@ export default function BankPage() {
         <button type="button" className="toolbar-btn" onClick={selectAllOnPage}>
           ☰ CHỌN TẤT CẢ (TỐI ĐA {pageSize})
         </button>
-        {selectedIds.length > 0 && (
-          <>
-            <button
-              type="button"
-              className="toolbar-btn"
-              onClick={() => setSelectedIds([])}
-              style={{ color: 'var(--color-danger)' }}
-            >
-              ✕ Bỏ chọn ({selectedIds.length})
-            </button>
-            <button
-              type="button"
-              className="toolbar-btn"
-              onClick={deleteSelected}
-              disabled={deleting}
-              style={{
-                background: 'color-mix(in oklch, var(--color-danger) 12%, transparent)',
-                borderColor: 'color-mix(in oklch, var(--color-danger) 55%, transparent)',
-                color: 'var(--color-danger)',
-                fontWeight: 800,
-              }}
-            >
-              {deleting ? '⏳ Đang xóa…' : `🗑️ XÓA ${selectedIds.length} CÂU ĐÃ CHỌN`}
-            </button>
-          </>
-        )}
-
         {/* BỘ LỌC */}
         <button
           type="button"
@@ -3244,6 +3315,14 @@ export default function BankPage() {
                     title="Chọn câu để xuất file"
                   />
                   <span className="q-no">Câu {globalNo}</span>
+                  <button
+                    type="button"
+                    className="bk-qcode mono"
+                    title={`Tìm các câu có mã bắt đầu bằng ${q.code}`}
+                    onClick={() => smartSearch(q.code)}
+                  >
+                    {q.code}
+                  </button>
                   <span className="q-type-badge">{typeLabel[q.type] || q.type}</span>
                   <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                     {[
@@ -3268,7 +3347,7 @@ export default function BankPage() {
                       style={{ borderStyle: 'dashed' }}
                       onClick={() => setOpenMenuId(openMenuId === q.id ? null : q.id)}
                     >
-                      THÊM ▾
+                      Thêm ▾
                     </button>
                   </div>
                 </div>
@@ -3277,10 +3356,10 @@ export default function BankPage() {
                 {openMenuId === q.id && (
                   <div className="q-card-menu">
                     <button type="button" className="toolbar-menu-item" onClick={() => { setOpenMenuId(null); startEditQuestion(q); }}>
-                      ✏️ Sửa câu hỏi
+                      Sửa câu hỏi
                     </button>
                     <button type="button" className="toolbar-menu-item" onClick={() => { setOpenMenuId(null); exportSelectedOne(q.id); }}>
-                      📄 Xuất câu này (.docx)
+                      Xuất câu này (.docx)
                     </button>
                     <button
                       type="button"
@@ -3290,10 +3369,10 @@ export default function BankPage() {
                         setSelectedIds((prev) => prev.includes(q.id) ? prev.filter((x) => x !== q.id) : [...prev, q.id]);
                       }}
                     >
-                      ☑️ {isSel ? 'Bỏ chọn câu này' : 'Chọn câu này'}
+                      {isSel ? 'Bỏ chọn câu này' : 'Chọn câu này'}
                     </button>
                     <button type="button" className="toolbar-menu-item" style={{ color: 'var(--color-danger)' }} onClick={() => { setOpenMenuId(null); deleteQuestion(q); }}>
-                      🗑️ Xóa câu hỏi
+                      Xoá câu hỏi
                     </button>
                   </div>
                 )}
@@ -3309,15 +3388,23 @@ export default function BankPage() {
                   </div>
 
                   {q.options && Array.isArray(q.options) && q.options.length > 0 && (
-                    <div className={showAnswer === q.id ? '' : 'q-clamp-short'} style={{ marginTop: 8, paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 3, fontSize: 13.5 }}>
-                      {q.options.map((opt: any) => (
-                        <div key={opt.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                          <span className="mono" style={{ fontWeight: 700, flexShrink: 0 }}>{opt.id}.</span>
-                          <span style={{ flex: 1, minWidth: 0 }}>
-                            <LatexRenderer content={opt.text} />
-                          </span>
-                        </div>
-                      ))}
+                    <div className={`bk-opts${q.type === 'TRUE_FALSE' ? ' is-tf' : ''}${showAnswer === q.id ? '' : ' q-clamp-short'}`}>
+                      {q.options.map((opt: any) => {
+                        const v = optionVerdict(q, opt.id);
+                        return (
+                          <div
+                            key={opt.id}
+                            className={`bk-opt${v === 'correct' ? ' is-correct' : ''}`}
+                          >
+                            <span className="bk-opt-id mono">{opt.id}{q.type === 'TRUE_FALSE' ? ')' : '.'}</span>
+                            <span className="bk-opt-text">
+                              <LatexRenderer content={opt.text} />
+                            </span>
+                            {v === 'true' && <span className="bk-tf is-true">Đúng</span>}
+                            {v === 'false' && <span className="bk-tf is-false">Sai</span>}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
@@ -3363,26 +3450,18 @@ export default function BankPage() {
                           loadQuestions({ form: q.form });
                         }}
                       >
-                        📐 {q.form}
+                        {q.form}
                       </span>
                     )}
                     {q.grade && <span className="badge">Lớp {q.grade}</span>}
-                    {q.source && <span className="badge">🏫 {q.source}</span>}
-                    <span
-                      className="mono"
-                      style={{ fontSize: 11, color: 'var(--color-muted)', cursor: 'pointer', textDecoration: 'underline dotted' }}
-                      title={`Tìm theo ID: ${q.code}`}
-                      onClick={() => smartSearch(q.code)}
-                    >
-                      {q.code}
-                    </span>
+                    {q.source && <span className="badge">{q.source}</span>}
                     <button
                       type="button"
                       className="lm-filter-btn"
                       style={{ marginLeft: 'auto', padding: '5px 10px', fontSize: 11.5 }}
                       onClick={() => setShowAnswer(showAnswer === q.id ? null : q.id)}
                     >
-                      {showAnswer === q.id ? '🙈 Ẩn đáp án' : '👁️ Xem đáp án'}
+                      {showAnswer === q.id ? 'Ẩn lời giải' : 'Xem lời giải'}
                     </button>
                     <button
                       type="button"
@@ -3390,7 +3469,7 @@ export default function BankPage() {
                       style={{ padding: '5px 10px', fontSize: 11.5 }}
                       onClick={() => openDetail(q)}
                     >
-                      🔍 Chi tiết
+                      Chi tiết
                     </button>
                     <button
                       type="button"
@@ -3398,7 +3477,7 @@ export default function BankPage() {
                       style={{ padding: '5px 10px', fontSize: 11.5 }}
                       onClick={() => startEditQuestion(q)}
                     >
-                      ✏️ Sửa
+                      Sửa
                     </button>
                     <button
                       type="button"
@@ -3406,7 +3485,7 @@ export default function BankPage() {
                       style={{ padding: '5px 10px', fontSize: 11.5, color: 'var(--color-danger)', borderColor: 'color-mix(in oklch, var(--color-danger) 45%, transparent)' }}
                       onClick={() => deleteQuestion(q)}
                     >
-                      🗑️ Xóa
+                      Xoá
                     </button>
                   </div>
                 </div>

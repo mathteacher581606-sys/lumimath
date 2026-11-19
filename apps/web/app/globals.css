@@ -4579,3 +4579,251 @@ textarea.ex-input {
     grid-column: 2;
   }
 }
+
+/* =====================================================================
+   NGÂN HÀNG CÂU HỎI — bố cục mới (mẫu NganHang đã duyệt)
+   Chỉ dùng token theme → tự khớp cả 5 bảng màu, kể cả Bảng đen.
+   ===================================================================== */
+.lm-bank .lm-sidebar {
+  border-color: var(--color-card-border);
+  border-radius: var(--radius-card);
+  box-shadow: none;
+}
+.lm-bank .lm-sidebar-head {
+  background: transparent;
+  color: var(--color-ink);
+  border-bottom: 1px solid var(--color-rule);
+  font-family: var(--font-display);
+  font-size: 15px;
+}
+.lm-bank .lm-new-folder-btn {
+  background: transparent;
+  border: 1px dashed var(--color-rule-2);
+  color: var(--color-accent);
+  border-radius: var(--radius-ctrl);
+  font-weight: 700;
+}
+.lm-bank .lm-new-folder-btn:hover {
+  filter: none;
+  background: var(--color-paper-2);
+}
+.lm-bank .lm-tree-row { border-radius: 0 var(--radius-ctrl) var(--radius-ctrl) 0; }
+.lm-bank .lm-tree-row:hover { background: var(--color-paper-2); }
+.lm-bank .lm-tree-row.active {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border-left-color: var(--color-accent);
+  color: var(--color-ink);
+}
+.lm-bank .lm-tree-toggle { color: var(--color-muted); width: 12px; text-align: center; }
+
+/* Đầu trang */
+.bk-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.bk-head h1 {
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1.15;
+  margin: 0;
+  color: var(--color-ink);
+}
+.bk-head p { margin: 4px 0 0; color: var(--color-muted); font-size: 13.5px; }
+.bk-head p b { color: var(--color-ink); }
+.bk-head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.bk-btn { font-size: 13px; padding: 8px 14px; }
+
+/* Bảng loại câu × mức độ */
+.bk-stats {
+  display: grid;
+  grid-template-columns: minmax(110px, 1.3fr) repeat(4, minmax(56px, 1fr)) minmax(56px, 0.8fr);
+  gap: 4px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: var(--color-surface);
+  border: var(--border-w, 1px) solid var(--color-card-border);
+  border-radius: var(--radius-card);
+}
+.bk-stats-h,
+.bk-stats-row {
+  font: inherit;
+  background: transparent;
+  border: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 6px;
+  border-radius: var(--radius-ctrl);
+  cursor: pointer;
+  text-align: center;
+}
+span.bk-stats-h { cursor: default; }
+.bk-stats-row { text-align: left; color: var(--color-ink); font-size: 13px; }
+.bk-stats-h:hover,
+.bk-stats-row:hover { background: var(--color-paper-2); }
+.bk-stats-h.on,
+.bk-stats-row.on { color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.bk-cell {
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 15px;
+  padding: 8px 4px;
+  border-radius: var(--radius-ctrl);
+  border: 1px solid var(--color-rule);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  cursor: pointer;
+  transition: transform 150ms var(--ease-out, ease-out);
+}
+.bk-cell:hover { border-color: var(--color-accent); }
+.bk-cell:active { transform: scale(0.96); }
+.bk-cell.is-zero { color: var(--color-muted); background: transparent; font-weight: 400; }
+.bk-cell.on { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-ink); }
+.bk-tot {
+  align-self: center;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--color-muted);
+}
+.bk-stats-foot { grid-column: 1 / span 5; font-size: 12px; color: var(--color-muted); padding-top: 6px; }
+.bk-grand { color: var(--color-ink); padding-top: 6px; border-top: 1px solid var(--color-rule); }
+
+/* Chip bộ lọc */
+.bk-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.bk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 10px;
+  font-size: 12.5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  color: var(--color-ink);
+}
+.bk-chip-k { color: var(--color-muted); font-size: 11px; }
+.bk-chip button {
+  font: inherit;
+  width: 20px;
+  height: 20px;
+  line-height: 1;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.bk-chip button:hover { background: var(--color-paper-2); color: var(--color-ink); }
+.bk-chip-clear {
+  font: inherit;
+  font-size: 12px;
+  background: none;
+  border: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Thanh thao tác khi đã chọn câu — nền mực, chữ giấy */
+.bk-selbar {
+  position: sticky;
+  top: 8px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-card);
+  background: var(--color-ink);
+  color: var(--color-paper);
+  animation: bk-rise 180ms var(--ease-out, ease-out);
+}
+.bk-selbar b { margin-right: 6px; font-size: 13.5px; }
+.bk-selbar-sp { flex: 1; }
+.bk-selbar-btn {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 12px;
+  border-radius: var(--radius-ctrl);
+  border: 1px solid color-mix(in srgb, var(--color-paper) 35%, transparent);
+  background: transparent;
+  color: var(--color-paper);
+  cursor: pointer;
+}
+.bk-selbar-btn:hover { background: color-mix(in srgb, var(--color-paper) 12%, transparent); }
+.bk-selbar-btn.is-danger { border-color: var(--color-danger); background: var(--color-danger); color: var(--color-paper); }
+.bk-selbar-btn:disabled { opacity: 0.6; cursor: progress; }
+@keyframes bk-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Thẻ câu hỏi */
+.lm-bank .q-card { border-color: var(--color-card-border); border-radius: var(--radius-card); }
+.lm-bank .q-card.selected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+.lm-bank .q-card-head {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  border-bottom: 1px solid var(--color-rule);
+}
+.lm-bank .q-type-badge {
+  background: var(--color-paper-2);
+  color: var(--color-muted);
+  border: 1px solid var(--color-rule);
+  font-weight: 700;
+}
+.lm-bank .q-level-pill { border-color: var(--color-rule-2); color: var(--color-muted); }
+.lm-bank .q-level-pill.on { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-ink); }
+.lm-bank .q-card-body { background: var(--color-surface); }
+.lm-bank .q-code-tag { color: var(--color-muted); border-color: var(--color-rule); }
+.bk-qcode {
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-ctrl);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.bk-qcode:hover { background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+.bk-opts { margin-top: 8px; display: grid; gap: 4px; font-size: 13.5px; }
+.bk-opt {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 8px;
+  border-radius: var(--radius-ctrl);
+  border: 1px solid transparent;
+}
+.bk-opt.is-correct {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 45%, transparent);
+}
+.bk-opt.is-correct .bk-opt-id { color: var(--color-success); }
+.bk-opt-id { font-weight: 700; flex-shrink: 0; }
+.bk-opt-text { flex: 1; min-width: 0; }
+.bk-tf { flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.bk-tf.is-true { background: color-mix(in srgb, var(--color-success) 16%, transparent); color: var(--color-success); }
+.bk-tf.is-false { background: var(--color-danger-wash); color: var(--color-danger); }
+
+@media (max-width: 720px) {
+  .bk-head h1 { font-size: 22px; }
+  .bk-stats { grid-template-columns: minmax(90px, 1.2fr) repeat(4, 1fr) 0.8fr; padding: 8px; }
+  .bk-cell { font-size: 13px; padding: 6px 2px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bk-selbar { animation: none; }
+  .bk-cell { transition: none; }
+}

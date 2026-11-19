@@ -34,3 +34,7 @@
 - [x] Tìm theo nội dung hiểu LaTeX: bỏ dấu, khoảng trắng, `$`, `{}`, `\left/\right`, `\dfrac≡\frac`; khớp từng cụm; tìm cả trong lựa chọn/lời giải; chờ 300ms sau phím cuối
 - [x] Sửa câu hỏi & đáp án ngay trong đề (`PATCH /exams/:id/items/:itemId/question`): cập nhật câu gốc trong ngân hàng,
       tạo lại .tex mọi đề dùng câu đó, cảnh báo số đề/bài nộp bị ảnh hưởng, tuỳ chọn chấm lại khi đổi đáp án
+- [x] Giao diện ngân hàng mới (mẫu NganHang đã duyệt): đầu trang theo phạm vi, bảng Loại câu × Mức độ bấm để lọc
+      (`GET /bank/matrix?grade=&topicId=`), chip bộ lọc có ×, thanh thao tác khi chọn câu, thẻ câu: mã nổi bật,
+      phương án đúng tô xanh, ý Đúng/Sai gắn nhãn; bỏ emoji ở cây thư mục; CSS chỉ dùng token (5 bảng màu).
+      Kiểm chứng: syntax pass; chưa build trên VPS.

@@ -910,6 +910,31 @@ export class BankService {
     };
   }
 
+  // Bảng thống kê LOẠI CÂU × MỨC ĐỘ cho đúng phạm vi đang xem (khối / thư mục gồm thư mục con)
+  async bankMatrix(teacherId: string, query: any) {
+    const bank = await this.getBank(teacherId);
+    const where: any = { bankId: bank.id };
+    if (query?.grade === 'none') where.grade = null;
+    else if (query?.grade && Number.isFinite(Number(query.grade))) where.grade = Number(query.grade);
+    const roots = this.readTopicIds(query);
+    if (roots.length) where.topicId = { in: await this.topicWithDescendants(bank.id, roots) };
+    const rows = await this.prisma.question.groupBy({
+      by: ['type', 'difficulty'],
+      where,
+      _count: { _all: true },
+    });
+    const matrix: Record<string, Record<string, number>> = {};
+    let total = 0;
+    for (const r of rows) {
+      const t = String(r.type);
+      const d = String(r.difficulty ?? 'none');
+      matrix[t] = matrix[t] || {};
+      matrix[t][d] = (matrix[t][d] || 0) + r._count._all;
+      total += r._count._all;
+    }
+    return { matrix, total };
+  }
+
   async createQuestion(teacherId: string, dto: CreateQuestionDto) {
     const bank = await this.getBank(teacherId);
     const code = await this.generateUniqueCode(dto.type);

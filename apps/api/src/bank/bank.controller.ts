@@ -276,6 +276,13 @@ export class BankController {
   bankSummary(@CurrentUser() user: any) {
     return this.bankService.bankSummary(user.id);
   }
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get('matrix')
+  bankMatrix(@CurrentUser() user: any, @Query() q: any) {
+    return this.bankService.bankMatrix(user.id, q);
+  }
+
 
   // Dò các cặp câu hỏi trùng nhau trong kho
   @UseGuards(JwtAuthGuard, RolesGuard)
