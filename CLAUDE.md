@@ -32,9 +32,10 @@ pnpm --filter @lumimath/web dev          # dev server
 cd apps/api && NODE_OPTIONS="--max-old-space-size=1000" pnpm run build
 cd apps/api && pnpm run start:dev
 
-# Prisma (BẮT BUỘC chạy trong apps/api để resolve @prisma/client)
-cd apps/api && pnpm exec prisma db push
-cd apps/api && pnpm exec prisma generate
+# Prisma — CLI nằm ở packages/db (apps/api KHÔNG có prisma CLI trên VPS)
+# Chạy TRƯỚC khi build API mỗi khi schema.prisma đổi (thiếu bước này → build báo lỗi "không tồn tại" cột mới)
+cd packages/db && pnpm exec prisma db push      # nếu hỏi xác nhận mất dữ liệu → DỪNG, hỏi chủ dự án
+cd packages/db && pnpm exec prisma generate
 ```
 
 ⚠️ **KHÔNG build API và web cùng lúc** — VPS chỉ có 2 vCPU / 2GB RAM (có swap), chạy song song sẽ OOM.
