@@ -184,6 +184,26 @@ export default function BankTopicSidebar(props: {
     }
   }
 
+  // Xoá một lượt các mục lẻ — câu hỏi bên trong được giữ, chuyển về "chưa phân loại"
+  async function removeLoose(list: TNode[]) {
+    const qs = list.reduce((s, n) => s + (n.count || 0), 0);
+    if (
+      !window.confirm(
+        `Xoá ${list.length} mục chưa xếp vào chương?\n\n` +
+          list.map((n) => `• ${prettyTopic(n.name)}`).join('\n') +
+          `\n\n${qs} câu hỏi bên trong được GIỮ NGUYÊN, chỉ chuyển về “chưa phân loại”.`,
+      )
+    )
+      return;
+    try {
+      for (const n of list) await apiFetch(`/bank/topics/${n.id}`, { method: 'DELETE' });
+      await props.onReload();
+    } catch (e: any) {
+      alert(e.message);
+      await props.onReload();
+    }
+  }
+
   function renderNode(n: TNode, depth: number): any {
     if (!matches(n)) return null;
     const kids = n.children || [];
@@ -248,6 +268,10 @@ export default function BankTopicSidebar(props: {
       </li>
     );
   }
+
+  // Mục lẻ ở gốc: không phải "Chương/Phần…" và không có mục con
+  const isLoose = (n: TNode) =>
+    !(n.children || []).length && !/^\s*(ch(ươ|uo)ng|ph(ầ|a)n)\s/i.test(n.name);
 
   const gradeLabel = (g: string) => (g === 'none' ? 'Khác' : `Lớp ${g}`);
   const grouped = !fGrade
@@ -317,7 +341,26 @@ export default function BankTopicSidebar(props: {
           nodes.length ? (
             <section key={g}>
               {!fGrade && <div className="bt-grade">{gradeLabel(g)}</div>}
-              <ul className="bt-list">{nodes.map((n) => renderNode(n, 0))}</ul>
+              {/* Chương (và mục có con) trước; mục lẻ ở gốc tách riêng để không lẫn vào chương cuối */}
+              <ul className="bt-list">
+                {nodes.filter((n) => !isLoose(n)).map((n) => renderNode(n, 0))}
+              </ul>
+              {nodes.some(isLoose) && (
+                <div className="bt-orphans">
+                  <div className="bt-orphans-head">
+                    <span>Chưa xếp vào chương ({nodes.filter(isLoose).length})</span>
+                    <span className="bt-orphans-act">
+                      <button type="button" className="bt-mini" onClick={() => setTidyOpen(true)} title="Gộp vào đúng chương/dạng (giữ phân loại câu hỏi)">
+                        Gộp
+                      </button>
+                      <button type="button" className="bt-mini is-danger" onClick={() => removeLoose(nodes.filter(isLoose))}>
+                        Xoá hết
+                      </button>
+                    </span>
+                  </div>
+                  <ul className="bt-list">{nodes.filter(isLoose).map((n) => renderNode(n, 0))}</ul>
+                </div>
+              )}
             </section>
           ) : null,
         )}
