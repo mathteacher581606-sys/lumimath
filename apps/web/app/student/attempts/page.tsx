@@ -132,7 +132,7 @@ export default function AttemptHistoryPage() {
                   </button>
                 </div>
               </div>
-              {pdfMsg?.id === a.id && (
+              {pdfMsg && pdfMsg.id === a.id && (
                 <p className="sh-error" role="alert" style={{ marginTop: 8 }}>
                   {pdfMsg.text}
                 </p>
