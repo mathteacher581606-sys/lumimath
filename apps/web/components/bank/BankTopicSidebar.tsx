@@ -184,26 +184,6 @@ export default function BankTopicSidebar(props: {
     }
   }
 
-  // Xoá một lượt các mục lẻ — câu hỏi bên trong được giữ, chuyển về "chưa phân loại"
-  async function removeLoose(list: TNode[]) {
-    const qs = list.reduce((s, n) => s + (n.count || 0), 0);
-    if (
-      !window.confirm(
-        `Xoá ${list.length} mục chưa xếp vào chương?\n\n` +
-          list.map((n) => `• ${prettyTopic(n.name)}`).join('\n') +
-          `\n\n${qs} câu hỏi bên trong được GIỮ NGUYÊN, chỉ chuyển về “chưa phân loại”.`,
-      )
-    )
-      return;
-    try {
-      for (const n of list) await apiFetch(`/bank/topics/${n.id}`, { method: 'DELETE' });
-      await props.onReload();
-    } catch (e: any) {
-      alert(e.message);
-      await props.onReload();
-    }
-  }
-
   function renderNode(n: TNode, depth: number): any {
     if (!matches(n)) return null;
     const kids = n.children || [];
@@ -349,14 +329,14 @@ export default function BankTopicSidebar(props: {
                 <div className="bt-orphans">
                   <div className="bt-orphans-head">
                     <span>Chưa xếp vào chương ({nodes.filter(isLoose).length})</span>
-                    <span className="bt-orphans-act">
-                      <button type="button" className="bt-mini" onClick={() => setTidyOpen(true)} title="Gộp vào đúng chương/dạng (giữ phân loại câu hỏi)">
-                        Gộp
-                      </button>
-                      <button type="button" className="bt-mini is-danger" onClick={() => removeLoose(nodes.filter(isLoose))}>
-                        Xoá hết
-                      </button>
-                    </span>
+                    <button
+                      type="button"
+                      className="bt-mini"
+                      onClick={() => setTidyOpen(true)}
+                      title="Đưa các mục này về đúng chương/bài (không xoá câu hỏi)"
+                    >
+                      Sắp xếp lại
+                    </button>
                   </div>
                   <ul className="bt-list">{nodes.filter(isLoose).map((n) => renderNode(n, 0))}</ul>
                 </div>
