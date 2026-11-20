@@ -1106,6 +1106,70 @@ export class BankService {
     return { matrix, total };
   }
 
+  // Lớp suy ra từ mục lục: đi ngược lên các mục cha tới khi gặp mục có lớp (miễn phí, không cần AI)
+  private async inheritGrade(bankId: string, topicId: string | null | undefined): Promise<number | null> {
+    let cur = topicId || null;
+    for (let i = 0; cur && i < 12; i++) {
+      const t = await this.prisma.topic.findFirst({ where: { id: cur, bankId }, select: { grade: true, parentId: true } });
+      if (!t) return null;
+      if (t.grade) return t.grade;
+      cur = t.parentId;
+    }
+    return null;
+  }
+
+  // Điền lớp cho câu CHƯA có lớp (không bao giờ ghi đè lớp thầy đã nhập):
+  // 1) kế thừa từ mục lục; 2) còn lại nhờ DeepSeek đoán, không chắc thì để trống.
+  async autoFillGrades(teacherId: string, opts: { limit?: number; skip?: number } = {}) {
+    const bank = await this.getBank(teacherId);
+    const skip = Math.max(Number(opts.skip) || 0, 0); // số câu AI đã thử mà chưa chắc ở các lần trước
+    const take = Math.min(Math.max(Number(opts.limit) || 100, 1), 200);
+    const questions = await this.prisma.question.findMany({
+      where: { bankId: bank.id, grade: null },
+      orderBy: { createdAt: 'asc' },
+      skip,
+      take,
+      select: { id: true, content: true, topicId: true },
+    });
+    const topics = await this.prisma.topic.findMany({ where: { bankId: bank.id }, select: { id: true, name: true, parentId: true } });
+    const byId = new Map(topics.map((t) => [t.id, t]));
+    const pathOf = (id: string | null) => {
+      const names: string[] = [];
+      let cur = id ? byId.get(id) : undefined;
+      for (let i = 0; cur && i < 8; i++) {
+        names.unshift(cur.name);
+        cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+      }
+      return names.join(' › ');
+    };
+    let inherited = 0;
+    let byAi = 0;
+    const needAi: typeof questions = [];
+    for (const q of questions) {
+      const g = await this.inheritGrade(bank.id, q.topicId);
+      if (g) {
+        await this.prisma.question.update({ where: { id: q.id }, data: { grade: g } });
+        inherited++;
+      } else needAi.push(q);
+    }
+    if (needAi.length) {
+      const guesses = await this.ai.guessGrades(
+        needAi.map((q) => q.content),
+        needAi.map((q) => pathOf(q.topicId)),
+      );
+      for (let i = 0; i < needAi.length; i++) {
+        const g = guesses[i];
+        if (!g) continue;
+        // chỉ ghi nếu trong lúc chờ AI thầy chưa tự điền
+        const r = await this.prisma.question.updateMany({ where: { id: needAi[i].id, grade: null }, data: { grade: g } });
+        byAi += r.count;
+      }
+    }
+    const unknown = needAi.length - byAi;
+    const remaining = Math.max((await this.prisma.question.count({ where: { bankId: bank.id, grade: null } })) - skip - unknown, 0);
+    return { total: questions.length, inherited, byAi, unknown, remaining };
+  }
+
   async createQuestion(teacherId: string, dto: CreateQuestionDto) {
     const bank = await this.getBank(teacherId);
     const code = await this.generateUniqueCode(dto.type);
@@ -1148,6 +1212,13 @@ export class BankService {
 
     // Biên dịch sẵn hình TikZ ngay khi lưu → người dùng sau chỉ lấy ảnh từ cache
     this.precompileTikz(dto.content, dto.solution);
+    // Chưa chọn lớp → tự điền nền (kế thừa mục lục, không được thì nhờ AI); lỗi AI không ảnh hưởng việc lưu
+    if (dto.grade == null) {
+      void (async () => {
+        const g = (await this.inheritGrade(bank.id, topicId)) ?? (await this.ai.guessGrades([cleanContent]))[0] ?? null;
+        if (g) await this.prisma.question.updateMany({ where: { id: question.id, grade: null }, data: { grade: g } });
+      })().catch(() => undefined);
+    }
     return question;
   }
 

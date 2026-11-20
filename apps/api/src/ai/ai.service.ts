@@ -425,7 +425,7 @@ export class AiService {
       'Câu hỏi: ' + content,
       '',
       'Hãy trả về JSON với đúng các trường sau:',
-      '{"grade": <10 hoặc 11 hoặc 12>, "topic": "<tên chủ đề>", "difficulty": "<NHAN_BIET | THONG_HIEU | VAN_DUNG | VAN_DUNG_CAO>"}',
+      '{"grade": <số lớp từ 6 đến 12>, "topic": "<tên chủ đề>", "difficulty": "<NHAN_BIET | THONG_HIEU | VAN_DUNG | VAN_DUNG_CAO>"}',
     ].join('\n');
 
     const content2 = await this.chat([
@@ -438,6 +438,44 @@ export class AiService {
     } catch (e) {
       return { raw: content2, grade: null, topic: '', difficulty: null };
     }
+  }
+
+  // Đoán LỚP (6–12) cho các câu chưa có lớp. Trả null khi không chắc — không đoán bừa.
+  // hints: ngữ cảnh mục lục của từng câu (VD: "Ôn thi vào 10 › Chương I") giúp AI định hướng.
+  async guessGrades(questions: string[], hints: string[] = []): Promise<(number | null)[]> {
+    const BATCH = 10;
+    const out: (number | null)[] = [];
+    for (let i = 0; i < questions.length; i += BATCH) {
+      const chunk = questions.slice(i, i + BATCH);
+      const numbered = chunk
+        .map((q, j) => {
+          const h = hints[i + j];
+          return `Câu ${j + 1}${h ? ` (thuộc mục: ${h})` : ''}: ${String(q).slice(0, 1200)}`;
+        })
+        .join('\n\n');
+      const user = [
+        'Xác định câu hỏi Toán sau thuộc kiến thức LỚP mấy (6–12) theo chương trình GDPT 2018 Việt Nam.',
+        'Chỉ trả lời số lớp nếu khá chắc chắn; không chắc thì để null. Tên mục chỉ là gợi ý, không phải căn cứ duy nhất.',
+        '',
+        numbered,
+        '',
+        `Trả về MẢNG JSON đúng ${chunk.length} phần tử theo thứ tự câu: [{"grade": 6|7|8|9|10|11|12|null}]`,
+      ].join('\n');
+      try {
+        const raw = await this.chat([
+          { role: 'system', content: 'Bạn là giáo viên Toán Việt Nam. Chỉ trả về JSON hợp lệ.' },
+          { role: 'user', content: user },
+        ]);
+        const arr = this.parseJson(raw);
+        for (let j = 0; j < chunk.length; j++) {
+          const g = Number(Array.isArray(arr) ? arr[j]?.grade : null);
+          out.push(Number.isInteger(g) && g >= 6 && g <= 12 ? g : null);
+        }
+      } catch {
+        out.push(...chunk.map(() => null));
+      }
+    }
+    return out;
   }
 
   // Phân loại thô một lô câu hỏi trong MỘT lần gọi AI
@@ -501,7 +539,7 @@ export class AiService {
       'Nếu chưa có dạng bài phù hợp → đề xuất tên dạng bài NGẮN GỌN chuẩn SGK, ví dụ: "Phương trình mặt phẳng", "Khoảng cách từ điểm đến mặt phẳng", "Tìm m để hàm số đồng biến", "Tính thể tích khối chóp"; nếu không xác định được → form = "".',
       '',
       'Trả về MẢNG JSON, mỗi phần tử theo đúng thứ tự câu hỏi:',
-      '[{"grade": 10|11|12|null, "topic": "tên chủ đề trong danh sách", "difficulty": "NHAN_BIET|THONG_HIEU|VAN_DUNG|VAN_DUNG_CAO", "form": "tên dạng bài"}]',
+      '[{"grade": 6|7|8|9|10|11|12|null, "topic": "tên chủ đề trong danh sách", "difficulty": "NHAN_BIET|THONG_HIEU|VAN_DUNG|VAN_DUNG_CAO", "form": "tên dạng bài"}]',
     ].join('\n');
 
     const raw = await this.chat([

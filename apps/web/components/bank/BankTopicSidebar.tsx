@@ -62,6 +62,8 @@ export default function BankTopicSidebar(props: {
   onSeed: () => void;
   reclassifying: boolean;
   onReclassify: () => void;
+  autoGrading: boolean;
+  onAutoGrade: () => void;
 }) {
   const { tree, summary, fGrade, fTopic } = props;
   const [query, setQuery] = useState('');
@@ -295,6 +297,9 @@ export default function BankTopicSidebar(props: {
               </button>
               <button type="button" role="menuitem" disabled={props.reclassifying} onClick={() => { setToolsOpen(false); props.onReclassify(); }}>
                 {props.reclassifying ? 'AI đang phân loại…' : 'AI xếp câu hỏi vào đúng dạng'}
+              </button>
+              <button type="button" role="menuitem" disabled={props.autoGrading || !(summary?.byGrade?.none ?? 0)} onClick={() => { setToolsOpen(false); props.onAutoGrade(); }}>
+                {props.autoGrading ? 'AI đang điền lớp…' : `AI điền lớp cho câu chưa có lớp (${summary?.byGrade?.none ?? 0})`}
               </button>
               <button type="button" role="menuitem" onClick={() => { setToolsOpen(false); addChild(null, fGrade && fGrade !== 'none' ? fGrade : '', true); }}>
                 Thêm lớp / chương mới…

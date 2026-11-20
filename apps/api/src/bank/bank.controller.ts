@@ -75,6 +75,13 @@ export class BankController {
   // AI phân loại lại toàn bộ câu hỏi theo cây mục lục (dạng lá)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)
+  @Post('auto-grade')
+  autoGrade(@CurrentUser() user: any, @Query('limit') limit?: string, @Query('skip') skip?: string) {
+    return this.bankService.autoFillGrades(user.id, { limit: limit ? Number(limit) : undefined, skip: skip ? Number(skip) : undefined });
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
   @Post('reclassify')
   reclassify(
     @CurrentUser() user: any,

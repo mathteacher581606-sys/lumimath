@@ -493,6 +493,29 @@ export default function BankPage() {
   const [seeding, setSeeding] = useState(false);
   const [reclassifying, setReclassifying] = useState(false);
 
+  const [autoGrading, setAutoGrading] = useState(false);
+  const [autoGradeSkip, setAutoGradeSkip] = useState(0); // câu AI đã thử mà chưa chắc — bỏ qua ở lần bấm sau
+  // AI điền lớp cho câu CHƯA có lớp (kế thừa mục lục trước, còn lại hỏi DeepSeek). Không ghi đè lớp đã có.
+  async function autoGradeAll() {
+    if (!confirm('Hệ thống sẽ điền LỚP cho các câu chưa có lớp: lấy theo mục lục nếu được, còn lại nhờ AI (DeepSeek) đoán. Lớp thầy đã chọn không bị đổi. Mỗi lần xử lý tối đa 100 câu. Tiếp tục?')) return;
+    setAutoGrading(true);
+    try {
+      const r = await apiFetch(`/bank/auto-grade?limit=100&skip=${autoGradeSkip}`, { method: 'POST' });
+      setAutoGradeSkip(autoGradeSkip + (r.unknown || 0));
+      alert(
+        `Đã xử lý ${r.total} câu: ${r.inherited} câu lấy lớp theo mục lục, ${r.byAi} câu do AI đoán, ${r.unknown} câu AI chưa chắc (để trống).` +
+          (r.remaining ? `\nCòn ${r.remaining} câu chưa có lớp — bấm lại để xử lý tiếp.` : ''),
+      );
+      await loadQuestions();
+      await loadTopicTree();
+      await loadSummary();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setAutoGrading(false);
+    }
+  }
+
   async function reclassifyAll() {
     if (
       !confirm(
@@ -1754,6 +1777,8 @@ export default function BankPage() {
           onSeed={seedGrade10}
           reclassifying={reclassifying}
           onReclassify={reclassifyAll}
+          autoGrading={autoGrading}
+          onAutoGrade={autoGradeAll}
         />
 
         {/* ================= VÙNG NỘI DUNG ================= */}
