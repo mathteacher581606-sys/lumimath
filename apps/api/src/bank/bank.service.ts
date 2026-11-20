@@ -402,6 +402,7 @@ export class BankService {
           id: t.id,
           name: t.name,
           grade: t.grade,
+          isGroup: t.isGroup,
           parentId: t.parentId,
           order: t.order,
           count: total,
@@ -577,18 +578,21 @@ export class BankService {
   async createTopic(teacherId: string, dto: CreateTopicDto) {
     const bank = await this.getBank(teacherId);
     if (dto.parentId) await this.ensureOwnTopic(teacherId, dto.parentId);
+    if (dto.isGroup && dto.parentId) throw new BadRequestException('Nhóm chỉ được tạo ở gốc mục lục');
     return this.prisma.topic.create({
       data: {
         bankId: bank.id,
         name: dto.name,
-        grade: dto.grade,
+        grade: dto.isGroup ? null : dto.grade,
+        isGroup: !!dto.isGroup,
         parentId: dto.parentId,
       },
     });
   }
 
   async updateTopic(teacherId: string, topicId: string, dto: UpdateTopicDto) {
-    await this.ensureOwnTopic(teacherId, topicId);
+    const self = await this.ensureOwnTopic(teacherId, topicId);
+    if (dto.parentId && self.isGroup) throw new BadRequestException('Nhóm phải nằm ở gốc mục lục, không chuyển vào mục khác');
     if (dto.parentId) {
       // Thư mục cha phải thuộc kho của mình và KHÔNG được là chính nó / thư mục con của nó
       // (trước đây tạo vòng lặp → cả nhánh mục lục và câu hỏi bên trong biến mất khỏi cây)
@@ -610,10 +614,18 @@ export class BankService {
   //    hoặc chuyển vào chương gần nghĩa nhất
   async topicTidyPlan(teacherId: string) {
     const bank = await this.getBank(teacherId);
-    const topics = await this.prisma.topic.findMany({
+    const all = await this.prisma.topic.findMany({
       where: { bankId: bank.id },
       include: { _count: { select: { questions: true, children: true } } },
     });
+    // Nhóm tự đặt tên và mọi mục bên trong do giáo viên chủ ý xếp → không đụng tới
+    const inGroup = new Set<string>();
+    const mark = (id: string) => {
+      inGroup.add(id);
+      all.filter((x) => x.parentId === id).forEach((x) => mark(x.id));
+    };
+    all.filter((x) => x.isGroup).forEach((x) => mark(x.id));
+    const topics = all.filter((x) => !inGroup.has(x.id));
     const byId = new Map(topics.map((t) => [t.id, t]));
     const pathOf = (id: string | null): string => {
       const names: string[] = [];
@@ -730,6 +742,7 @@ export class BankService {
         this.prisma.topic.findFirst({ where: { id: intoId, bankId: bank.id } }),
       ]);
       if (!from || !into) continue; // đã bị gộp/xoá ở thao tác trước
+      if (from.isGroup) continue; // không gộp/chuyển nhóm
       const sub = await this.topicWithDescendants(bank.id, fromId);
       if (sub.includes(intoId)) {
         throw new BadRequestException(`Không thể đưa "${from.name}" vào chính mục con của nó`);

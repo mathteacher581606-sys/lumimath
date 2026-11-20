@@ -8,7 +8,7 @@ import { GRADES, gradeLevel } from '@/lib/grades';
 // Mục lục ngân hàng câu hỏi (theo mẫu đã duyệt): chọn lớp dạng nút gạt, cây gọn,
 // bấm tên để lọc, nút ⋯ từng mục để thêm/đổi tên/chuyển/xoá, và "Sắp xếp lại" để dọn mục lẻ & mục trùng.
 
-type TNode = { id: string; name: string; grade: number | null; parentId: string | null; count: number; own?: number; children: TNode[] };
+type TNode = { id: string; name: string; grade: number | null; isGroup?: boolean; parentId: string | null; count: number; own?: number; children: TNode[] };
 
 // "CHƯƠNG I. MỆNH ĐỀ VÀ TẬP HỢP" → "Chương I. Mệnh đề và tập hợp" (chỉ đổi cách hiển thị)
 export function prettyTopic(name: string): string {
@@ -79,7 +79,7 @@ export default function BankTopicSidebar(props: {
     const list = GRADES.filter(
       (g) => tree.some((t) => String(t.grade) === g) || (summary?.byGrade?.[g] ?? 0) > 0,
     );
-    if (tree.some((t) => t.grade == null) || (summary?.byGrade?.none ?? 0) > 0) list.push('none');
+    if (tree.some((t) => t.grade == null && !t.isGroup) || (summary?.byGrade?.none ?? 0) > 0) list.push('none');
     return list;
   }, [tree, summary]);
 
@@ -128,7 +128,7 @@ export default function BankTopicSidebar(props: {
     !q || prettyTopic(n.name).toLowerCase().includes(q) || (n.children || []).some(matches);
 
   const roots = tree.filter((t) => {
-    const g = t.grade == null ? 'none' : String(t.grade);
+    const g = t.isGroup ? 'group' : t.grade == null ? 'none' : String(t.grade);
     return (!fGrade || g === fGrade) && matches(t);
   });
 
@@ -146,11 +146,12 @@ export default function BankTopicSidebar(props: {
   }
 
   async function createTopic(name: string, grade: string, parent: TNode | null) {
+    const asGroup = !parent && grade === '__group__';
     await apiFetch('/bank/topics', {
       method: 'POST',
       body: JSON.stringify({
         name: name.trim(),
-        grade: parent ? parent.grade : Number(grade) || null,
+        ...(asGroup ? { isGroup: true } : { grade: parent ? parent.grade : Number(grade) || null }),
         ...(parent ? { parentId: parent.id } : {}),
       }),
     });
@@ -173,7 +174,9 @@ export default function BankTopicSidebar(props: {
     const sub = (n.children || []).length;
     if (
       !window.confirm(
-        `Xoá mục “${prettyTopic(n.name)}”?\n\n${n.count} câu hỏi bên trong được GIỮ NGUYÊN và chuyển về “chưa phân loại”.` +
+        n.isGroup
+          ? `Xoá nhóm “${prettyTopic(n.name)}”?\n\nCâu hỏi KHÔNG bị xoá. ${sub} mục bên trong được đưa ra phần “Khác” (không thuộc nhóm nào); bạn có thể chuyển lại sau.`
+          : `Xoá mục “${prettyTopic(n.name)}”?\n\n${n.count} câu hỏi bên trong được GIỮ NGUYÊN và chuyển về “chưa phân loại”.` +
           (sub ? `\n${sub} mục con sẽ được đưa lên gốc lớp.` : ''),
       )
     )
@@ -244,9 +247,11 @@ export default function BankTopicSidebar(props: {
                 <button type="button" role="menuitem" onClick={() => { setMenuFor(null); rename(n); }}>
                   Đổi tên
                 </button>
-                <button type="button" role="menuitem" onClick={() => { setMenuFor(null); setMoving(n); }}>
-                  Chuyển / gộp vào mục khác…
-                </button>
+                {!n.isGroup && (
+                  <button type="button" role="menuitem" onClick={() => { setMenuFor(null); setMoving(n); }}>
+                    Chuyển / gộp vào mục khác…
+                  </button>
+                )}
                 <hr />
                 <button type="button" role="menuitem" className="is-danger" onClick={() => { setMenuFor(null); remove(n); }}>
                   Xoá mục…
@@ -262,11 +267,11 @@ export default function BankTopicSidebar(props: {
 
   // Mục lẻ ở gốc: không phải "Chương/Phần…" và không có mục con
   const isLoose = (n: TNode) =>
-    !(n.children || []).length && !/^\s*(ch(ươ|uo)ng|ph(ầ|a)n)\s/i.test(n.name);
+    !n.isGroup && !(n.children || []).length && !/^\s*(ch(ươ|uo)ng|ph(ầ|a)n)\s/i.test(n.name);
 
-  const gradeLabel = (g: string) => (g === 'none' ? 'Khác' : `Lớp ${g}`);
+  const gradeLabel = (g: string) => (g === 'none' ? 'Khác' : g === 'group' ? 'Nhóm riêng' : `Lớp ${g}`);
   const grouped = !fGrade
-    ? grades.map((g) => ({ g, nodes: roots.filter((t) => (t.grade == null ? 'none' : String(t.grade)) === g) }))
+    ? [...grades.map((g) => ({ g, nodes: roots.filter((t) => !t.isGroup && (t.grade == null ? 'none' : String(t.grade)) === g) })), { g: 'group', nodes: roots.filter((t) => t.isGroup) }]
     : [{ g: fGrade, nodes: roots }];
 
   return (
@@ -336,9 +341,9 @@ export default function BankTopicSidebar(props: {
                 <div className="bt-grade bt-grade-row">
                   <span>
                     {gradeLabel(g)}
-                    {g !== 'none' && gradeLevel(g) ? ` · ${gradeLevel(g)}` : ''}
+                    {g !== 'none' && g !== 'group' && gradeLevel(g) ? ` · ${gradeLevel(g)}` : ''}
                   </span>
-                  {g !== 'none' && (
+                  {g !== 'none' && g !== 'group' && (
                     <button type="button" className="bt-mini" onClick={() => addChild(null, g)} title={`Thêm chương vào Lớp ${g}`}>
                       + Chương
                     </button>
@@ -429,7 +434,10 @@ export default function BankTopicSidebar(props: {
           onCreate={async (name, grade) => {
             await createTopic(name, grade, adding.parent);
             setAdding(null);
-            if (!adding.parent) props.onSelectGrade(grade);
+            if (!adding.parent) {
+              if (grade === '__group__') props.onSelectAll();
+              else props.onSelectGrade(grade);
+            }
           }}
         />
       )}
@@ -480,11 +488,12 @@ function AddDialog({
   const [grade, setGrade] = useState(grade0 || '6');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
-  const isNewGrade = !parent && !existing.includes(grade);
+  const isGroup = !parent && grade === '__group__';
+  const isNewGrade = !parent && !isGroup && !existing.includes(grade);
   const title = parent
     ? `Thêm mục con vào “${prettyTopic(parent.name)}”`
     : askGrade
-      ? 'Thêm lớp hoặc chương mới'
+      ? 'Thêm lớp, nhóm hoặc chương mới'
       : `Thêm chương vào Lớp ${grade}`;
 
   async function submit() {
@@ -511,22 +520,24 @@ function AddDialog({
                   Lớp {g} ({gradeLevel(g)}){existing.includes(g) ? '' : ' — chưa có'}
                 </option>
               ))}
+              <option value="__group__">Nhóm mới (tự đặt tên, VD: Ôn thi vào 10)</option>
             </select>
           </label>
         )}
         <label className="bt-flt">
-          <span>{parent ? 'Tên mục con (bài, dạng, thư mục…)' : 'Tên chương'}</span>
+          <span>{parent ? 'Tên mục con (bài, dạng, thư mục…)' : isGroup ? 'Tên nhóm' : 'Tên chương'}</span>
           <input
             className="bt-search"
             autoFocus
             value={name}
-            placeholder={parent ? 'VD: Bài 1. Hàm số bậc nhất' : 'VD: Chương I. Số hữu tỉ'}
+            placeholder={parent ? 'VD: Bài 1. Hàm số bậc nhất' : isGroup ? 'VD: Ôn thi vào 10' : 'VD: Chương I. Số hữu tỉ'}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') submit();
             }}
           />
         </label>
+        {isGroup && <p className="bt-note">Nhóm nằm riêng, không thuộc lớp nào. Sau khi tạo, dùng nút “+” cạnh nhóm để thêm chương, bài, thư mục con bên trong.</p>}
         {isNewGrade && <p className="bt-note">Lớp {grade} chưa có trong mục lục — chương này sẽ tạo luôn lớp đó.</p>}
         <div className="bt-modal-act">
           <button type="button" className="btn btn-outline bk-btn" onClick={onClose}>

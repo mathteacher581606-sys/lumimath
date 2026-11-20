@@ -491,6 +491,7 @@ model Topic {
   bank      QuestionBank @relation(fields: [bankId], references: [id], onDelete: Cascade)
   name      String
   grade     Int?
+  isGroup   Boolean  @default(false) // nhóm tự đặt tên ở gốc mục lục (VD: "Ôn thi vào 10"), không thuộc lớp số nào
   parentId  String?
   parent    Topic?   @relation("TopicTree", fields: [parentId], references: [id])
   children  Topic[]  @relation("TopicTree")

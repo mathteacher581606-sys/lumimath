@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateTopicDto {
   @IsString()
@@ -12,4 +12,9 @@ export class CreateTopicDto {
   @IsOptional()
   @IsString()
   parentId?: string;
+
+  // true = tạo "nhóm" tự đặt tên ở gốc (không thuộc lớp số)
+  @IsOptional()
+  @IsBoolean()
+  isGroup?: boolean;
 }
