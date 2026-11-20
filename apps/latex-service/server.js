@@ -23,6 +23,33 @@ const TEX_ENV = {
   shell_escape: 'f',
 };
 
+// ===== ĐỊNH DẠNG NẠP SẴN (lmfmt) =====
+// Tài liệu mở đầu bằng "\documentclass[...]{standalone}" + "\usepackage{lumimath}" được đổi sang
+// dùng lmfmt.fmt (đã nạp sẵn mọi gói lúc dựng image) → nhanh hơn ~5 lần.
+// \endofdump (gói mylatexformat) cho phép tài liệu vẫn thêm preamble riêng sau đó.
+const FMT_NAME = 'lmfmt';
+let FMT_OK = false;
+try {
+  FMT_OK = !!require('child_process')
+    .execFileSync('kpsewhich', ['-engine=pdftex', FMT_NAME + '.fmt'], { encoding: 'utf8' })
+    .trim();
+} catch {
+  FMT_OK = false;
+}
+console.log(FMT_OK ? 'Dùng định dạng nạp sẵn lmfmt' : 'Không có lmfmt.fmt — biên dịch thường');
+
+function withFormat(src) {
+  if (!FMT_OK) return null;
+  const m = String(src).match(/^\s*\\documentclass(?:\[([^\]]*)\])?\{standalone\}[ \t]*\r?\n[ \t]*\\usepackage\{lumimath\}[ \t]*\r?\n/);
+  if (!m) return null;
+  const opts = (m[1] || '').trim();
+  return (
+    '\\documentclass{standalone}\n\\endofdump\n' +
+    (opts ? '\\standaloneconfig{' + opts + '}\n' : '') +
+    src.slice(m[0].length)
+  );
+}
+
 // Hàng đợi đơn giản: tối đa MAX_PARALLEL lần biên dịch chạy cùng lúc
 let running = 0;
 const waiting = [];
@@ -39,7 +66,7 @@ function release() {
   else running--;
 }
 
-function runLatex(texSource, images) {
+function runLatex(texSource, images, fmt) {
   return new Promise((resolve, reject) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'latex-'));
     const cleanup = () => fs.rm(dir, { recursive: true, force: true }, () => {});
@@ -59,9 +86,12 @@ function runLatex(texSource, images) {
       return;
     }
 
+    const args = ['-pdf', '-no-shell-escape', '-interaction=nonstopmode', '-halt-on-error'];
+    if (fmt) args.push('-pdflatex=pdflatex -fmt=' + FMT_NAME + ' %O %S');
+    args.push('main.tex');
     execFile(
       'latexmk',
-      ['-pdf', '-no-shell-escape', '-interaction=nonstopmode', '-halt-on-error', 'main.tex'],
+      args,
       { cwd: dir, timeout: TIMEOUT_MS, env: TEX_ENV, maxBuffer: 20 * 1024 * 1024 },
       (err, stdout, stderr) => {
         try {
@@ -90,7 +120,7 @@ function runLatex(texSource, images) {
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'latex', running, waiting: waiting.length }));
+    res.end(JSON.stringify({ status: 'ok', service: 'latex', format: FMT_OK ? FMT_NAME : null, running, waiting: waiting.length }));
     return;
   }
 
@@ -127,7 +157,19 @@ const server = http.createServer((req, res) => {
       }
       await acquire();
       try {
-        const pdf = await runLatex(source, Array.isArray(images) ? images : []);
+        const imgs = Array.isArray(images) ? images : [];
+        const fast = withFormat(source);
+        let pdf;
+        if (fast) {
+          try {
+            pdf = await runLatex(fast, imgs, true);
+          } catch {
+            // Hiếm: gói không hợp định dạng nạp sẵn → biên dịch thường (log lỗi lấy từ lần này)
+            pdf = await runLatex(source, imgs, false);
+          }
+        } else {
+          pdf = await runLatex(source, imgs, false);
+        }
         res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': pdf.length });
         res.end(pdf);
       } catch (e) {

@@ -50,6 +50,12 @@ pm2      lumimath-api  ·  lumimath-web
 
 Quy trình: `scp` file đã sửa lên đúng đường dẫn → build → `pm2 restart` → smoke test.
 
+**Dịch vụ LaTeX (Docker `lumimath-latex`)**: sửa bất kỳ file nào trong `apps/latex-service/` (server.js, Dockerfile,
+`texmf/…/lumimath.sty`, `fmt/`) thì phải dựng lại container:
+`docker compose build latex && docker compose up -d latex`, kiểm tra `curl -s localhost:8080/health` có `"format":"lmfmt"`.
+Bộ gói dùng chung cho mọi lần biên dịch là `lumimath.sty` (xem `specs/017-latex-pipeline`); thêm gói thì thêm vào đó,
+KHÔNG thêm `\usepackage` rải rác trong API. File .tex cho người dùng tải về không dùng lumimath.
+
 ```bash
 curl -s -o /dev/null -w "%{http_code}" https://app.toanthayminhtri.io.vn/teacher   # mong đợi 200
 curl -s -o /dev/null -w "%{http_code}" http://localhost:4000/api/auth/me           # 401 = API sống (chưa token)

@@ -17,6 +17,7 @@ import { MailService } from '../mail/mail.service';
 import { CreateExamDto } from './dto/create-exam.dto';
 import { buildTablePdf, buildXlsx, escapeTex, safeFilename } from '../common/export.helper';
 import { fixFromLog, normalizeTex, texToPlainText } from '../common/tex-autofix';
+import { articleHead, isMissingLumimath, legacyFallback, LUMIMATH_PKG, standaloneDoc } from '../common/tex-preamble';
 import * as XLSX from 'xlsx';
 
 // Thư mục lưu cache ảnh TikZ (dùng chung cho mọi người dùng, sống sót qua restart)
@@ -1015,37 +1016,8 @@ export class ExamsService {
   // Sinh mã LaTeX đáp án (kèm lời giải) → PDF tải về
   private generateAnswerTex(examTitle: string, items: any[]): string {
     const lines: string[] = [];
-    lines.push('\\documentclass[12pt]{article}');
-    lines.push('\\usepackage{ex_test}');
-    lines.push('\\usepackage{amsmath}');
-    lines.push('\\usepackage{amssymb}');
-    lines.push('\\usepackage{amsfonts}');
-    lines.push('\\usepackage{mathtools}');
-    lines.push('\\usepackage{siunitx}');
-    lines.push('\\usepackage{cancel}');
-    lines.push('\\usepackage{empheq}');
-    lines.push('\\usepackage{systeme}');
-    lines.push('\\usepackage{tikz}');
-    lines.push('\\usepackage{pgfplots}');
-    lines.push('\\pgfplotsset{compat=1.16}');
-    lines.push(
-      '\\usetikzlibrary{arrows.meta,calc,patterns,patterns.meta,decorations.pathreplacing,decorations.markings,decorations.pathmorphing,decorations.shapes,decorations.text,decorations.fractals,decorations.footprints,angles,quotes,shapes,shapes.geometric,shapes.misc,shapes.symbols,shapes.arrows,shapes.multipart,positioning,fit,matrix,chains,scopes,through,backgrounds,fadings,shadows,mindmap,trees,plotmarks,intersections,3d,perspective,math,spy,automata,er,petri,datavisualization,datavisualization.formats.functions,lindenmayersystems,calendar,folding,graphs,graphs.standard}',
-    );
-    lines.push('\\usepackage{tkz-base}');
-    lines.push('\\usepackage{tkz-tab}');
-    lines.push('\\usepackage{tkz-euclide}');
-    lines.push('\\usepackage{circuitikz}');
-    lines.push('\\usepackage{tikz-cd}');
-    lines.push('\\usepackage{tikz-3dplot}');
-    lines.push('\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}');
-    lines.push('\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}');
-    // Macro VN thường gặp trong đề của giáo viên (chỉ thêm nếu chưa có — tránh xung đột ex_test)
-    lines.push('\\makeatletter');
-    lines.push('\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}');
-    lines.push('\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}');
-    lines.push('\\@ifundefined{itemch}{\\newenvironment{itemch}{\\begin{itemize}}{\\end{itemize}}}{}');
-    lines.push('\\@ifundefined{itemchoice}{\\newenvironment{itemchoice}{\\begin{itemize}}{\\end{itemize}}}{}');
-    lines.push('\\makeatother');
+    // Bộ gói dùng chung (lumimath.sty): ex_test, toán, TikZ/pgfplots/tkz, macro VN…
+    lines.push(...articleHead('12pt'));
     lines.push('\\begin{document}');
     lines.push(
       '\\begin{center}{\\Large ' +
@@ -1209,6 +1181,11 @@ export class ExamsService {
     if (!res.ok) {
       const err: any = await res.json().catch(() => ({}));
       const raw = String(err.error || 'Compile thất bại');
+
+      // Container LaTeX chưa dựng lại (chưa có lumimath.sty) → biên dịch lại bằng khung cũ
+      if (isMissingLumimath(raw) && tex.includes(LUMIMATH_PKG)) {
+        return this.compileRaw(legacyFallback(tex));
+      }
 
       // TỰ SỬA 1 LẦN: lỗi "Missing $ inserted" thường do môi trường toán
       // (cases/aligned/matrix...) chưa được bọc $...$ → bọc lại rồi thử lại
@@ -1526,7 +1503,20 @@ export class ExamsService {
       }
     }
     if (important.length) {
+      // Gợi ý dễ hiểu cho giáo viên (dòng đầu tiên — web hiển thị dòng này)
+      let hint = '';
+      const iu = important.findIndex((l) => /Undefined control sequence/.test(l));
+      if (iu >= 0) {
+        const src = important[iu + 1] || '';
+        const cmds = src.match(/\\[A-Za-z@]+/g);
+        if (cmds?.length) hint = `Lệnh chưa được định nghĩa: ${cmds[cmds.length - 1]}`;
+      }
+      const nf = important.join('\n').match(/File `([^']+)' not found/);
+      if (!hint && nf) hint = `Thiếu file/gói: ${nf[1]}`;
+      const env = important.join('\n').match(/Environment (\S+) undefined/);
+      if (!hint && env) hint = `Môi trường chưa được định nghĩa: ${env[1]}`;
       return (
+        (hint ? hint + '\n' : '') +
         'Lỗi LaTeX:\n' +
         important.join('\n') +
         '\n\n(Gợi ý: kiểm tra dấu ngoặc { } có cân bằng trong công thức toán không)'
@@ -1537,37 +1527,7 @@ export class ExamsService {
 
   // Preamble chuẩn cho đề thi (hỗ trợ ex_test + TikZ + tiếng Việt)
   private buildPreamble(): string {
-    return [
-      '\\documentclass[12pt]{article}',
-      '\\usepackage{ex_test}',
-      '\\usepackage{amsmath}',
-      '\\usepackage{amssymb}',
-      '\\usepackage{amsfonts}',
-      '\\usepackage{mathtools}',
-      '\\usepackage{siunitx}',
-      '\\usepackage{cancel}',
-      '\\usepackage{empheq}',
-      '\\usepackage{systeme}',
-      '\\usepackage{graphicx}',
-      '\\usepackage{tikz}',
-      '\\usepackage{pgfplots}',
-      '\\pgfplotsset{compat=1.16}',
-      '\\usepgfplotslibrary{fillbetween,polar,colormaps,statistics,dateplot,groupplots,units,patchplots,ternary}',
-      '\\usetikzlibrary{arrows.meta,calc,patterns,patterns.meta,decorations.pathreplacing,decorations.markings,decorations.pathmorphing,decorations.shapes,decorations.text,decorations.fractals,decorations.footprints,angles,quotes,shapes,shapes.geometric,shapes.misc,shapes.symbols,shapes.arrows,shapes.multipart,positioning,fit,matrix,chains,scopes,through,backgrounds,fadings,shadows,mindmap,trees,plotmarks,intersections,3d,perspective,math,spy,automata,er,petri,datavisualization,datavisualization.formats.functions,lindenmayersystems,calendar,folding,graphs,graphs.standard}',
-      '\\usepackage{tkz-base}',
-      '\\usepackage{tkz-tab}',
-      '\\usepackage{tkz-euclide}',
-      '\\usepackage{circuitikz}',
-      '\\usepackage{tikz-cd}',
-      '\\usepackage{tikz-3dplot}',
-      '\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}',
-      '\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}',
-      '\\makeatletter',
-      '\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
-      '\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
-      '\\makeatother',
-      '\\begin{document}',
-    ].join('\n');
+    return [...articleHead('12pt'), '\\begin{document}'].join('\n');
   }
 
   // Biên dịch thử "thông minh": nếu chưa có documentclass thì tự bọc preamble đầy đủ
@@ -1591,77 +1551,6 @@ export class ExamsService {
       );
     }
     return this.compileRaw(source);
-  }
-
-  // Dựng danh sách gói LaTeX cho 1 đoạn TikZ/văn bản.
-  // Chỉ nạp gói NẶNG khi snippet thực sự dùng → giữ tốc độ biên dịch nhanh.
-  private snippetPackages(s: string): string[] {
-    const p: string[] = [
-      '\\usepackage[dvipsnames,svgnames,x11names,table]{xcolor}',
-      '\\usepackage{amsmath}',
-      '\\usepackage{amssymb}',
-      '\\usepackage{amsfonts}',
-      '\\usepackage{vntex}',
-      '\\usepackage{array}',
-      '\\usepackage{booktabs}',
-      '\\usepackage{colortbl}',
-      '\\usepackage{graphicx}',
-      '\\usepackage[shortlabels]{enumitem}',
-      '\\usepackage{tikz}',
-      '\\usetikzlibrary{arrows,arrows.meta,calc,patterns,patterns.meta,decorations.pathreplacing,decorations.markings,decorations.pathmorphing,decorations.shapes,angles,quotes,shapes,shapes.geometric,shapes.misc,shapes.symbols,shapes.arrows,shapes.multipart,positioning,fit,matrix,chains,scopes,through,backgrounds,fadings,shadows,mindmap,trees,plotmarks,intersections,3d,perspective,math,spy,automata,er,petri,datavisualization,datavisualization.formats.functions,lindenmayersystems,calendar,folding,graphs,graphs.standard}',
-    ];
-
-    // ex_test: bộ macro của giáo viên VN (\IntervalLR, \IntervalGRF, enumEX, \dapso...).
-    // LƯU Ý 1: ex_test tự nạp vntex → nếu vẫn giữ \usepackage{vntex} sẽ lỗi
-    //   "Command \ifoptenc already defined" → gỡ vntex.
-    // LƯU Ý 2: ex_test phải nạp TRƯỚC enumitem/xcolor/tikz, nếu không các môi trường
-    //   của nó (listEX/enumEX) sẽ hỏng ("Undefined control sequence" ở \end{listEX}).
-    if (/\\Interval(LR|GRF?|LRF?)\b|\\dapso\b|\\dsh\b|\\itemEX\b|\\begin\{(?:enum|list)EX\}/.test(s)) {
-      const vi = p.indexOf('\\usepackage{vntex}');
-      if (vi >= 0) p.splice(vi, 1);
-      p.unshift('\\usepackage{ex_test}');
-    }
-
-    // mathtools (chỉ khi dùng các macro mở rộng)
-    if (/\\coloneqq|\\DeclarePairedDelimiter|\\mathclap|\\smashoperator|\\cramped|\\xmathstrut/.test(s)) {
-      p.splice(4, 0, '\\usepackage{mathtools}');
-    }
-    // tkz-* (hình học/khảo sát hàm — nặng, chỉ khi dùng)
-    if (/\\tkz|tkz-/.test(s)) {
-      p.push('\\usepackage{tkz-base}', '\\usepackage{tkz-tab}', '\\usepackage{tkz-euclide}');
-    }
-
-    // Gói NẶNG — chỉ nạp khi có dấu hiệu sử dụng
-    if (/\\begin\{axis|\addplot|\\pgfplots|\\begin\{(polar|semilog|loglog)axis\}|smithchart/.test(s)) {
-      p.push(
-        '\\usepackage{pgfplots}',
-        '\\pgfplotsset{compat=1.16}',
-        '\\usepgfplotslibrary{fillbetween,polar,colormaps,statistics,dateplot,groupplots,units,patchplots,ternary}',
-      );
-    }
-    if (/circuitikz/.test(s)) p.push('\\usepackage{circuitikz}');
-    if (/tikzcd/.test(s)) p.push('\\usepackage{tikz-cd}');
-    if (/tdplotset|\\tdplot|tikz-3dplot/.test(s)) p.push('\\usepackage{tikz-3dplot}');
-    if (/forest/.test(s)) p.push('\\usepackage{forest}');
-    if (/smartdiagram/.test(s)) p.push('\\usepackage{smartdiagram}');
-    if (/tcolorbox/.test(s)) p.push('\\usepackage[skins,breakable,raster,hooks]{tcolorbox}');
-    if (/\\SI\{|\\si\{|\\num\{/.test(s)) p.push('\\usepackage{siunitx}');
-    if (/\\cancel/.test(s)) p.push('\\usepackage{cancel}');
-    if (/empheq/.test(s)) p.push('\\usepackage{empheq}');
-    if (/\\systeme/.test(s)) p.push('\\usepackage{systeme}');
-    if (/\\multirow/.test(s)) p.push('\\usepackage{multirow}');
-    if (/\\begin\{multicols?\}/.test(s)) p.push('\\usepackage{multicol}');
-    if (/tabularx/.test(s)) p.push('\\usepackage{tabularx}');
-    if (/longtable/.test(s)) p.push('\\usepackage{longtable}');
-    if (/\\llbracket|\\shortrightarrow|stmaryrd/.test(s)) p.push('\\usepackage{stmaryrd}');
-    if (/\\wasysym|\\CheckedBox|\\Square/.test(s)) p.push('\\usepackage{wasysym}');
-    if (/\\ding\{/.test(s)) p.push('\\usepackage{pifont}');
-
-    p.push(
-      '\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}',
-      '\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}',
-    );
-    return p;
   }
 
   // Biên dịch riêng một block TikZ → PNG cắt đúng kích thước hình
@@ -1691,27 +1580,8 @@ export class ExamsService {
     // 3. Biên dịch lần đầu → lưu đĩa để dùng lại vĩnh viễn
     // Tự nhận diện: bảng biến thiên (tikz/tkz-tab) hay bảng dữ liệu (tabular)
     // Cả 2 đều nạp vntex để hiển thị tiếng Việt
-    const isTabular = s.startsWith('\\begin{tabular');
-    const packages = isTabular
-      ? [
-          '\\documentclass[border=4pt]{standalone}',
-          '\\usepackage{amsmath}',
-          '\\usepackage{amssymb}',
-          '\\usepackage{vntex}',
-          '\\usepackage{array}',
-          '\\usepackage{booktabs}',
-          '\\usepackage{colortbl}',
-        ]
-      : [
-          '\\documentclass[border=4pt]{standalone}',
-          ...this.snippetPackages(s),
-        ];
-    const source = [
-      ...packages,
-      '\\begin{document}',
-      s,
-      '\\end{document}',
-    ].join('\n');
+    // Bảng biến thiên (tikz/tkz-tab), bảng dữ liệu (tabular), hình vẽ… đều dùng bộ gói chung
+    const source = standaloneDoc('border=4pt', s);
 
     const pdf = await this.compileRaw(source);
     // PDF → PNG (độ phân giải 2x cho nét)
@@ -1778,28 +1648,7 @@ export class ExamsService {
       return buf;
     }
 
-    const source = [
-      '\\documentclass[border=3pt]{standalone}',
-      '\\usepackage{amsmath}',
-      '\\usepackage{amssymb}',
-      '\\usepackage{vntex}',
-      '\\usepackage{tikz}',
-      '\\usepackage{pgfplots}',
-      '\\pgfplotsset{compat=1.16}',
-      '\\usetikzlibrary{arrows.meta,calc,patterns,decorations.pathreplacing,decorations.markings,angles,quotes,shapes.geometric,intersections}',
-      '\\usepackage{tkz-base}',
-      '\\usepackage{tkz-tab}',
-      '\\usepackage{tkz-euclide}',
-      '\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}',
-      '\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}',
-      '\\makeatletter',
-      '\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
-      '\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
-      '\\makeatother',
-      '\\begin{document}',
-      body,
-      '\\end{document}',
-    ].join('\n');
+    const source = standaloneDoc('border=3pt', body);
 
     const pdf = await this.compileRaw(source);
     const png = await this.pdfToPng(pdf);
@@ -1840,19 +1689,7 @@ export class ExamsService {
       return buf;
     }
 
-    const source = [
-      '\\documentclass[varwidth=18cm,border=4pt]{standalone}',
-      ...this.snippetPackages(s),
-      '\\makeatletter',
-      '\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
-      '\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}',
-      '\\@ifundefined{itemchoice}{\\newenvironment{itemchoice}{\\begin{itemize}}{\\end{itemize}}}{}',
-      '\\@ifundefined{itemch}{\\newcommand{\\itemch}{\\item}}{}',
-      '\\makeatother',
-      '\\begin{document}',
-      s,
-      '\\end{document}',
-    ].join('\n');
+    const source = standaloneDoc('varwidth=18cm,border=4pt', s);
 
     const pdf = await this.compileRaw(source);
     const png = await this.pdfToPng(pdf);

@@ -1,0 +1,90 @@
+% lumimath.sty — BỘ GÓI DÙNG CHUNG cho mọi lần biên dịch của LumiMath
+% (công thức dự phòng, đoạn văn bản, hình TikZ, PDF đề, PDF đáp án).
+%
+% - TeX Live trong container là bản đầy đủ: gói có sẵn, file này chỉ KHAI BÁO nạp.
+% - Không nạp "toàn bộ" ~4500 gói được (xung đột lệnh, gói chỉ chạy XeLaTeX, chậm);
+%   ở đây gom các gói dùng cho đề Toán Việt Nam, sắp đúng thứ tự.
+% - Gói nào thiếu thì bỏ qua (\IfFileExists) — không làm hỏng cả bài.
+% - Container dựng sẵn file định dạng lmfmt.fmt từ file này (xem Dockerfile),
+%   nên nạp nhiều gói vẫn biên dịch nhanh.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{lumimath}[2026/11/21 LumiMath shared preamble]
+
+\newcommand{\lm@try}[2][]{\IfFileExists{#2.sty}{\RequirePackage[#1]{#2}}{}}
+
+% --- 1. ex_test PHẢI nạp đầu tiên (tự nạp vietnam/vntex, tikz, multicol, multirow,
+%        longtable, array, mathrsfs, varwidth...). Nạp sau enumitem/xcolor sẽ hỏng listEX/enumEX.
+\RequirePackage{ex_test}
+
+% --- 2. Toán
+\RequirePackage{amsmath,amssymb,amsfonts}
+\lm@try{mathtools}
+\lm@try{bm}
+\lm@try[e]{esvect}
+\lm@try{siunitx}
+\lm@try{cancel}
+\lm@try{empheq}
+\lm@try{systeme}
+\lm@try{xfrac}
+\lm@try{stmaryrd}
+\lm@try{yhmath}
+\lm@try{mathrsfs}
+\lm@try{wasysym}
+\lm@try{pifont}
+\lm@try{gensymb}
+
+% --- 3. Chữ, màu, bảng, danh sách
+\RequirePackage{graphicx}
+\RequirePackage[dvipsnames,svgnames,x11names,table]{xcolor}
+\RequirePackage{array}
+\lm@try{booktabs}
+\lm@try{colortbl}
+\lm@try{multirow}
+\lm@try{tabularx}
+\lm@try{longtable}
+\lm@try{makecell}
+\lm@try{diagbox}
+\lm@try{multicol}
+\lm@try[shortlabels]{enumitem}
+\lm@try[normalem]{ulem}
+\lm@try{soul}
+\lm@try{url}
+\lm@try{framed}
+\IfFileExists{tcolorbox.sty}{\RequirePackage[skins,breakable,raster,hooks]{tcolorbox}}{}
+
+% --- 4. Hình vẽ
+\RequirePackage{tikz}
+\usetikzlibrary{arrows,arrows.meta,calc,patterns,patterns.meta,decorations.pathreplacing,decorations.markings,decorations.pathmorphing,decorations.shapes,decorations.text,decorations.fractals,decorations.footprints,angles,quotes,shapes,shapes.geometric,shapes.misc,shapes.symbols,shapes.arrows,shapes.multipart,positioning,fit,matrix,chains,scopes,through,backgrounds,fadings,shadows,mindmap,trees,plotmarks,intersections,3d,perspective,math,spy,automata,er,petri,datavisualization,datavisualization.formats.functions,lindenmayersystems,calendar,folding,graphs,graphs.standard}
+\IfFileExists{pgfplots.sty}{%
+  \RequirePackage{pgfplots}%
+  \pgfplotsset{compat=1.16}%
+  \usepgfplotslibrary{fillbetween,polar,colormaps,statistics,dateplot,groupplots,units,patchplots,ternary}%
+}{}
+\lm@try{tkz-base}
+\lm@try{tkz-tab}
+\lm@try{tkz-euclide}
+\lm@try{tikz-3dplot}
+\lm@try{circuitikz}
+\lm@try{tikz-cd}
+\lm@try{forest}
+
+% --- 5. Lệnh hay gặp trong đề VN — chỉ định nghĩa khi chưa có.
+%        Đặt ở \AtBeginDocument để lệnh giáo viên tự \newcommand trong preamble vẫn được ưu tiên.
+\providecommand{\wideparen}[1]{\overset{\frown}{#1}}
+\providecommand{\vv}[1]{\overrightarrow{#1}}
+\@ifundefined{heva}{\newcommand{\heva}[1]{\ensuremath{\left\{\begin{aligned}#1\end{aligned}\right.}}}{}
+\@ifundefined{hoac}{\newcommand{\hoac}[1]{\ensuremath{\left[\begin{aligned}#1\end{aligned}\right.}}}{}
+\@ifundefined{itemchoice}{\newenvironment{itemchoice}{\begin{itemize}}{\end{itemize}}}{}
+\@ifundefined{itemch}{\newcommand{\itemch}{\item}}{}
+\AtBeginDocument{%
+  \providecommand{\overparen}[1]{\wideparen{#1}}%
+  \providecommand{\Vect}[1]{\overrightarrow{#1}}%
+  \providecommand{\abs}[1]{\left|#1\right|}%
+  \providecommand{\norm}[1]{\left\|#1\right\|}%
+  \providecommand{\dint}{\displaystyle\int}%
+  \providecommand{\dlim}{\displaystyle\lim}%
+  \providecommand{\dsum}{\displaystyle\sum}%
+  \providecommand{\textdegree}{\ensuremath{^\circ}}%
+  \providecommand{\degree}{\ensuremath{^\circ}}%
+}
+\endinput

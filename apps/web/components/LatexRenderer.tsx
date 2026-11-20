@@ -8,6 +8,53 @@ import rehypeKatex from 'rehype-katex';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 
+// ============ Lỗi biên dịch: giáo viên thấy lý do ngắn gọn, học sinh chỉ thấy mã ============
+function isTeacherView(): boolean {
+  return typeof window !== 'undefined' && window.location.pathname.startsWith('/teacher');
+}
+
+async function readCompileError(res: Response): Promise<string> {
+  const j: any = await res.json().catch(() => ({}));
+  const msg = String((Array.isArray(j.message) ? j.message.join('\n') : j.message) || j.error || '');
+  if (res.status === 429) return 'Biên dịch quá nhiều lần, thử lại sau ít phút.';
+  const lines = msg.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return `Lỗi biên dịch (HTTP ${res.status})`;
+  // Dòng gợi ý của API ("Lệnh chưa được định nghĩa: \vv") đứng đầu; nếu không có thì lấy dòng "! ..."
+  const first = /^Lỗi LaTeX:?$/.test(lines[0]) ? lines[1] || lines[0] : lines[0];
+  return first.replace(/^!\s*/, '').slice(0, 180);
+}
+
+function CompileFailed({ code, reason, block }: { code: string; reason: string; block?: boolean }) {
+  const teacher = isTeacherView();
+  return (
+    <span style={{ display: block ? 'block' : 'inline' }}>
+      <code
+        style={{
+          fontSize: block ? '0.85em' : '0.9em',
+          color: 'var(--color-muted)',
+          whiteSpace: block ? 'pre-wrap' : undefined,
+        }}
+      >
+        {code}
+      </code>
+      {teacher && reason && (
+        <span
+          role="note"
+          style={{
+            display: 'block',
+            marginTop: 2,
+            fontSize: 12,
+            lineHeight: 1.4,
+            color: 'var(--color-danger)',
+          }}
+        >
+          Không biên dịch được: {reason}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ============ Dự phòng: công thức KaTeX không hiểu → biên dịch bằng TeX Live (server) ============
 const mathImageCache = new Map<string, string>();
 
@@ -15,10 +62,10 @@ function MathImage({ latex }: { latex: string }) {
   const [url, setUrl] = useState<string | null>(
     () => mathImageCache.get(latex) || null,
   );
-  const [err, setErr] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (url || err) return;
+    if (url || err !== null) return;
     let cancelled = false;
     (async () => {
       try {
@@ -32,13 +79,17 @@ function MathImage({ latex }: { latex: string }) {
           },
           body: JSON.stringify({ latex }),
         });
-        if (!res.ok) throw new Error('compile failed');
+        if (!res.ok) {
+          const reason = await readCompileError(res);
+          if (!cancelled) setErr(reason);
+          return;
+        }
         const blob = await res.blob();
         const objUrl = URL.createObjectURL(blob);
         mathImageCache.set(latex, objUrl);
         if (!cancelled) setUrl(objUrl);
       } catch {
-        if (!cancelled) setErr(true);
+        if (!cancelled) setErr('không kết nối được máy chủ biên dịch');
       }
     })();
     return () => {
@@ -55,13 +106,7 @@ function MathImage({ latex }: { latex: string }) {
       />
     );
   }
-  if (err) {
-    return (
-      <code style={{ fontSize: '0.9em', color: 'var(--color-muted)' }}>
-        {latex}
-      </code>
-    );
-  }
+  if (err !== null) return <CompileFailed code={latex} reason={err} />;
   return <span style={{ opacity: 0.55 }}>⏳</span>;
 }
 
@@ -69,9 +114,34 @@ function MathImage({ latex }: { latex: string }) {
 // QUAN TRỌNG: phải kiểm tra ĐÚNG chế độ sẽ hiển thị — rehype-katex render $$...$$ ở
 // display mode, còn $...$ ở inline. Các môi trường như align*/align/gather chỉ hợp lệ
 // ở display mode, nên nếu luôn thử displayMode:false sẽ "tưởng" là lỗi và bỏ sang ảnh.
+// Lệnh hay gặp trong đề VN mà KaTeX không có sẵn → dạy KaTeX (vẽ ngay trên trình duyệt,
+// không phải gọi TeX Live). Lệnh nào vẫn không vẽ được thì rơi xuống TeX Live (lumimath.sty).
+const KATEX_MACROS: Record<string, string> = {
+  '\\vv': '\\overrightarrow{#1}',
+  '\\Vect': '\\overrightarrow{#1}',
+  '\\overparen': '\\overgroup{#1}',
+  '\\arc': '\\overgroup{#1}',
+  '\\abs': '\\left|#1\\right|',
+  '\\norm': '\\left\\|#1\\right\\|',
+  '\\dint': '\\displaystyle\\int',
+  '\\dlim': '\\displaystyle\\lim',
+  '\\dsum': '\\displaystyle\\sum',
+  '\\sfrac': '{}^{#1}\\!/\\!{}_{#2}',
+  '\\degree': '^{\\circ}',
+  '\\textdegree': '^{\\circ}',
+  '\\mbox': '\\text{#1}',
+  '\\SI': '#1\\,\\mathrm{#2}',
+  '\\si': '\\mathrm{#1}',
+  '\\num': '#1',
+  '\\label': '',
+  '\\nonumber': '',
+  '\\notag': '',
+};
+const katexMacros = () => ({ ...KATEX_MACROS });
+
 function katexOk(latex: string, displayMode = false): boolean {
   try {
-    katex.renderToString(latex, { throwOnError: true, displayMode });
+    katex.renderToString(latex, { throwOnError: true, displayMode, macros: katexMacros() });
     return true;
   } catch {
     return false;
@@ -85,10 +155,10 @@ function LatexBlock({ latex }: { latex: string }) {
   const [url, setUrl] = useState<string | null>(
     () => latexImageCache.get(latex) || null,
   );
-  const [err, setErr] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (url || err) return;
+    if (url || err !== null) return;
     let cancelled = false;
     (async () => {
       try {
@@ -102,13 +172,17 @@ function LatexBlock({ latex }: { latex: string }) {
           },
           body: JSON.stringify({ latex }),
         });
-        if (!res.ok) throw new Error('compile failed');
+        if (!res.ok) {
+          const reason = await readCompileError(res);
+          if (!cancelled) setErr(reason);
+          return;
+        }
         const blob = await res.blob();
         const objUrl = URL.createObjectURL(blob);
         latexImageCache.set(latex, objUrl);
         if (!cancelled) setUrl(objUrl);
       } catch {
-        if (!cancelled) setErr(true);
+        if (!cancelled) setErr('không kết nối được máy chủ biên dịch');
       }
     })();
     return () => {
@@ -119,13 +193,7 @@ function LatexBlock({ latex }: { latex: string }) {
   if (url) {
     return <img src={url} alt="LaTeX" style={{ maxWidth: '100%', display: 'block', margin: '8px 0' }} />;
   }
-  if (err) {
-    return (
-      <code style={{ fontSize: '0.85em', color: 'var(--color-muted)', whiteSpace: 'pre-wrap' }}>
-        {latex}
-      </code>
-    );
-  }
+  if (err !== null) return <CompileFailed code={latex} reason={err} block />;
   return <span style={{ opacity: 0.55 }}>⏳ Đang biên dịch…</span>;
 }
 
@@ -133,10 +201,168 @@ function LatexBlock({ latex }: { latex: string }) {
 const TEXT_ENVS =
   'center|enumerate|itemize|itemch|itemchoice|enumEX|listEX|description|flushleft|flushright|quote|quotation|verbatim|tabular|tabbing|minipage|figure|table|multicols';
 
+// Môi trường gửi nguyên khối sang TeX Live (trừ itemize/enumerate/center/itemch — đổi sang markdown)
+const PROTECT_ENVS = TEXT_ENVS.split('|')
+  .filter((e) => !/^(center|enumerate|itemize|itemch|itemchoice)$/.test(e))
+  .join('|');
+const PROTECT_ENV_RE = () => new RegExp(`\\\\begin\\{(${PROTECT_ENVS})\\*?\\}[\\s\\S]*?\\\\end\\{\\1\\*?\\}`, 'g');
+
+// ============ Lệnh LaTeX dạng VĂN BẢN (ngoài công thức) → chữ / markdown ============
+// Quét \name[opt]{a}{b}… bằng matchBrace (chịu ngoặc lồng nhau). Không khớp \namexyz.
+function replaceCmd(
+  input: string,
+  name: string,
+  nargs: number,
+  fn: (args: string[], opt: string) => string,
+  recurse = true,
+): string {
+  const open = '\\' + name;
+  let out = '';
+  let i = 0;
+  for (let guard = 0; guard < 500; guard++) {
+    const idx = input.indexOf(open, i);
+    if (idx === -1) break;
+    let p = idx + open.length;
+    if (/[a-zA-Z@]/.test(input[p] || '')) {
+      out += input.slice(i, p);
+      i = p;
+      continue;
+    }
+    if (input[p] === '*') p++;
+    let opt = '';
+    while (p < input.length && input[p] === ' ') p++;
+    if (input[p] === '[') {
+      const close = input.indexOf(']', p);
+      if (close === -1) break;
+      opt = input.slice(p + 1, close);
+      p = close + 1;
+    }
+    const args: string[] = [];
+    let ok = true;
+    for (let k = 0; k < nargs; k++) {
+      while (p < input.length && /\s/.test(input[p])) p++;
+      if (input[p] !== '{') {
+        ok = false;
+        break;
+      }
+      const end = matchBrace(input, p);
+      // xử lý cả lệnh cùng tên lồng bên trong (\textbf{a \textbf{b}})
+      const inner = input.slice(p + 1, end);
+      args.push(recurse ? replaceCmd(inner, name, nargs, fn) : inner);
+      p = end + 1;
+    }
+    if (!ok) {
+      out += input.slice(i, idx + open.length);
+      i = idx + open.length;
+      continue;
+    }
+    out += input.slice(i, idx) + fn(args, opt);
+    i = p;
+  }
+  return out + input.slice(i);
+}
+
+const md = (wrap: string) => (a: string[]) => {
+  const x = a[0].trim();
+  return x ? wrap + x + wrap : '';
+};
+
+function applyTextCommands(text: string): string {
+  let t = text;
+  // nhóm kiểu cũ: {\bf x} {\it x} {\em x} {\Large x} {\color{red} x}
+  for (let k = 0; k < 3; k++) {
+    t = t
+      .replace(/\{\\(bf|bfseries)(?![a-zA-Z])\s*([^{}]*)\}/g, (_m, _c, x: string) => (x.trim() ? `**${x.trim()}**` : ''))
+      .replace(/\{\\(it|itshape|em|sl|slshape)(?![a-zA-Z])\s*([^{}]*)\}/g, (_m, _c, x: string) => (x.trim() ? `*${x.trim()}*` : ''))
+      .replace(
+        /\{\\(rm|sf|tt|sc|upshape|rmfamily|sffamily|ttfamily|scshape|normalfont|tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)(?![a-zA-Z])\s*([^{}]*)\}/g,
+        (_m, _c, x: string) => x,
+      )
+      .replace(/\{\\color\{[^{}]*\}\s*([^{}]*)\}/g, (_m, x: string) => x);
+  }
+  t = t.replace(/\\color\{[^{}]*\}/g, '');
+
+  // 1 tham số
+  t = replaceCmd(t, 'emph', 1, md('*'));
+  t = replaceCmd(t, 'textsl', 1, md('*'));
+  t = replaceCmd(t, 'textit', 1, md('*'));
+  t = replaceCmd(t, 'textbf', 1, md('**'));
+  for (const n of ['textrm', 'textsf', 'texttt', 'textup', 'textnormal', 'textsc', 'textmd', 'text', 'mbox', 'hbox', 'MakeUppercase', 'uppercase']) {
+    t = replaceCmd(t, n, 1, (a) => a[0]);
+  }
+  t = replaceCmd(t, 'textcolor', 2, (a) => a[1]);
+  t = replaceCmd(t, 'colorbox', 2, (a) => a[1]);
+  t = replaceCmd(t, 'fcolorbox', 3, (a) => a[2]);
+  for (const n of ['fbox', 'framebox', 'boxed']) {
+    t = replaceCmd(t, n, 1, (a) => {
+      const x = a[0].trim();
+      return /^[^$\\{}]+$/.test(x) ? `$\\boxed{\\text{${x}}}$` : `**${x}**`;
+    });
+  }
+  t = replaceCmd(t, 'footnote', 1, (a) => ` (${a[0].trim()})`);
+  t = replaceCmd(t, 'url', 1, (a) => a[0]);
+  t = replaceCmd(t, 'href', 2, (a) => `[${a[1]}](${a[0]})`);
+  t = replaceCmd(t, 'dapso', 1, (a) => `\n\n**Đáp số:** ${a[0].trim()}\n\n`);
+  // \shortans/\SA là ĐÁP ÁN câu trả lời ngắn → không hiện (tránh lộ đáp án cho học sinh)
+  t = replaceCmd(t, 'shortans', 1, () => '');
+  t = replaceCmd(t, 'SA', 1, () => '');
+  t = replaceCmd(t, 'includegraphics', 1, (a) => {
+    const src = a[0].trim();
+    return /^(https?:|\/)/.test(src) ? `![hình](${src})` : `*(hình: ${src})*`;
+  });
+  t = replaceCmd(t, 'vspace', 1, () => '\n');
+  t = replaceCmd(t, 'hspace', 1, () => ' ');
+  t = replaceCmd(t, 'phantom', 1, () => ' ');
+  t = replaceCmd(t, 'hphantom', 1, () => ' ');
+  t = replaceCmd(t, 'vphantom', 1, () => '');
+  t = replaceCmd(t, 'rule', 2, () => '');
+  t = replaceCmd(t, 'setlength', 2, () => '');
+
+  // Ký hiệu/lệnh TOÁN gõ thiếu $…$ (rất hay gặp: "x = 2 \Rightarrow y") → bọc $…$ cho KaTeX vẽ
+  //    Kết quả cất vào token để các bước sau không chèn thêm $ vào bên trong.
+  const wrapped: string[] = [];
+  const keep = (m: string) => {
+    wrapped.push(m);
+    // khoảng trắng hai bên: tránh dính với $…$ kề bên thành "$$" (bị hiểu là công thức khối)
+    return ` \u0000W${wrapped.length - 1}\u0000 `;
+  };
+  const mathWrap = (a: string[], opt: string, cmd: string) =>
+    keep(`$\\${cmd}${opt ? `[${opt}]` : ''}${a.map((x) => `{${x}}`).join('')}$`);
+  for (const n of ['frac', 'dfrac', 'tfrac', 'binom']) t = replaceCmd(t, n, 2, (a, o) => mathWrap(a, o, n), false);
+  for (const n of ['sqrt', 'mathbb', 'mathrm', 'overrightarrow', 'vec', 'widehat', 'overline', 'vv']) {
+    t = replaceCmd(t, n, 1, (a, o) => mathWrap(a, o, n), false);
+  }
+  t = t.replace(
+    /\\(Rightarrow|Leftarrow|Leftrightarrow|rightarrow|leftarrow|leftrightarrow|to|infty|pm|mp|le|ge|leq|geq|ne|neq|approx|cdot|times|div|in|notin|subset|subseteq|cup|cap|emptyset|varnothing|forall|exists|perp|parallel|angle|triangle|circ|alpha|beta|gamma|delta|Delta|varepsilon|epsilon|theta|lambda|mu|pi|rho|sigma|Sigma|tau|varphi|phi|omega|Omega)(?![a-zA-Z])/g,
+    (_m, c: string) => keep(`$\\${c}$`),
+  );
+
+  // không tham số
+  const zero = (re: string, to: string) => {
+    t = t.replace(new RegExp(`\\\\(?:${re})(?![a-zA-Z])(?:\\{\\})?`, 'g'), to);
+  };
+  zero('par|medskip|bigskip|smallskip|newpage|clearpage|pagebreak', '\n\n');
+  zero('linebreak|newline', '  \n');
+  zero('hfill|hfil|vfill|quad|qquad|enspace|enskip', ' ');
+  zero('dotfill', ' ........ ');
+  zero(
+    'noindent|indent|centering|raggedright|raggedleft|leavevmode|relax|null|nopagebreak|allowbreak|bfseries|itshape|normalfont|mdseries|upshape|rmfamily|sffamily|ttfamily|selectfont|tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge',
+    '',
+  );
+  zero('ldots|dots|textellipsis', '…');
+  zero('textdegree', '°');
+  zero('textendash', '–');
+  zero('textemdash', '—');
+  zero('S', '§');
+  zero('LaTeX', 'LaTeX');
+  zero('TeX', 'TeX');
+  return t.replace(/\u0000W(\d+)\u0000/g, (m: string, i: string) => wrapped[Number(i)] ?? m);
+}
+
 // ============ Macro text: \textbf \textit \underline (ngoài math) → markdown ============
 function applyTextMacros(text: string): string {
   const parts: string[] = [];
-  let t = text
+  let t = applyTextCommands(text)
     .replace(/\\textbf\{([\s\S]*?)\}/g, (m: string, p1: string) => {
       const i = parts.length;
       parts.push('**' + p1.trim() + '**');
@@ -310,7 +536,15 @@ function preprocessMath(content: string): string {
   }
 
   // 3. Lệnh text ngoài math → markdown đậm/nghiêng/gạch chân + xuống dòng
+  //    Khối môi trường sẽ gửi TeX Live (minipage, multicols, tabbing…) giữ NGUYÊN mã gốc.
+  const envTokens: string[] = [];
+  c = c.replace(PROTECT_ENV_RE(), (m: string) => {
+    const i = envTokens.length;
+    envTokens.push(m);
+    return `\u0000E${i}\u0000`;
+  });
   c = applyTextMacros(c);
+  c = c.replace(/\u0000E(\d+)\u0000/g, (m: string, i: string) => envTokens[Number(i)] ?? m);
 
   // 4. Tách 2 khối math INLINE liền kề (token nối nhau) → chèn khoảng trắng
   //    để remark-math không hiểu nhầm $$ là mở display math (không render được)
@@ -366,7 +600,7 @@ function preprocessMath(content: string): string {
 }
 
 type Part =
-  | { type: 'md'; text: string }
+  | { type: 'md'; text: string; preamble?: string }
   | { type: 'tikz'; snippet: string; preamble: string; centered: boolean }
   | { type: 'latex'; snippet: string; centered: boolean }
   | { type: 'immini'; text: string; figure: string; preamble: string; centered: boolean };
@@ -571,7 +805,7 @@ function splitParts(content: string): Part[] {
     });
   }
 
-  if (blocks.length === 0) return [{ type: 'md', text: c }];
+  if (blocks.length === 0) return [{ type: 'md', text: c, preamble }];
 
   // Sắp xếp theo vị trí, bỏ block lồng nhau
   blocks.sort((a, b) => a.start - b.start);
@@ -602,7 +836,7 @@ function splitParts(content: string): Part[] {
     const mdText = c
       .slice(cursor, b.start)
       .replace(/\\begin\{center\}|\\end\{center\}/g, '');
-    if (mdText.trim()) parts.push({ type: 'md', text: mdText });
+    if (mdText.trim()) parts.push({ type: 'md', text: mdText, preamble });
     const centered = inCenter(b.start);
     if (b.part.type === 'tikz') {
       parts.push({
@@ -627,7 +861,7 @@ function splitParts(content: string): Part[] {
     cursor = b.end;
   }
   const tail = c.slice(cursor).replace(/\\begin\{center\}|\\end\{center\}/g, '');
-  if (tail.trim()) parts.push({ type: 'md', text: tail });
+  if (tail.trim()) parts.push({ type: 'md', text: tail, preamble });
   return parts;
 }
 
@@ -785,8 +1019,108 @@ function TikzBlock({ snippet, preamble, centered }: { snippet: string; preamble:
   );
 }
 
+// ============ Lệnh giáo viên tự định nghĩa (\newcommand / \def trong câu hỏi) ============
+// → gắn vào công thức dùng tới chúng (KaTeX hiểu \def; TeX Live dự phòng cũng nhận).
+type UserDef = { name: string; def: string };
+
+function parseUserDefs(preamble: string): UserDef[] {
+  const src = preamble || '';
+  const out: UserDef[] = [];
+  const re = /\\(?:re|provide)?newcommand\*?\s*\{?\s*(\\[A-Za-z@]+)\s*\}?\s*(?:\[(\d)\])?\s*(\[[^\]]*\])?\s*\{|\\def\s*(\\[A-Za-z@]+)([^{]*)\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src)) !== null) {
+    const open = m.index + m[0].length - 1;
+    const end = matchBrace(src, open);
+    const body = src.slice(open + 1, end);
+    re.lastIndex = end + 1;
+    if (m[1]) {
+      if (m[3]) continue; // tham số tuỳ chọn có mặc định — để TeX Live xử lý
+      const n = Number(m[2] || 0);
+      let params = '';
+      for (let k = 1; k <= n; k++) params += '#' + k;
+      out.push({ name: m[1], def: `\\def${m[1]}${params}{${body}}` });
+    } else if (m[4]) {
+      out.push({ name: m[4], def: `\\def${m[4]}${m[5]}{${body}}` });
+    }
+  }
+  return out;
+}
+
+function defsFor(tex: string, defs: UserDef[]): string {
+  if (!defs.length) return '';
+  const used = defs.filter((d) => new RegExp(d.name.replace(/\\/g, '\\\\') + '(?![a-zA-Z@])').test(tex));
+  return used.map((d) => d.def).join('');
+}
+
+// ============ Lệnh lạ còn sót ngoài công thức → gửi CẢ ĐOẠN sang TeX Live ============
+function hasLooseCommands(text: string): boolean {
+  const envRe = new RegExp(`\\\\begin\\{(${TEXT_ENVS})\\*?\\}[\\s\\S]*?\\\\end\\{\\1\\*?\\}`, 'g');
+  const rest = preprocessMath(text)
+    .replace(envRe, ' ')
+    .replace(/\$\$[\s\S]*?\$\$|\$[^$]+\$/g, ' ');
+  return /\\[a-zA-Z]+/.test(rest);
+}
+
+// Đoạn cân bằng: đủ cặp \begin/\end, $…$, $$…$$ và { }
+function isBalanced(s: string): boolean {
+  const b = (s.match(/\\begin\{/g) || []).length;
+  const e = (s.match(/\\end\{/g) || []).length;
+  const dd = (s.match(/\$\$/g) || []).length;
+  const single = (s.replace(/\$\$/g, '').replace(/\\\$/g, '').match(/\$/g) || []).length;
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\') {
+      i++;
+      continue;
+    }
+    if (s[i] === '{') depth++;
+    else if (s[i] === '}') depth--;
+  }
+  return b === e && dd % 2 === 0 && single % 2 === 0 && depth === 0;
+}
+
+function splitChunks(text: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  for (const piece of text.split(/\n[ \t]*\n/)) {
+    cur = cur ? cur + '\n\n' + piece : piece;
+    if (isBalanced(cur)) {
+      out.push(cur);
+      cur = '';
+    }
+  }
+  if (cur) out.push(cur);
+  return out.filter((x) => x.trim());
+}
+
+// Đoạn markdown (do bước tiền xử lý ex_test thêm **…**) → LaTeX trước khi gửi TeX Live
+function chunkToTex(chunk: string, preamble: string): string {
+  const body = chunk
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\*\*([^*\n]+)\*\*/g, '\\textbf{$1}')
+    .trim();
+  return (preamble ? preamble + '\n' : '') + body;
+}
+
 // ============ Khối markdown + math (dùng lại cho \immini) ============
-function MarkdownPart({ text }: { text: string }) {
+function MarkdownPart({ text, preamble = '' }: { text: string; preamble?: string }) {
+  const defs = parseUserDefs(preamble);
+  if (!hasLooseCommands(text)) return <MarkdownBody text={text} defs={defs} />;
+  // Còn lệnh LaTeX web không hiểu → đoạn đó biên dịch bằng TeX Live, các đoạn khác vẫn là chữ
+  return (
+    <>
+      {splitChunks(text).map((ch, i) =>
+        hasLooseCommands(ch) ? (
+          <LatexBlock key={i} latex={chunkToTex(ch, preamble)} />
+        ) : (
+          <MarkdownBody key={i} text={ch} defs={defs} />
+        ),
+      )}
+    </>
+  );
+}
+
+function MarkdownBody({ text, defs }: { text: string; defs: UserDef[] }) {
   const processed = preprocessMath(text);
 
   // 1) Môi trường LaTeX VĂN BẢN (enumerate/center/itemize/itemchoice...) → TeX Live → ảnh
@@ -818,9 +1152,12 @@ function MarkdownPart({ text }: { text: string }) {
     /\$\$([\s\S]*?)\$\$|\$([^$]+)\$/g,
     (m: string, display: string | undefined, inline: string | undefined) => {
       const isDisplay = display !== undefined;
-      const tex = isDisplay ? display : inline;
-      if (tex === undefined) return m;
-      if (katexOk(tex, isDisplay)) return m;
+      const raw = isDisplay ? display : inline;
+      if (raw === undefined) return m;
+      // gắn \def của giáo viên mà công thức này dùng tới
+      const pre = defsFor(raw, defs);
+      const tex = pre + raw;
+      if (katexOk(tex, isDisplay)) return pre ? (isDisplay ? `$$${tex}$$` : `$${tex}$`) : m;
       const i = mathFallbacks.length;
       mathFallbacks.push(tex);
       return isDisplay ? `\n\n![math](/lm-math/${i})\n\n` : `![math](/lm-math/${i})`;
@@ -830,7 +1167,7 @@ function MarkdownPart({ text }: { text: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkMath, remarkGfm]}
-      rehypePlugins={[rehypeKatex]}
+      rehypePlugins={[[rehypeKatex, { macros: katexMacros() }]]}
       components={{
         img: ({ src, alt }) => {
           const s = src || '';
@@ -900,7 +1237,7 @@ function ImminiBlock({
       }}
     >
       <div style={{ flex: '1 1 200px', minWidth: 150 }}>
-        <MarkdownPart text={text} />
+        <MarkdownPart text={text} preamble={preamble} />
       </div>
       {tikzSnippet ? (
         <div style={{ flex: '0 1 auto' }}>
@@ -970,7 +1307,7 @@ function preprocessExTest(content: string): string {
   let s = String(content || '');
   // Chỉ chạy khi nội dung thật sự là "đề gõ tay" (tránh ảnh hưởng câu đã nhập từ ngân hàng)
   if (
-    !/\\begin\{ex|\\(choice|loigiai|True|False|section|subsection|documentclass|usepackage)\b|\\begin\{document\}/.test(
+    !/\\begin\{ex|\\(choice|choiceTF|loigiai|True|False|section|subsection|documentclass|usepackage|shortans)\b|\\begin\{document\}/.test(
       s,
     )
   ) {
@@ -1011,6 +1348,16 @@ function preprocessExTest(content: string): string {
   s = s.replace(/\\end\{ex\}/g, '');
   // "**Bài N.**" đứng cùng dòng với nội dung cho gọn
   s = s.replace(/\*\*Bài (\d+)\.\*\*[ \t]*\n+/g, '**Bài $1.** ');
+
+  // 2b) \choiceTF[...]{a}{b}{c}{d} (đúng/sai) → a) b) c) d) ; bỏ \True/\False để không lộ đáp án
+  s = replaceCmd(s, 'choiceTF', 4, (a) =>
+    '\n\n' +
+    a
+      .map((o, k) => `**${'abcd'[k]})** ${o.replace(/\\(True|False)(?![a-zA-Z])/g, '').trim()}`)
+      .join('\n\n') +
+    '\n\n',
+  );
+  s = replaceCmd(s, 'shortans', 1, () => '');
 
   // 3) \choice + các nhóm {...} → danh sách lựa chọn
   const LETTERS = 'ABCDEFGH';
@@ -1104,7 +1451,7 @@ function LatexRenderer({ content }: { content: string }) {
             />
           );
         }
-        return <MarkdownPart key={i} text={part.text} />;
+        return <MarkdownPart key={i} text={part.text} preamble={part.preamble} />;
       })}
     </div>
   );
