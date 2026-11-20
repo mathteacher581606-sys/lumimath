@@ -136,6 +136,9 @@ export default function ExamDetailPage() {
   const [bankQuestions, setBankQuestions] = useState<any[]>([]);
   // Câu đang được sửa trực tiếp trong đề
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  // Lời giải: mặc định thu gọn (biên dịch TikZ/TeX tốn thời gian); mở từng câu hoặc mở tất cả
+  const [openSol, setOpenSol] = useState<Set<string>>(new Set());
+  const [allSol, setAllSol] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const [showResults, setShowResults] = useState(false);
@@ -742,7 +745,23 @@ export default function ExamDetailPage() {
         </div>
       )}
 
-      <h2 style={{ fontSize: 18, marginBottom: 16 }}>Câu hỏi trong đề</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <h2 style={{ fontSize: 18, margin: 0 }}>Câu hỏi trong đề</h2>
+        {exam.items?.some((it: any) => it.question?.solution) && (
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ width: 'auto', minHeight: 34, padding: '0 14px', fontSize: 13 }}
+            aria-pressed={allSol}
+            onClick={() => {
+              setAllSol(!allSol);
+              setOpenSol(new Set());
+            }}
+          >
+            {allSol ? 'Ẩn lời giải tất cả câu' : 'Hiện lời giải tất cả câu'}
+          </button>
+        )}
+      </div>
 
       {!exam.items || exam.items.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--color-muted)' }}>
@@ -807,14 +826,37 @@ export default function ExamDetailPage() {
                     marginBottom: 10,
                   }}
                 >
-                  <strong style={{ color: 'var(--color-success)' }}>Đáp án:</strong>{' '}
-                  <LatexRenderer content={formatAnswer(q.answer)} />
-                  {q.solution && (
-                    <span style={{ marginLeft: 8, color: 'var(--color-muted)' }}>
-                      · Lời giải: {q.solution.slice(0, 120)}
-                      {q.solution.length > 120 ? '…' : ''}
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                    <strong style={{ color: 'var(--color-success)' }}>Đáp án:</strong>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <LatexRenderer content={formatAnswer(q.answer)} />
                     </span>
+                    {q.solution && !allSol && (
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        style={{ width: 'auto', minHeight: 30, padding: '0 12px', fontSize: 12.5 }}
+                        aria-expanded={openSol.has(item.id)}
+                        onClick={() =>
+                          setOpenSol((o) => {
+                            const n = new Set(o);
+                            if (n.has(item.id)) n.delete(item.id);
+                            else n.add(item.id);
+                            return n;
+                          })
+                        }
+                      >
+                        {openSol.has(item.id) ? 'Ẩn lời giải' : 'Xem lời giải'}
+                      </button>
+                    )}
+                  </div>
+                  {q.solution && (allSol || openSol.has(item.id)) && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--color-rule-2)', fontSize: 14, color: 'var(--color-ink)' }}>
+                      <strong style={{ color: 'var(--color-success)' }}>Lời giải:</strong>
+                      <LatexRenderer content={q.solution} />
+                    </div>
                   )}
+                  {!q.solution && <div style={{ marginTop: 4, color: 'var(--color-muted)', fontSize: 12.5 }}>Câu này chưa có lời giải.</div>}
                 </div>
 
                 {editingItemId === item.id && (
