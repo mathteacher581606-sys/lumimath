@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import { formatAnswer } from '@/lib/answer';
 import LatexRenderer from '@/components/LatexRenderer';
 import ImageUploader, { UpImage } from '@/components/ImageUploader';
+import { uploadImage } from '@/lib/image-upload';
 import AttemptReview from '@/components/AttemptReview';
 
 const PART_LABEL: Record<number, string> = {
@@ -75,12 +76,21 @@ export default function TakeExam() {
       if (data.resume && data.savedAnswers) {
         setAnswers(data.savedAnswers);
         const et: Record<string, string> = {};
+        const ef: Record<string, UpImage[]> = {};
         for (const [k, v] of Object.entries(data.savedAnswers)) {
           if (v && typeof v === 'object' && (v as any).text) {
             et[k] = (v as any).text;
           }
+          // Ảnh đã tải lên trước khi trang bị tải lại (VD: điện thoại đóng trang lúc mở camera)
+          const imgs = v && typeof v === 'object' && Array.isArray((v as any).images) ? (v as any).images : [];
+          if (imgs.length) {
+            ef[k] = imgs
+              .filter((u: any) => typeof u === 'string' && u)
+              .map((u: string, i: number) => ({ id: `saved-${k}-${i}`, preview: u, url: u, status: 'done' as const }));
+          }
         }
         setEssayTexts(et);
+        setEssayFiles(ef);
         startTimeRef.current = Date.now() - (data.savedTimeSpent || 0) * 1000;
       }
       // Bật toàn màn hình khi bắt đầu thi (trừ chế độ luyện tập)
@@ -152,11 +162,28 @@ export default function TakeExam() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exam, result]);
 
+  // Đang mở camera / thư viện ảnh để nộp bài tự luận: điện thoại sẽ ẩn trang và thoát
+  // toàn màn hình — KHÔNG tính là rời trang. Ân hạn tối đa 3 phút khi đang chọn ảnh,
+  // và thêm 4 giây sau khi quay lại (các sự kiện ẩn/hiện, toàn màn hình đến trễ).
+  const pickingUntilRef = useRef(0);
+  const [needFullscreen, setNeedFullscreen] = useState(false);
+  const onPickStart = useCallback(() => {
+    pickingUntilRef.current = Date.now() + 3 * 60 * 1000;
+  }, []);
+  const onPickEnd = useCallback(() => {
+    pickingUntilRef.current = Date.now() + 4000;
+    // Android thoát toàn màn hình khi mở camera → mời bật lại (cần một lần chạm)
+    setTimeout(() => {
+      if (document.fullscreenEnabled && !document.fullscreenElement && !submittedRef.current) setNeedFullscreen(true);
+    }, 600);
+  }, []);
+
   // Chống gian lận: phát hiện chuyển tab + thoát toàn màn hình (không áp dụng khi luyện tập)
   useEffect(() => {
     if (!exam || result || exam.practiceMode) return;
     const strike = (reason: string) => {
       if (submittedRef.current) return; // đã nộp (vd. thoát toàn màn hình sau khi nộp)
+      if (Date.now() < pickingUntilRef.current) return; // đang chụp/chọn ảnh bài làm
       setWarnings((w) => {
         const nw = w + 1;
         if (nw >= 3) {
@@ -171,8 +198,17 @@ export default function TakeExam() {
     const onVisibility = () => {
       if (document.hidden) strike('Em đã rời khỏi trang làm bài');
     };
+    const onVisibilityBack = () => {
+      // Quay lại từ camera mà trình duyệt không báo "cancel"/"change" → vẫn gia hạn ngắn
+      if (!document.hidden && Date.now() < pickingUntilRef.current) pickingUntilRef.current = Date.now() + 4000;
+    };
     const onFullscreenChange = () => {
+      if (document.fullscreenElement) setNeedFullscreen(false);
       if (!document.fullscreenElement && document.fullscreenEnabled) {
+        if (Date.now() < pickingUntilRef.current) {
+          setNeedFullscreen(true);
+          return;
+        }
         strike('Em đã thoát chế độ toàn màn hình');
       }
     };
@@ -181,10 +217,12 @@ export default function TakeExam() {
       setWarnMsg('Không được sao chép nội dung đề khi đang làm bài.');
     };
     document.addEventListener('visibilitychange', onVisibility);
+    document.addEventListener('visibilitychange', onVisibilityBack);
     document.addEventListener('fullscreenchange', onFullscreenChange);
     document.addEventListener('copy', onCopy);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('visibilitychange', onVisibilityBack);
       document.removeEventListener('fullscreenchange', onFullscreenChange);
       document.removeEventListener('copy', onCopy);
     };
@@ -226,13 +264,26 @@ export default function TakeExam() {
   essayFilesRef.current = essayFiles;
 
   // Gộp chữ tự luận vào đáp án (để tự lưu và khôi phục được cả bài tự luận)
+  // Ảnh tải lên xong (có URL) cũng được tự lưu → mở lại trang không mất ảnh
   function withEssayText(base: any) {
     const out: any = { ...base };
-    for (const [itemId, text] of Object.entries(essayTextsRef.current)) {
-      if (text) out[itemId] = { text, images: [] };
-    }
+    const ids = new Set([...Object.keys(essayTextsRef.current), ...Object.keys(essayFilesRef.current)]);
+    ids.forEach((itemId) => {
+      const text = essayTextsRef.current[itemId] || '';
+      const images = (essayFilesRef.current[itemId] || []).filter((x) => x.url).map((x) => x.url as string);
+      if (text || images.length) out[itemId] = { text, images };
+    });
     return out;
   }
+
+  // Lượt tải đang chạy của từng ảnh — lúc nộp bài đợi xong thay vì tải lại lần nữa
+  const uploadsRef = useRef<Map<string, Promise<string>>>(new Map());
+  const uploadEssayImage = useCallback((img: UpImage) => {
+    const p = uploadImage(img.file as File);
+    uploadsRef.current.set(img.id, p);
+    p.catch(() => uploadsRef.current.delete(img.id));
+    return p;
+  }, []);
 
   async function doSubmit() {
     if (submittedRef.current) return;
@@ -242,27 +293,26 @@ export default function TakeExam() {
       const timeSpent = Math.round((Date.now() - startTimeRef.current) / 1000);
       // Câu tự luận: tải ảnh (đúng thứ tự) + gộp chữ thành object { text, images }
       const finalAnswers: any = { ...answersRef.current };
-      const token = localStorage.getItem('token');
       const essayTextsNow = essayTextsRef.current;
       for (const [itemId, files] of Object.entries(essayFilesRef.current)) {
         if (files.length === 0) continue;
         setUploadingItem(itemId);
         const images: string[] = [];
         for (const f of files) {
-          const res = await fetch('/api/uploads/image', {
-            method: 'POST',
-            headers: {
-              'Content-Type': f.file.type || 'image/png',
-              Authorization: `Bearer ${token}`,
-            },
-            body: f.file,
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ message: 'Không tải được ảnh' }));
-            throw new Error(err.message || 'Không tải được ảnh');
+          // Đã tải xong → dùng luôn; đang tải → đợi; lỗi/chưa tải → tải lại
+          let url = f.url;
+          if (!url) {
+            const inflight = uploadsRef.current.get(f.id);
+            url = inflight ? await inflight.catch(() => undefined) : undefined;
           }
-          const data = await res.json();
-          images.push(data.url);
+          if (!url && f.file) {
+            try {
+              url = await uploadImage(f.file);
+            } catch (e: any) {
+              throw new Error(`Ảnh ${images.length + 1} chưa tải lên được: ${e?.message || 'lỗi mạng'}`);
+            }
+          }
+          if (url) images.push(url);
         }
         finalAnswers[itemId] = {
           text: essayTextsNow[itemId] || '',
@@ -680,6 +730,23 @@ export default function TakeExam() {
         </button>
       </header>
 
+      {needFullscreen && !exam.practiceMode && (
+        <div className="ex-alert is-warn" role="status">
+          <span>Ảnh đã được thêm. Bấm để quay lại chế độ toàn màn hình rồi làm tiếp.</span>
+          <button
+            type="button"
+            className="btn sh-btn-accent"
+            style={{ width: 'auto', minHeight: 34, padding: '0 14px', fontSize: 13 }}
+            onClick={() => {
+              pickingUntilRef.current = Date.now() + 4000;
+              document.documentElement.requestFullscreen?.().catch(() => {});
+              setNeedFullscreen(false);
+            }}
+          >
+            Toàn màn hình
+          </button>
+        </div>
+      )}
       {warnMsg && (
         <div className="ex-alert is-warn" role="alert">
           <span>{warnMsg}</span>
@@ -882,8 +949,14 @@ export default function TakeExam() {
                     />
                     <ImageUploader
                       images={essayFiles[q.itemId] || []}
-                      onChange={(next) => setEssayFiles((prev) => ({ ...prev, [q.itemId]: next }))}
+                      onChange={(next) => {
+                        essayFilesRef.current = { ...essayFilesRef.current, [q.itemId]: next };
+                        setEssayFiles((prev) => ({ ...prev, [q.itemId]: next }));
+                      }}
                       disabled={uploadingItem === q.itemId || submitting}
+                      upload={uploadEssayImage}
+                      onPickStart={exam.practiceMode ? undefined : onPickStart}
+                      onPickEnd={exam.practiceMode ? undefined : onPickEnd}
                     />
                   </div>
                 )}

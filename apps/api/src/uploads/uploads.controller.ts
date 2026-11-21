@@ -21,7 +21,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'storage', 'uploads');
-const MAX_SIZE = 15 * 1024 * 1024; // 15MB (ảnh lớn sẽ tự nén xuống < 1MB)
+const MAX_SIZE = 25 * 1024 * 1024; // 25MB (web đã nén trước; ảnh lớn còn lại tự nén xuống < 1MB)
 const COMPRESS_THRESHOLD = 1024 * 1024; // Nén khi > 1MB
 
 const EXT_BY_TYPE: Record<string, string> = {
@@ -31,6 +31,7 @@ const EXT_BY_TYPE: Record<string, string> = {
   'image/gif': 'gif',
   'image/webp': 'webp',
   'image/svg+xml': 'svg',
+  'image/avif': 'avif',
 };
 
 const TYPE_BY_EXT: Record<string, string> = {
@@ -40,7 +41,25 @@ const TYPE_BY_EXT: Record<string, string> = {
   gif: 'image/gif',
   webp: 'image/webp',
   svg: 'image/svg+xml',
+  avif: 'image/avif',
 };
+
+// Nhận dạng định dạng theo nội dung file (điện thoại hay gửi sai/thiếu Content-Type)
+function sniffType(buf: Buffer, declared: string): string {
+  if (buf.length >= 12) {
+    if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+    if (buf.slice(0, 8).toString('hex') === '89504e470d0a1a0a') return 'image/png';
+    if (buf.slice(0, 4).toString() === 'GIF8') return 'image/gif';
+    if (buf.slice(0, 4).toString() === 'RIFF' && buf.slice(8, 12).toString() === 'WEBP') return 'image/webp';
+    if (buf.slice(4, 8).toString() === 'ftyp') {
+      const brand = buf.slice(8, 12).toString();
+      if (/^(heic|heix|hevc|heim|heis|mif1|msf1)$/.test(brand)) return 'image/heic';
+      if (/^avi[fs]$/.test(brand)) return 'image/avif';
+    }
+    if (/^\s*<(\?xml|svg)/i.test(buf.slice(0, 64).toString())) return 'image/svg+xml';
+  }
+  return declared;
+}
 
 // Nén ảnh > 1MB: thu nhỏ (cạnh dài tối đa 1600px) + chuyển JPEG.
 //
@@ -104,11 +123,22 @@ export class UploadsController {
       return res.status(400).json({ message: 'Không có dữ liệu ảnh' });
     }
     if (buffer.length > MAX_SIZE) {
-      throw new PayloadTooLargeException('Ảnh quá lớn (tối đa 5MB)');
+      throw new PayloadTooLargeException('Ảnh quá lớn (tối đa 25MB)');
     }
 
-    const contentType: string =
-      req.headers['content-type'] || 'image/png';
+    const contentType: string = sniffType(buffer, String(req.headers['content-type'] || 'image/png'));
+
+    // Ảnh HEIC (iPhone/Samsung "hiệu quả cao"): trình duyệt ngoài Safari không hiển thị được,
+    // máy chủ cũng không giải mã được → báo rõ để học sinh đổi cách chụp thay vì lưu ảnh hỏng.
+    if (contentType === 'image/heic' || contentType === 'image/heif') {
+      return res.status(415).json({
+        message:
+          'Ảnh định dạng HEIC chưa hỗ trợ. Em chụp lại bằng nút "Chụp ảnh" trên trang, hoặc vào Cài đặt camera chọn định dạng JPG/"Tương thích nhất".',
+      });
+    }
+    if (!contentType.startsWith('image/')) {
+      return res.status(415).json({ message: 'Tệp gửi lên không phải ảnh' });
+    }
 
     // Nén ảnh > 1MB trước khi lưu (giảm tải server)
     const { buffer: finalBuffer, ext, compressed } = await compressImage(

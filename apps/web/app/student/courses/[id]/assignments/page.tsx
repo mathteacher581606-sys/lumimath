@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { apiFetch, getUser } from '@/lib/api';
+import { isImageFile, uploadImage as uploadImageFile } from '@/lib/image-upload';
 import BackButton from '@/components/BackButton';
 import LatexRenderer from '@/components/LatexRenderer';
 import { SkeletonCards } from '@/components/Skeleton';
@@ -70,25 +71,29 @@ export default function StudentCourseAssignments() {
     }
   }
 
-  async function uploadImage(file: File) {
+  // Tải lần lượt từng ảnh (giữ đúng thứ tự trang; nén trên máy trước khi gửi)
+  const [uploadProgress, setUploadProgress] = useState('');
+  async function uploadImages(files: File[]) {
+    const imgs = files.filter(isImageFile);
+    if (imgs.length < files.length) showToast(`Bỏ qua ${files.length - imgs.length} tệp không phải ảnh`);
+    if (!imgs.length) return;
     setUploading(true);
+    let ok = 0;
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/uploads/image', {
-        method: 'POST',
-        headers: { 'Content-Type': file.type || 'image/png', Authorization: `Bearer ${token}` },
-        body: file,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: 'Không tải được ảnh' }));
-        throw new Error(err.message);
+      for (let i = 0; i < imgs.length; i++) {
+        setUploadProgress(`${i + 1}/${imgs.length}`);
+        try {
+          const url = await uploadImageFile(imgs[i]);
+          ok++;
+          setImages((prev) => [...prev, url]);
+        } catch (e: any) {
+          showToast(`Ảnh ${i + 1}: ${e.message}`);
+        }
       }
-      const d = await res.json();
-      setImages((prev) => [...prev, d.url]);
-    } catch (e: any) {
-      showToast('❌ ' + e.message);
+      if (ok) showToast(`Đã tải ${ok}/${imgs.length} ảnh`);
     } finally {
       setUploading(false);
+      setUploadProgress('');
     }
   }
 
@@ -519,17 +524,17 @@ export default function StudentCourseAssignments() {
                         disabled={uploading}
                         onChange={(e) => {
                           const files = Array.from(e.target.files || []);
-                          files.forEach((f) => uploadImage(f));
                           e.currentTarget.value = '';
+                          uploadImages(files);
                         }}
                         style={{ display: 'none' }}
                       />
                       <span style={{ fontSize: 24, lineHeight: 1 }}>⬆️</span>
                       <span className="lm-sub-drop-title">
-                        {uploading ? '⏳ Đang tải ảnh…' : 'Tải file lên'}
+                        {uploading ? `Đang tải ảnh ${uploadProgress}…` : 'Chụp hoặc chọn ảnh bài làm'}
                       </span>
                       <span className="lm-sub-drop-hint">
-                        (Hỗ trợ Ảnh, Video, Excel, PPT, Audio hoặc File PDF)
+                        Chọn nhiều ảnh được, ảnh tự nén trước khi gửi · PDF tải ở ô bên dưới
                       </span>
                     </label>
                   </div>

@@ -1,76 +1,177 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { isImageFile } from '@/lib/image-upload';
 
-export type UpImage = { id: string; file: File; preview: string };
+// file: ảnh chọn trên máy (chưa có nếu khôi phục từ bài làm dở); url: đã tải lên máy chủ
+export type UpImage = {
+  id: string;
+  file?: File;
+  preview: string;
+  url?: string;
+  status?: 'uploading' | 'done' | 'error';
+  error?: string;
+};
 
-// Tải nhiều ảnh: kéo thả, sắp xếp thứ tự, xoay 90°, xóa
+// Tải nhiều ảnh: chụp ảnh / chọn ảnh / kéo thả, sắp xếp thứ tự, xoay 90°, xoá.
+// Có `upload` → ảnh được tải lên NGAY khi chọn (không đợi bấm nộp): điện thoại mở camera
+// xong có thể tải lại trang, ảnh đã lên máy chủ thì không mất.
 export default function ImageUploader({
   images,
   onChange,
   disabled,
+  upload,
+  onPickStart,
+  onPickEnd,
 }: {
   images: UpImage[];
   onChange: (next: UpImage[]) => void;
   disabled?: boolean;
+  upload?: (img: UpImage) => Promise<string>;
+  // Báo cho trang làm bài: đang mở camera / thư viện ảnh (không tính là rời trang)
+  onPickStart?: () => void;
+  onPickEnd?: () => void;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const pickRef = useRef<HTMLInputElement>(null);
+  const camRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  // Bản mới nhất của danh sách: các lượt tải xong cùng lúc không ghi đè lẫn nhau
+  const latest = useRef(images);
+  latest.current = images;
+  function commit(next: UpImage[]) {
+    latest.current = next;
+    onChange(next);
+  }
+  function patch(id: string, p: Partial<UpImage>) {
+    commit(latest.current.map((x) => (x.id === id ? { ...x, ...p } : x)));
+  }
+
+  // Tải lần lượt từng ảnh (giữ đúng thứ tự, không dồn mạng)
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  function startUpload(img: UpImage) {
+    if (!upload || !img.file) return;
+    queue.current = queue.current.then(async () => {
+      if (!latest.current.some((x) => x.id === img.id)) return; // đã bị xoá
+      try {
+        const url = await upload(img);
+        patch(img.id, { url, status: 'done', error: undefined });
+      } catch (e: any) {
+        patch(img.id, { status: 'error', error: e?.message || 'Không tải được ảnh' });
+      }
+    });
+  }
+
+  // Huỷ chọn ảnh (Chrome 113+, Safari 16.4+) cũng là "đã quay lại trang"
+  useEffect(() => {
+    const els = [pickRef.current, camRef.current].filter(Boolean) as HTMLInputElement[];
+    const end = () => onPickEnd?.();
+    els.forEach((el) => el.addEventListener('cancel', end));
+    return () => els.forEach((el) => el.removeEventListener('cancel', end));
+  }, [onPickEnd]);
+
+  function openPicker(which: 'pick' | 'cam') {
+    if (disabled) return;
+    onPickStart?.();
+    (which === 'cam' ? camRef : pickRef).current?.click();
+  }
 
   function addFiles(files: FileList | File[]) {
-    const imgs = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    const all = Array.from(files);
+    const imgs = all.filter(isImageFile);
+    setNotice(
+      imgs.length < all.length
+        ? `Bỏ qua ${all.length - imgs.length} tệp không phải ảnh.`
+        : '',
+    );
     const added: UpImage[] = imgs.map((f) => ({
       id: Math.random().toString(36).slice(2),
       file: f,
       preview: URL.createObjectURL(f),
+      status: upload ? 'uploading' : undefined,
     }));
-    onChange([...images, ...added]);
+    commit([...latest.current, ...added]);
+    added.forEach(startUpload);
   }
 
-  // Xoay 90° một ảnh (xử lý ngay trên máy, không cần server)
+  // Xoay 90° một ảnh ngay trên máy (ảnh đã tải → tải lại bản đã xoay)
   function rotate(idx: number) {
-    const img = images[idx];
+    const img = latest.current[idx];
     if (!img) return;
     const el = new Image();
+    el.crossOrigin = 'anonymous';
     el.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = el.height;
-      canvas.height = el.width;
-      const ctx = canvas.getContext('2d')!;
+      canvas.width = el.naturalHeight;
+      canvas.height = el.naturalWidth;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
       ctx.translate(canvas.width, 0);
       ctx.rotate(Math.PI / 2);
       ctx.drawImage(el, 0, 0);
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        const newFile = new File([blob], img.file.name || 'anh.jpg', {
-          type: 'image/jpeg',
-        });
-        const next = [...images];
-        next[idx] = { ...img, file: newFile, preview: URL.createObjectURL(newFile) };
-        onChange(next);
-      }, 'image/jpeg', 0.9);
+      canvas.toBlob(
+        (blob) => {
+          canvas.width = 0;
+          canvas.height = 0;
+          if (!blob) {
+            setNotice('Ảnh quá lớn để xoay trên máy này.');
+            return;
+          }
+          const newFile = new File([blob], (img.file?.name || 'anh').replace(/\.[^.]+$/, '') + '.jpg', {
+            type: 'image/jpeg',
+          });
+          const next: UpImage = {
+            ...img,
+            file: newFile,
+            preview: URL.createObjectURL(newFile),
+            url: undefined,
+            status: upload ? 'uploading' : undefined,
+            error: undefined,
+          };
+          commit(latest.current.map((x) => (x.id === img.id ? next : x)));
+          startUpload(next);
+        },
+        'image/jpeg',
+        0.9,
+      );
     };
+    el.onerror = () => setNotice('Không xoay được ảnh này.');
     el.src = img.preview;
   }
 
   function move(idx: number, dir: -1 | 1) {
     const j = idx + dir;
-    if (j < 0 || j >= images.length) return;
-    const next = [...images];
+    const cur = latest.current;
+    if (j < 0 || j >= cur.length) return;
+    const next = [...cur];
     [next[idx], next[j]] = [next[j], next[idx]];
-    onChange(next);
+    commit(next);
   }
 
   function remove(idx: number) {
-    const next = images.filter((_, i) => i !== idx);
-    URL.revokeObjectURL(images[idx].preview);
-    onChange(next);
+    const img = latest.current[idx];
+    if (img?.file && img.preview.startsWith('blob:')) URL.revokeObjectURL(img.preview);
+    commit(latest.current.filter((_, i) => i !== idx));
   }
 
+  function retry(idx: number) {
+    const img = latest.current[idx];
+    if (!img) return;
+    patch(img.id, { status: 'uploading', error: undefined });
+    startUpload(img);
+  }
+
+  const onFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onPickEnd?.();
+    if (e.target.files?.length) addFiles(e.target.files);
+    e.target.value = '';
+  };
+
   return (
-    <div>
-      {/* Vùng kéo thả + nút chọn */}
+    <div className="iu">
       <div
+        className={`iu-drop${dragOver ? ' is-over' : ''}${disabled ? ' is-disabled' : ''}`}
         onDragOver={(e) => {
           e.preventDefault();
           setDragOver(true);
@@ -79,128 +180,73 @@ export default function ImageUploader({
         onDrop={(e) => {
           e.preventDefault();
           setDragOver(false);
-          if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
-        }}
-        onClick={() => !disabled && inputRef.current?.click()}
-        style={{
-          border: `2px dashed ${dragOver ? 'var(--color-accent)' : 'var(--color-rule)'}`,
-          borderRadius: 10,
-          padding: '14px',
-          textAlign: 'center',
-          cursor: disabled ? 'default' : 'pointer',
-          background: dragOver
-            ? 'color-mix(in oklch, var(--color-accent) 8%, var(--color-paper))'
-            : 'var(--color-paper-2)',
-          transition: 'all .15s',
+          if (!disabled && e.dataTransfer.files?.length) addFiles(e.dataTransfer.files);
         }}
       >
-        <div style={{ fontSize: 22 }}>{dragOver ? '📥' : '📷'}</div>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>
-          {disabled ? 'Đang tải ảnh…' : 'Kéo thả ảnh vào đây hoặc bấm để chọn'}
+        <div className="iu-actions">
+          <button type="button" className="iu-btn is-primary" disabled={disabled} onClick={() => openPicker('cam')}>
+            Chụp ảnh
+          </button>
+          <button type="button" className="iu-btn" disabled={disabled} onClick={() => openPicker('pick')}>
+            Chọn ảnh có sẵn
+          </button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--color-muted)', marginTop: 2 }}>
-          Nhiều ảnh được · có thể sắp xếp thứ tự và xoay ảnh
+        <div className="iu-hint">
+          {disabled ? 'Đang xử lý…' : 'Hoặc kéo thả ảnh vào đây · chọn nhiều ảnh được, sắp xếp và xoay sau'}
         </div>
         <input
-          ref={inputRef}
+          ref={camRef}
           type="file"
           accept="image/*"
-          multiple
-          style={{ display: 'none' }}
+          capture="environment"
+          hidden
           disabled={disabled}
-          onChange={(e) => {
-            if (e.target.files?.length) addFiles(e.target.files);
-            e.target.value = '';
-          }}
+          onChange={onFiles}
         />
+        <input ref={pickRef} type="file" accept="image/*" multiple hidden disabled={disabled} onChange={onFiles} />
       </div>
+      {notice && (
+        <p className="iu-notice" role="status">
+          {notice}
+        </p>
+      )}
 
-      {/* Danh sách ảnh với điều khiển */}
       {images.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+        <ol className="iu-list" aria-label="Ảnh bài làm">
           {images.map((img, i) => (
-            <div
-              key={img.id}
-              style={{
-                position: 'relative',
-                border: '1px solid var(--color-rule)',
-                borderRadius: 8,
-                overflow: 'hidden',
-                width: 104,
-                background: 'var(--color-paper)',
-              }}
-            >
-              <img
-                src={img.preview}
-                alt={`Ảnh ${i + 1}`}
-                style={{ width: 104, height: 104, objectFit: 'cover', display: 'block' }}
-              />
-              <span
-                className="mono"
-                style={{
-                  position: 'absolute',
-                  top: 3,
-                  left: 3,
-                  background: 'rgba(15,23,42,0.75)',
-                  color: '#fff',
-                  fontSize: 10,
-                  padding: '1px 6px',
-                  borderRadius: 4,
-                }}
-              >
-                {i + 1}
-              </span>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  padding: 2,
-                  background: 'var(--color-paper-2)',
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => move(i, -1)}
-                  disabled={i === 0}
-                  title="Lùi lại"
-                  style={{ ...miniBtn, opacity: i === 0 ? 0.35 : 1 }}
-                >
-                  ◀
+            <li key={img.id} className={`iu-item${img.status === 'error' ? ' is-error' : ''}`}>
+              <img src={img.preview} alt={`Ảnh ${i + 1}`} />
+              <span className="iu-num">{i + 1}</span>
+              {img.status === 'uploading' && <span className="iu-state">Đang tải…</span>}
+              {img.status === 'done' && <span className="iu-state is-done">Đã lưu</span>}
+              {img.status === 'error' && (
+                <button type="button" className="iu-state is-error" onClick={() => retry(i)} title={img.error}>
+                  Lỗi · thử lại
                 </button>
-                <button type="button" onClick={() => rotate(i)} title="Xoay 90°" style={miniBtn}>
+              )}
+              <div className="iu-tools">
+                <button type="button" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Đưa lên trước">
+                  ‹
+                </button>
+                <button type="button" onClick={() => rotate(i)} aria-label="Xoay 90 độ">
                   ↻
                 </button>
-                <button
-                  type="button"
-                  onClick={() => move(i, 1)}
-                  disabled={i === images.length - 1}
-                  title="Tiến lên"
-                  style={{ ...miniBtn, opacity: i === images.length - 1 ? 0.35 : 1 }}
-                >
-                  ▶
+                <button type="button" onClick={() => move(i, 1)} disabled={i === images.length - 1} aria-label="Đưa ra sau">
+                  ›
                 </button>
-                <button
-                  type="button"
-                  onClick={() => remove(i)}
-                  title="Xóa ảnh"
-                  style={{ ...miniBtn, color: 'var(--color-danger)' }}
-                >
+                <button type="button" className="is-danger" onClick={() => remove(i)} aria-label="Xoá ảnh">
                   ✕
                 </button>
               </div>
-            </div>
+            </li>
           ))}
-        </div>
+        </ol>
+      )}
+      {images.some((x) => x.status === 'error') && (
+        <p className="iu-notice is-error" role="alert">
+          {images.find((x) => x.status === 'error')?.error} — bấm “Lỗi · thử lại” trên ảnh.
+        </p>
       )}
     </div>
   );
 }
-
-const miniBtn: React.CSSProperties = {
-  border: 'none',
-  background: 'transparent',
-  cursor: 'pointer',
-  fontSize: 12,
-  padding: '2px 5px',
-  color: 'var(--color-ink)',
-};
