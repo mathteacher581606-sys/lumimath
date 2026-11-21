@@ -9,6 +9,7 @@ import BackButton from '@/components/BackButton';
 import LatexRenderer from '@/components/LatexRenderer';
 import GradingBoard, { type BoardMap } from '@/components/GradingBoard';
 import { usePdfDoc } from '@/lib/pdf-doc';
+import { downloadBlob, exportMarkedPdf } from '@/lib/board-export';
 
 type Stroke = {
   tool: 'pen' | 'eraser' | 'highlight';
@@ -82,6 +83,8 @@ export default function GradeAssignmentPage() {
   const [comment, setComment] = useState('');
   const [published, setPublished] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dlBusy, setDlBusy] = useState(false);
+  const [focusItem, setFocusItem] = useState(''); // chế độ chấm theo câu: itemId câu đang chấm cho cả lớp
   const [aiBusy, setAiBusy] = useState(false);
 
   // Chấm đề thi (trắc nghiệm + tự luận từng phần)
@@ -586,7 +589,7 @@ export default function GradeAssignmentPage() {
     setTimeout(redraw, 20);
   }
 
-  async function save() {
+  async function save(nextId?: string) {
     if (!submission) return;
     setSaving(true);
     try {
@@ -631,12 +634,38 @@ export default function GradeAssignmentPage() {
         },
       );
       showToast('✅ Đã lưu điểm + nét chấm bài');
-      load(submission.id);
+      load(nextId || submission.id);
     } catch (e: any) {
       showToast('❌ ' + e.message);
     } finally {
       setSaving(false);
     }
+  }
+
+  async function downloadMarked() {
+    if (!submission) return;
+    setDlBusy(true);
+    try {
+      const blob = await exportMarkedPdf({
+        imageUrls: submission.imageUrls || [],
+        pdfUrl: submission.pdfUrl,
+        boardSnapshots: tldrawSnapshots as any,
+        pdfBoard: pdfBoard as any,
+      });
+      downloadBlob(blob, 'bai-da-cham.pdf');
+    } catch (e: any) {
+      showToast('❌ ' + (e?.message || 'Không xuất được PDF'));
+    } finally {
+      setDlBusy(false);
+    }
+  }
+
+  // Chuyển sang học sinh kế tiếp (dùng cho chế độ chấm theo câu)
+  function neighborId(dir: 1 | -1): string | null {
+    const subs: any[] = detail?.submissions || [];
+    const i = subs.findIndex((x: any) => x.id === submission?.id);
+    const n = subs[i + dir];
+    return n ? n.id : null;
   }
 
   async function requestReturn() {
@@ -670,7 +699,7 @@ export default function GradeAssignmentPage() {
   // ===== Phím tắt chấm bài cho giáo viên =====
   const [showKeys, setShowKeys] = useState(false);
   const saveRef = useRef<() => void>(() => {});
-  saveRef.current = save;
+  saveRef.current = () => save();
   const openRef = useRef<(d: any, sid: string) => void>(() => {});
   openRef.current = openSubmission;
 
@@ -831,6 +860,37 @@ export default function GradeAssignmentPage() {
             {/* ===== XEM BÀI LÀM ĐỀ THI (trắc nghiệm + tự luận) ===== */}
             {examReview && (
               <div style={{ marginBottom: 12 }}>
+                {examReview.results.some((r: any) => r.type === 'ESSAY') && (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10, padding: '8px 10px', border: '1px solid var(--color-rule)', borderRadius: 10, background: 'var(--color-surface)' }}>
+                    <label htmlFor="focus-item" style={{ fontSize: 12.5, fontWeight: 700 }}>Chấm theo câu</label>
+                    <select
+                      id="focus-item"
+                      value={focusItem}
+                      onChange={(e) => setFocusItem(e.target.value)}
+                      style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid var(--color-rule-2)', fontSize: 13, minHeight: 36 }}
+                    >
+                      <option value="">Tất cả các câu của từng học sinh</option>
+                      {examReview.results.map((r: any, i: number) =>
+                        r.type === 'ESSAY' ? (
+                          <option key={r.itemId} value={r.itemId}>
+                            Chỉ câu {i + 1} (tự luận) — lần lượt cả lớp
+                          </option>
+                        ) : null,
+                      )}
+                    </select>
+                    {focusItem && (
+                      <>
+                        <span style={{ flex: 1 }} />
+                        <button className="btn btn-outline" style={{ width: 'auto', padding: '6px 12px', minHeight: 36 }} disabled={!neighborId(-1)} onClick={() => { const id = neighborId(-1); if (id) openSubmission(detail, id); }}>
+                          Học sinh trước
+                        </button>
+                        <button className="btn-lm amber" style={{ width: 'auto', padding: '6px 14px', minHeight: 36 }} disabled={saving || !neighborId(1)} onClick={() => { const id = neighborId(1); if (id) save(id); }}>
+                          Lưu và chấm học sinh sau
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                   <span className="badge badge-accent">📝 Trắc nghiệm: {examReview.mcqScore}đ</span>
                   <span className="badge badge-warning">✍️ Tự luận (thủ công): {essayTotal()}đ / {examReview.essayMaxScore}đ</span>
@@ -838,7 +898,7 @@ export default function GradeAssignmentPage() {
                   <span className="badge">Hệ thống: {examReview.attemptScore}đ</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {examReview.results.map((r: any, i: number) => (
+                  {examReview.results.map((r: any, i: number) => (focusItem && r.itemId !== focusItem) ? null : (
                     <div
                       key={r.itemId}
                       style={{
@@ -1175,6 +1235,11 @@ export default function GradeAssignmentPage() {
               for (const u of imgs) picked[u] = (tldrawSnapshots[u] as any) || [];
               return (
                 <div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                    <button className="btn btn-outline" style={{ width: 'auto', padding: '6px 14px', minHeight: 40 }} disabled={dlBusy} onClick={downloadMarked}>
+                      {dlBusy ? 'Đang tạo PDF…' : 'Tải bài đã chấm (PDF)'}
+                    </button>
+                  </div>
                   {both && (
                     <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                       <button className={`lm-filter-btn${tab === 'images' ? ' on' : ''}`} style={{ padding: '6px 16px', fontSize: 13, fontWeight: 800 }} onClick={() => setViewMode('images')}>

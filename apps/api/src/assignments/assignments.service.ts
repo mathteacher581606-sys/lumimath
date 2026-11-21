@@ -219,6 +219,14 @@ export class AssignmentsService {
                 content: my.content,
                 imageUrls: my.imageUrls,
                 pdfUrl: my.pdfUrl,
+                // Nét chấm của GV (chỉ khi đã công bố) — để HS xem và tải bài đã chấm
+                marks:
+                  visible && (my as any).annotations
+                    ? {
+                        boardSnapshots: (my as any).annotations.boardSnapshots || {},
+                        pdfBoard: (my as any).annotations.pdfBoard || {},
+                      }
+                    : null,
               }
             : null,
           showAnswers,
@@ -542,7 +550,27 @@ export class AssignmentsService {
       questions: bankQuestions,
       resubmit,
       dueDate: this.effectiveDueDate(assignment as any, me?.className || null),
-      mySubmission: mine,
+      // Không gửi nguyên annotations cho HS: chỉ gửi nét chấm khi điểm đã công bố
+      mySubmission: mine
+        ? (() => {
+            const { annotations, ...rest } = mine as any;
+            const a: any = assignment;
+            const posted =
+              !a.postManually ||
+              a.gradesPosted ||
+              (a.postAt && new Date(a.postAt).getTime() <= Date.now());
+            return {
+              ...rest,
+              marks:
+                mine.published && posted && annotations
+                  ? {
+                      boardSnapshots: annotations.boardSnapshots || {},
+                      pdfBoard: annotations.pdfBoard || {},
+                    }
+                  : null,
+            };
+          })()
+        : null,
       showAnswers,
       // KHÔNG gửi đáp án câu trắc nghiệm cho HS khi chưa được xem đáp án
       exam: showAnswers

@@ -6,6 +6,8 @@ import { apiFetch, getUser } from '@/lib/api';
 import { isImageFile, uploadImage as uploadImageFile } from '@/lib/image-upload';
 import BackButton from '@/components/BackButton';
 import LatexRenderer from '@/components/LatexRenderer';
+import MarkedView from '@/components/MarkedView';
+import { downloadBlob, exportMarkedPdf, hasMarks } from '@/lib/board-export';
 import { SkeletonCards } from '@/components/Skeleton';
 
 export default function StudentCourseAssignments() {
@@ -14,6 +16,7 @@ export default function StudentCourseAssignments() {
   const [course, setCourse] = useState<any>(null);
   const [data, setData] = useState<any>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [dlBusy, setDlBusy] = useState(false);
 
   // Chi tiết + nộp bài
   const [detail, setDetail] = useState<any>(null);
@@ -403,6 +406,45 @@ export default function StudentCourseAssignments() {
                       {mySub.aiScore != null ? ` · Điểm cao nhất tạm tính: ${mySub.aiScore}` : ''}.
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ===== BÀI ĐÃ CHẤM (nét chấm của giáo viên) ===== */}
+              {mySub && mySub.published && hasMarks(mySub.marks) && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14 }}>Bài đã chấm</div>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      style={{ width: 'auto', padding: '8px 14px', minHeight: 44 }}
+                      disabled={dlBusy}
+                      onClick={async () => {
+                        setDlBusy(true);
+                        try {
+                          const blob = await exportMarkedPdf({
+                            imageUrls: mySub.imageUrls || [],
+                            pdfUrl: mySub.pdfUrl,
+                            boardSnapshots: mySub.marks?.boardSnapshots,
+                            pdfBoard: mySub.marks?.pdfBoard,
+                          });
+                          downloadBlob(blob, 'bai-da-cham.pdf');
+                        } catch (e: any) {
+                          setToast('❌ ' + (e?.message || 'Không xuất được PDF'));
+                        } finally {
+                          setDlBusy(false);
+                        }
+                      }}
+                    >
+                      {dlBusy ? 'Đang tạo PDF…' : 'Tải bài đã chấm (PDF)'}
+                    </button>
+                  </div>
+                  <MarkedView
+                    imageUrls={mySub.imageUrls || []}
+                    pdfUrl={mySub.pdfUrl}
+                    boardSnapshots={mySub.marks?.boardSnapshots}
+                    pdfBoard={mySub.marks?.pdfBoard}
+                  />
                 </div>
               )}
 
