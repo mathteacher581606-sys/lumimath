@@ -38,11 +38,41 @@ try {
 }
 console.log(FMT_OK ? 'Dùng định dạng nạp sẵn lmfmt' : 'Không có lmfmt.fmt — biên dịch thường');
 
+// \standaloneconfig chỉ nhận option của standalone — option của lớp khác (12pt, a4paper…) gây lỗi xkeyval → bỏ đi
+const STANDALONE_KEYS = new Set([
+  'class', 'multi', 'crop', 'preview', 'border', 'margin', 'varwidth', 'ignorerest', 'tikz', 'convert',
+  'float', 'angle', 'beamer', 'math', 'ragged2e', 'mode', 'order', 'sort', 'sort-by', 'pdftex', 'dvips',
+  'xetex', 'luatex', 'dvipdfmx', 'ptex', 'uptex', 'latex', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'pdf',
+  'png-ext', 'jpg-ext', 'config', 'preview-ext', 'varwidth-ext', 'multi-ext', 'beamer-ext', 'math-ext',
+]);
+function standaloneOpts(raw) {
+  const parts = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of String(raw)) {
+    if (ch === '{') depth++;
+    if (ch === '}') depth--;
+    if (ch === ',' && depth === 0) {
+      parts.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  parts.push(cur);
+  return parts
+    .map((x) => x.trim())
+    .filter((x) => {
+      if (!x) return false;
+      const key = x.split('=')[0].trim();
+      return STANDALONE_KEYS.has(key);
+    })
+    .join(',');
+}
+
 function withFormat(src) {
   if (!FMT_OK) return null;
   const m = String(src).match(/^\s*\\documentclass(?:\[([^\]]*)\])?\{standalone\}[ \t]*\r?\n[ \t]*\\usepackage\{lumimath\}[ \t]*\r?\n/);
   if (!m) return null;
-  const opts = (m[1] || '').trim();
+  const opts = standaloneOpts(m[1] || '');
   return (
     '\\documentclass{standalone}\n\\endofdump\n' +
     (opts ? '\\standaloneconfig{' + opts + '}\n' : '') +

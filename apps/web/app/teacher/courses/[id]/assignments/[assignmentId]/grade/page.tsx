@@ -1664,7 +1664,7 @@ export default function GradeAssignmentPage() {
               </label>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button className="btn" style={{ width: '100%' }} disabled={saving} onClick={save}>
+                <button className="btn" style={{ width: '100%' }} disabled={saving} onClick={() => save()}>
                   {saving ? '⏳ Đang lưu…' : '💾 Lưu dữ liệu'}
                 </button>
                 <button className="btn" style={{ width: '100%', background: 'var(--lm-maroon)', color: '#fff' }} disabled={aiBusy} onClick={runAi}>
