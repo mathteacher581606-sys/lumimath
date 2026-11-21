@@ -146,6 +146,14 @@ export default function CourseAssignments() {
   const [detailLoading, setDetailLoading] = useState(false);
   // Lớp được chọn để xuất bảng điểm
   const [scoreClass, setScoreClass] = useState('__all__');
+  // Tuỳ chọn xuất bảng điểm (dùng chung cho xuất 1 bài và xuất nhiều bài)
+  const [expComments, setExpComments] = useState(true);
+  const [expSort, setExpSort] = useState(true);
+  // Xuất nhiều bài tập chung 1 bảng xếp hạng
+  const [multiOpen, setMultiOpen] = useState(false);
+  const [multiIds, setMultiIds] = useState<string[]>([]);
+  const [multiClass, setMultiClass] = useState('__all__');
+  const [multiBusy, setMultiBusy] = useState(false);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -505,7 +513,7 @@ export default function CourseAssignments() {
       const token = localStorage.getItem('token');
       const cls = scoreClass === '__all__' ? '' : scoreClass;
       const res = await fetch(
-        `/api/courses/${courseId}/assignments/${detail.id}/scores/export?format=${format}${cls ? `&className=${encodeURIComponent(cls)}` : ''}`,
+        `/api/courses/${courseId}/assignments/${detail.id}/scores/export?format=${format}&comments=${expComments ? 1 : 0}&sort=${expSort ? 1 : 0}${cls ? `&className=${encodeURIComponent(cls)}` : ''}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (!res.ok) {
@@ -522,6 +530,42 @@ export default function CourseAssignments() {
       URL.revokeObjectURL(url);
     } catch (e: any) {
       alert('❌ ' + e.message);
+    }
+  }
+
+  function toggleMulti(id: string) {
+    setMultiIds((cur) => (cur.indexOf(id) >= 0 ? cur.filter((x) => x !== id) : cur.concat([id])));
+  }
+
+  async function exportMulti(format: 'pdf' | 'xlsx') {
+    if (!multiIds.length) {
+      alert('Hãy chọn ít nhất 1 bài tập');
+      return;
+    }
+    setMultiBusy(true);
+    try {
+      const token = localStorage.getItem('token');
+      const cls = multiClass === '__all__' ? '' : multiClass;
+      const res = await fetch(
+        `/api/courses/${courseId}/assignments/scores/export-multi?format=${format}&ids=${encodeURIComponent(multiIds.join(','))}&comments=${expComments ? 1 : 0}&sort=${expSort ? 1 : 0}${cls ? `&className=${encodeURIComponent(cls)}` : ''}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert('❌ ' + (err.message || 'Không xuất được'));
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bang-diem-tong-hop${cls ? '-' + cls : ''}.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert('❌ ' + e.message);
+    } finally {
+      setMultiBusy(false);
     }
   }
 
@@ -636,7 +680,19 @@ export default function CourseAssignments() {
             {course?.title || ''} · {data?.studentCount ?? 0} học sinh
           </p>
         </div>
-        <button className="btn-lm amber" onClick={openCreate}>＋ Giao bài mới</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            className="btn-lm ghost"
+            onClick={() => {
+              setMultiIds([]);
+              setMultiOpen(true);
+            }}
+            title="Xuất điểm nhiều bài tập về nhà chung 1 bảng xếp hạng (điểm trung bình cộng)"
+          >
+            🏆 Xuất điểm nhiều bài
+          </button>
+          <button className="btn-lm amber" onClick={openCreate}>＋ Giao bài mới</button>
+        </div>
       </div>
 
       {data === null ? (
@@ -1056,6 +1112,12 @@ export default function CourseAssignments() {
                 >
                   📊 Điểm Excel
                 </button>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12.5 }} title="Bật/tắt cột nhận xét khi xuất">
+                  <input type="checkbox" checked={expComments} onChange={(e) => setExpComments(e.target.checked)} /> Nhận xét
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12.5 }} title="Bật: xếp từ cao xuống thấp. Tắt: giữ thứ tự theo tên">
+                  <input type="checkbox" checked={expSort} onChange={(e) => setExpSort(e.target.checked)} /> Sắp xếp
+                </label>
                 <select
                   value={scoreClass}
                   onChange={(e) => setScoreClass(e.target.value)}
@@ -1186,6 +1248,94 @@ export default function CourseAssignments() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal xuất điểm nhiều bài tập */}
+      {multiOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'color-mix(in oklch, var(--color-ink) 45%, transparent)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000,
+            padding: 20,
+          }}
+          onClick={() => setMultiOpen(false)}
+        >
+          <div
+            className="card"
+            style={{ width: '100%', maxWidth: 620, maxHeight: '90vh', overflowY: 'auto', padding: 22 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <strong style={{ fontSize: 17 }}>🏆 Xuất điểm nhiều bài tập</strong>
+              <button className="btn btn-outline" style={{ width: 'auto', padding: '4px 10px' }} onClick={() => setMultiOpen(false)}>✕</button>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--color-muted)', margin: '0 0 10px' }}>
+              Mỗi bài là một cột điểm; <b>Điểm TB</b> = trung bình cộng các bài đã chọn. Học sinh chưa nộp bài nào thì tính 0 điểm bài đó.
+            </p>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-outline"
+                style={{ width: 'auto', padding: '4px 10px', fontSize: 12.5 }}
+                onClick={() => setMultiIds((data?.assignments || []).map((a: any) => a.id))}
+              >
+                Chọn tất cả
+              </button>
+              <button
+                className="btn btn-outline"
+                style={{ width: 'auto', padding: '4px 10px', fontSize: 12.5 }}
+                onClick={() => setMultiIds([])}
+              >
+                Bỏ chọn
+              </button>
+              <span style={{ fontSize: 12.5, alignSelf: 'center' }}>Đã chọn: <b>{multiIds.length}</b></span>
+            </div>
+            <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid var(--color-rule)', borderRadius: 8, padding: 6 }}>
+              {(data?.assignments || [])
+                .slice()
+                .sort((a: any, b: any) => (a.createdAt < b.createdAt ? -1 : 1))
+                .map((a: any) => (
+                  <label key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '5px 6px', fontSize: 13.5, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={multiIds.indexOf(a.id) >= 0} onChange={() => toggleMulti(a.id)} />
+                    <span style={{ flex: 1 }}>{a.title}</span>
+                    <span style={{ fontSize: 11.5, color: 'var(--color-muted)' }}>
+                      {new Date(a.createdAt).toLocaleDateString('vi-VN')}
+                    </span>
+                  </label>
+                ))}
+            </div>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', margin: '12px 0', alignItems: 'center' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13.5 }}>
+                <input type="checkbox" checked={expComments} onChange={(e) => setExpComments(e.target.checked)} /> Hiện nhận xét
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13.5 }}>
+                <input type="checkbox" checked={expSort} onChange={(e) => setExpSort(e.target.checked)} /> Sắp xếp theo điểm TB (có cột Hạng)
+              </label>
+              <select
+                value={multiClass}
+                onChange={(e) => setMultiClass(e.target.value)}
+                style={{ padding: '6px 8px', fontSize: 13, borderRadius: 8, border: '1px solid var(--color-rule)', background: 'var(--color-paper)', color: 'var(--color-ink)' }}
+              >
+                <option value="__all__">Tất cả lớp</option>
+                {classes.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn-lm amber" disabled={multiBusy || !multiIds.length} onClick={() => exportMulti('pdf')}>
+                {multiBusy ? 'Đang xuất…' : '📄 Xuất PDF'}
+              </button>
+              <button className="btn-lm ghost" disabled={multiBusy || !multiIds.length} onClick={() => exportMulti('xlsx')}>
+                📊 Xuất Excel
+              </button>
             </div>
           </div>
         </div>

@@ -1299,7 +1299,10 @@ export class AssignmentsService {
     teacherId: string,
     format: string,
     className?: string,
+    opts?: { comments?: boolean; sort?: boolean },
   ) {
+    const withComments = opts?.comments !== false;
+    const withSort = opts?.sort !== false;
     await this.ensureTeacher(courseId, teacherId);
     await this.assertScope(courseId, assignmentId);
     const assignment = await this.prisma.assignment.findUnique({
@@ -1390,7 +1393,7 @@ export class AssignmentsService {
       const eff = s ? (s.score ?? s.aiScore) : null;
       return { st, s, eff };
     });
-    scored.sort((a, b) => {
+    if (withSort) scored.sort((a, b) => {
       const an = a.eff == null ? -Infinity : a.eff;
       const bn = b.eff == null ? -Infinity : b.eff;
       if (bn !== an) return bn - an;
@@ -1410,9 +1413,11 @@ export class AssignmentsService {
     };
 
     // Tự động tạo nhận xét (AI) cho học sinh đã có điểm nhưng GV chưa nhận xét
-    const needComment = scored.filter(
-      ({ s, eff }) => s && eff != null && !s.teacherComment && !s.aiComment,
-    );
+    const needComment = withComments
+      ? scored.filter(
+          ({ s, eff }) => s && eff != null && !s.teacherComment && !s.aiComment,
+        )
+      : [];
     if (needComment.length) {
       const gens = needComment.map(({ st, s, eff }) => {
         const perf = perfOf(s);
@@ -1464,14 +1469,15 @@ export class AssignmentsService {
         (s?.teacherComment && String(s.teacherComment).trim()) ||
         (s?.aiComment && String(s.aiComment).trim()) ||
         (s ? fallbackComment(eff) : 'Chưa nộp bài.');
-      rows.push({
+      const row: Record<string, any> = {
         STT: rows.length + 1,
         'Họ và tên': st.fullName || '',
         'Lớp': st.className || '',
         'Điểm': eff != null ? eff : '—',
-        'Nhận xét của GV': comment,
-        'Trạng thái': status,
-      });
+      };
+      if (withComments) row['Nhận xét của GV'] = comment;
+      row['Trạng thái'] = status;
+      rows.push(row);
     }
 
     // ===== Thống kê =====
@@ -1563,7 +1569,9 @@ export class AssignmentsService {
       })
       .join('\n');
 
-    const headers = ['STT', 'Họ và tên', 'Lớp', 'Điểm', 'Nhận xét của GV', 'Trạng thái'];
+    const headers = withComments
+      ? ['STT', 'Họ và tên', 'Lớp', 'Điểm', 'Nhận xét của GV', 'Trạng thái']
+      : ['STT', 'Họ và tên', 'Lớp', 'Điểm', 'Trạng thái'];
     const tex = [
       '\\documentclass[12pt,a4paper]{article}',
       '\\usepackage{vntex}',
@@ -1596,7 +1604,9 @@ export class AssignmentsService {
       '\\end{tikzpicture}',
       '\\end{center}',
       '\\section*{Danh sách chi tiết}',
-      `\\begin{longtable}{|c|p{4.2cm}|c|c|p{6.5cm}|c|}`,
+      withComments
+        ? `\\begin{longtable}{|c|p{4.2cm}|c|c|p{6.5cm}|c|}`
+        : `\\begin{longtable}{|c|p{6cm}|c|c|c|}`,
       '\\hline',
       `${headers.map((h) => `\\textbf{${escapeTex(h)}}`).join(' & ')} \\\\ \\hline`,
       '\\endfirsthead',
@@ -1614,6 +1624,159 @@ export class AssignmentsService {
       '\\end{document}',
     ].join('\n');
 
+    return {
+      buffer: await this.exams.compileRaw(tex),
+      filename: `${baseName}.pdf`,
+      contentType: 'application/pdf',
+    };
+  }
+
+  // Xuất BẢNG ĐIỂM NHIỀU BÀI TẬP chung một bảng xếp hạng (điểm trung bình cộng; chưa nộp = 0)
+  async exportScoresMulti(
+    courseId: string,
+    assignmentIds: string[],
+    teacherId: string,
+    format: string,
+    className: string | undefined,
+    opts: { comments: boolean; sort: boolean },
+  ) {
+    await this.ensureTeacher(courseId, teacherId);
+    const ids = Array.from(new Set(assignmentIds.filter(Boolean)));
+    if (!ids.length) throw new BadRequestException('Chưa chọn bài tập nào');
+    if (ids.length > 30) throw new BadRequestException('Chỉ chọn tối đa 30 bài tập');
+    const found = await this.prisma.assignment.findMany({
+      where: { id: { in: ids }, courseId },
+    });
+    if (found.length !== ids.length) {
+      throw new NotFoundException('Có bài tập không thuộc khóa học này');
+    }
+    // giữ đúng thứ tự giáo viên đã chọn
+    const assignments = ids.map((id) => found.find((a) => a.id === id)!);
+    const course = await this.prisma.course.findUnique({
+      where: { id: courseId },
+      select: { title: true },
+    });
+    const cls = className && className.trim() ? className.trim() : '';
+    const enrollments = await this.prisma.enrollment.findMany({
+      where: { courseId, ...(cls ? { student: { className: cls } } : {}) },
+      include: { student: true },
+      orderBy: { student: { fullName: 'asc' } },
+    });
+    const subs = await this.prisma.assignmentSubmission.findMany({
+      where: { assignmentId: { in: ids } },
+    });
+    await this.syncSubmissionScores(subs);
+    const subMap = new Map<string, any>();
+    for (const s of subs) subMap.set(`${s.assignmentId}|${s.studentId}`, s);
+
+    const r2 = (x: number) => Math.round(x * 100) / 100;
+    const colName = (i: number) => `B${i + 1}`;
+    const people = enrollments.map((en) => {
+      const st = en.student as any;
+      const per = assignments.map((a) => {
+        const s = subMap.get(`${a.id}|${st.id}`);
+        const eff = s ? (s.score ?? s.aiScore) : null;
+        return { s, score: typeof eff === 'number' ? eff : 0, has: eff != null };
+      });
+      const avg = per.reduce((t, p) => t + p.score, 0) / assignments.length;
+      const comment = per
+        .map((p, i) => {
+          const c =
+            (p.s?.teacherComment && String(p.s.teacherComment).trim()) ||
+            (p.s?.aiComment && String(p.s.aiComment).trim()) ||
+            '';
+          return c ? `${colName(i)}: ${c.replace(/\s*\n\s*/g, ' ')}` : '';
+        })
+        .filter(Boolean)
+        .join(' | ');
+      return { st, per, avg, comment };
+    });
+    if (opts.sort) {
+      people.sort((a, b) => {
+        if (b.avg !== a.avg) return b.avg - a.avg;
+        return String(a.st.fullName || '').localeCompare(String(b.st.fullName || ''));
+      });
+    }
+    // Hạng (đồng hạng khi điểm TB bằng nhau) — chỉ khi bật sắp xếp
+    const rankOf: number[] = [];
+    people.forEach((p, i) => {
+      rankOf.push(i > 0 && p.avg === people[i - 1].avg ? rankOf[i - 1] : i + 1);
+    });
+
+    const rows: Record<string, any>[] = people.map((p, i) => {
+      const row: Record<string, any> = {};
+      row[opts.sort ? 'Hạng' : 'STT'] = opts.sort ? rankOf[i] : i + 1;
+      row['Họ và tên'] = p.st.fullName || '';
+      row['Lớp'] = p.st.className || '';
+      assignments.forEach((_, k) => {
+        row[colName(k)] = p.per[k].has ? p.per[k].score : 0;
+      });
+      row['Điểm TB'] = r2(p.avg);
+      if (opts.comments) row['Nhận xét'] = p.comment;
+      return row;
+    });
+    const legend = assignments.map((a, k) => ({
+      'Cột': colName(k),
+      'Bài tập': a.title,
+    }));
+
+    const subtitle = `${course?.title || ''}${cls ? ` — Lớp: ${cls}` : ''} — ${assignments.length} bài tập (${enrollments.length} học sinh)`;
+    const baseName = safeFilename(
+      `bang-diem-tong-hop-${course?.title || 'khoa-hoc'}${cls ? '-' + cls : ''}`,
+    );
+
+    if (format === 'xlsx') {
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Bảng điểm');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(legend), 'Danh sách bài');
+      return {
+        buffer: XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+        filename: `${baseName}.xlsx`,
+        contentType:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      };
+    }
+
+    // PDF: bảng tổng hợp + chú thích tên bài
+    const headers = Object.keys(rows[0] || { STT: 1, 'Họ và tên': '', 'Điểm TB': 0 });
+    const nA = assignments.length;
+    const scoreCols = 'c|'.repeat(nA + 1); // các bài + Điểm TB
+    const colSpec =
+      '|c|p{4cm}|c|' + scoreCols + (opts.comments ? 'p{5cm}|' : '');
+    const head = headers.map((h) => `\\textbf{${escapeTex(h)}}`).join(' & ');
+    const tex = [
+      '\\documentclass[10pt,a4paper,landscape]{article}',
+      '\\usepackage{vntex}',
+      '\\usepackage{amsmath}',
+      '\\usepackage{longtable}',
+      '\\usepackage{geometry}',
+      '\\geometry{margin=1.3cm}',
+      '\\begin{document}',
+      '\\begin{center}',
+      '{\\Large\\bfseries BẢNG ĐIỂM TỔNG HỢP BÀI TẬP VỀ NHÀ} \\\\[4pt]',
+      `\\textit{${escapeTex(subtitle)}}`,
+      '\\end{center}',
+      '\\vspace{4pt}',
+      `\\begin{longtable}{${colSpec}}`,
+      '\\hline',
+      `${head} \\\\ \\hline`,
+      '\\endfirsthead',
+      '\\hline',
+      `${head} \\\\ \\hline`,
+      '\\endhead',
+      '\\hline',
+      '\\endfoot',
+      ...rows.map(
+        (r) => headers.map((h) => escapeTex(String(r[h] ?? ''))).join(' & ') + ' \\\\ \\hline',
+      ),
+      '\\end{longtable}',
+      '\\subsection*{Danh sách bài tập}',
+      '\\begin{tabular}{|c|p{16cm}|}',
+      '\\hline',
+      ...legend.map((l) => `${escapeTex(l['Cột'])} & ${escapeTex(l['Bài tập'])} \\\\ \\hline`),
+      '\\end{tabular}',
+      '\\end{document}',
+    ].join('\n');
     return {
       buffer: await this.exams.compileRaw(tex),
       filename: `${baseName}.pdf`,

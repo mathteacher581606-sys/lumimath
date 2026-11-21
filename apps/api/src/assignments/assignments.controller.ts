@@ -237,6 +237,35 @@ export class AssignmentsController {
     return this.assignments.regradeAssignment(courseId, id, user.id);
   }
 
+  // Xuất bảng điểm nhiều bài tập chung 1 bảng xếp hạng (PDF / Excel)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get('scores/export-multi')
+  async exportScoresMulti(
+    @Param('courseId') courseId: string,
+    @CurrentUser() user: any,
+    @Query('ids') ids: string,
+    @Query('format') format: string,
+    @Query('className') className: string,
+    @Query('comments') comments: string,
+    @Query('sort') sort: string,
+    @Res() res: Response,
+  ) {
+    const f = format === 'xlsx' ? 'xlsx' : 'pdf';
+    const list = String(ids || '').split(',').map((x) => x.trim()).filter(Boolean);
+    const { buffer, filename, contentType } =
+      await this.assignments.exportScoresMulti(courseId, list, user.id, f, className, {
+        comments: comments !== '0',
+        sort: sort !== '0',
+      });
+    res.setHeader('Content-Type', contentType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    res.send(buffer);
+  }
+
   // Xuất bảng điểm của bài tập (PDF / Excel)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)
@@ -247,11 +276,16 @@ export class AssignmentsController {
     @CurrentUser() user: any,
     @Query('format') format: string,
     @Query('className') className: string,
+    @Query('comments') comments: string,
+    @Query('sort') sort: string,
     @Res() res: Response,
   ) {
     const f = format === 'xlsx' ? 'xlsx' : 'pdf';
     const { buffer, filename, contentType } =
-      await this.assignments.exportScores(courseId, id, user.id, f, className);
+      await this.assignments.exportScores(courseId, id, user.id, f, className, {
+        comments: comments !== '0',
+        sort: sort !== '0',
+      });
     res.setHeader('Content-Type', contentType);
     res.setHeader(
       'Content-Disposition',
