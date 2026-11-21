@@ -154,6 +154,33 @@ export default function CourseAssignments() {
   const [multiIds, setMultiIds] = useState<string[]>([]);
   const [multiClass, setMultiClass] = useState('__all__');
   const [multiBusy, setMultiBusy] = useState(false);
+  const [multiWeights, setMultiWeights] = useState<Record<string, string>>({});
+  const [multiFrom, setMultiFrom] = useState('');
+  const [multiTo, setMultiTo] = useState('');
+  const [expMissingZero, setExpMissingZero] = useState(true);
+  const [expMarkLate, setExpMarkLate] = useState(false);
+
+  // Ghi nhớ tuỳ chọn xuất bảng điểm cho lần sau
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('lm_export_opts');
+      if (raw) {
+        const o = JSON.parse(raw);
+        if (typeof o.comments === 'boolean') setExpComments(o.comments);
+        if (typeof o.sort === 'boolean') setExpSort(o.sort);
+        if (typeof o.missingZero === 'boolean') setExpMissingZero(o.missingZero);
+        if (typeof o.markLate === 'boolean') setExpMarkLate(o.markLate);
+      }
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'lm_export_opts',
+        JSON.stringify({ comments: expComments, sort: expSort, missingZero: expMissingZero, markLate: expMarkLate }),
+      );
+    } catch {}
+  }, [expComments, expSort, expMissingZero, expMarkLate]);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -537,6 +564,20 @@ export default function CourseAssignments() {
     setMultiIds((cur) => (cur.indexOf(id) >= 0 ? cur.filter((x) => x !== id) : cur.concat([id])));
   }
 
+  // Chọn các bài có ngày giao trong khoảng [từ, đến]
+  function pickByDate() {
+    const from = multiFrom ? new Date(multiFrom + 'T00:00:00').getTime() : -Infinity;
+    const to = multiTo ? new Date(multiTo + 'T23:59:59').getTime() : Infinity;
+    const picked = (data?.assignments || [])
+      .filter((a: any) => {
+        const t = new Date(a.createdAt).getTime();
+        return t >= from && t <= to;
+      })
+      .sort((a: any, b: any) => (a.createdAt < b.createdAt ? -1 : 1))
+      .map((a: any) => a.id);
+    setMultiIds(picked);
+  }
+
   async function exportMulti(format: 'pdf' | 'xlsx') {
     if (!multiIds.length) {
       alert('Hãy chọn ít nhất 1 bài tập');
@@ -547,7 +588,7 @@ export default function CourseAssignments() {
       const token = localStorage.getItem('token');
       const cls = multiClass === '__all__' ? '' : multiClass;
       const res = await fetch(
-        `/api/courses/${courseId}/assignments/scores/export-multi?format=${format}&ids=${encodeURIComponent(multiIds.join(','))}&comments=${expComments ? 1 : 0}&sort=${expSort ? 1 : 0}${cls ? `&className=${encodeURIComponent(cls)}` : ''}`,
+        `/api/courses/${courseId}/assignments/scores/export-multi?format=${format}&ids=${encodeURIComponent(multiIds.join(','))}&comments=${expComments ? 1 : 0}&sort=${expSort ? 1 : 0}&weights=${encodeURIComponent(multiIds.map((id) => { const w = parseFloat(String(multiWeights[id] || '1').replace(',', '.')); return isFinite(w) && w > 0 ? w : 1; }).join(','))}&missing=${expMissingZero ? 'zero' : 'skip'}&late=${expMarkLate ? 1 : 0}${cls ? `&className=${encodeURIComponent(cls)}` : ''}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
       if (!res.ok) {
@@ -1297,6 +1338,15 @@ export default function CourseAssignments() {
               </button>
               <span style={{ fontSize: 12.5, alignSelf: 'center' }}>Đã chọn: <b>{multiIds.length}</b></span>
             </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
+              Giao từ
+              <input type="date" value={multiFrom} onChange={(e) => setMultiFrom(e.target.value)} />
+              đến
+              <input type="date" value={multiTo} onChange={(e) => setMultiTo(e.target.value)} />
+              <button className="btn btn-outline" style={{ width: 'auto', padding: '4px 10px', fontSize: 12.5 }} onClick={pickByDate}>
+                Chọn theo ngày
+              </button>
+            </div>
             <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid var(--color-rule)', borderRadius: 8, padding: 6 }}>
               {(data?.assignments || [])
                 .slice()
@@ -1305,6 +1355,17 @@ export default function CourseAssignments() {
                   <label key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '5px 6px', fontSize: 13.5, cursor: 'pointer' }}>
                     <input type="checkbox" checked={multiIds.indexOf(a.id) >= 0} onChange={() => toggleMulti(a.id)} />
                     <span style={{ flex: 1 }}>{a.title}</span>
+                    {multiIds.indexOf(a.id) >= 0 && (
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={multiWeights[a.id] ?? '1'}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setMultiWeights((w) => ({ ...w, [a.id]: e.target.value }))}
+                        title="Hệ số của bài này (mặc định 1)"
+                        style={{ width: 44, textAlign: 'center', fontSize: 12.5 }}
+                      />
+                    )}
                     <span style={{ fontSize: 11.5, color: 'var(--color-muted)' }}>
                       {new Date(a.createdAt).toLocaleDateString('vi-VN')}
                     </span>
@@ -1317,6 +1378,12 @@ export default function CourseAssignments() {
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13.5 }}>
                 <input type="checkbox" checked={expSort} onChange={(e) => setExpSort(e.target.checked)} /> Sắp xếp theo điểm TB (có cột Hạng)
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13.5 }} title="Tắt: bài chưa nộp bị bỏ qua khi tính điểm TB">
+                <input type="checkbox" checked={expMissingZero} onChange={(e) => setExpMissingZero(e.target.checked)} /> Chưa nộp tính 0 điểm
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13.5 }}>
+                <input type="checkbox" checked={expMarkLate} onChange={(e) => setExpMarkLate(e.target.checked)} /> Đánh dấu nộp muộn (*)
               </label>
               <select
                 value={multiClass}

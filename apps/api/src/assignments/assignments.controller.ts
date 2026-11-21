@@ -249,14 +249,21 @@ export class AssignmentsController {
     @Query('className') className: string,
     @Query('comments') comments: string,
     @Query('sort') sort: string,
+    @Query('weights') weights: string,
+    @Query('missing') missing: string,
+    @Query('late') late: string,
     @Res() res: Response,
   ) {
     const f = format === 'xlsx' ? 'xlsx' : 'pdf';
+    const wlist = String(weights || '').split(',').map((x) => Number(x));
     const list = String(ids || '').split(',').map((x) => x.trim()).filter(Boolean);
     const { buffer, filename, contentType } =
       await this.assignments.exportScoresMulti(courseId, list, user.id, f, className, {
         comments: comments !== '0',
         sort: sort !== '0',
+        weights: wlist,
+        missingZero: missing !== 'skip',
+        markLate: late === '1',
       });
     res.setHeader('Content-Type', contentType);
     res.setHeader(

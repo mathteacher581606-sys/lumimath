@@ -1631,17 +1631,33 @@ export class AssignmentsService {
     };
   }
 
-  // Xuất BẢNG ĐIỂM NHIỀU BÀI TẬP chung một bảng xếp hạng (điểm trung bình cộng; chưa nộp = 0)
+  // Xuất BẢNG ĐIỂM NHIỀU BÀI TẬP chung một bảng xếp hạng (điểm trung bình, có hệ số)
   async exportScoresMulti(
     courseId: string,
     assignmentIds: string[],
     teacherId: string,
     format: string,
     className: string | undefined,
-    opts: { comments: boolean; sort: boolean },
+    opts: {
+      comments: boolean;
+      sort: boolean;
+      weights?: number[]; // hệ số theo đúng thứ tự assignmentIds (mặc định 1)
+      missingZero?: boolean; // true: chưa nộp = 0 điểm; false: bỏ qua bài đó khi tính TB
+      markLate?: boolean; // đánh dấu * cho bài nộp muộn
+    },
   ) {
+    const missingZero = opts.missingZero !== false;
+    const markLate = !!opts.markLate;
     await this.ensureTeacher(courseId, teacherId);
-    const ids = Array.from(new Set(assignmentIds.filter(Boolean)));
+    // giữ thứ tự chọn, khử trùng lặp nhưng vẫn giữ hệ số tương ứng
+    const ids: string[] = [];
+    const wts: number[] = [];
+    assignmentIds.forEach((id, i) => {
+      if (!id || ids.indexOf(id) >= 0) return;
+      ids.push(id);
+      const w = opts.weights ? Number(opts.weights[i]) : 1;
+      wts.push(isFinite(w) && w > 0 && w <= 100 ? w : 1);
+    });
     if (!ids.length) throw new BadRequestException('Chưa chọn bài tập nào');
     if (ids.length > 30) throw new BadRequestException('Chỉ chọn tối đa 30 bài tập');
     const found = await this.prisma.assignment.findMany({
@@ -1650,7 +1666,6 @@ export class AssignmentsService {
     if (found.length !== ids.length) {
       throw new NotFoundException('Có bài tập không thuộc khóa học này');
     }
-    // giữ đúng thứ tự giáo viên đã chọn
     const assignments = ids.map((id) => found.find((a) => a.id === id)!);
     const course = await this.prisma.course.findUnique({
       where: { id: courseId },
@@ -1671,14 +1686,32 @@ export class AssignmentsService {
 
     const r2 = (x: number) => Math.round(x * 100) / 100;
     const colName = (i: number) => `B${i + 1}`;
+    const nA = assignments.length;
+    const hasWeights = wts.some((w) => w !== 1);
+
     const people = enrollments.map((en) => {
       const st = en.student as any;
       const per = assignments.map((a) => {
         const s = subMap.get(`${a.id}|${st.id}`);
         const eff = s ? (s.score ?? s.aiScore) : null;
-        return { s, score: typeof eff === 'number' ? eff : 0, has: eff != null };
+        const has = typeof eff === 'number';
+        let late = false;
+        if (s && s.submittedAt) {
+          const due = this.effectiveDueDate(a as any, st.className || null);
+          late = !!due && new Date(s.submittedAt).getTime() > due.getTime();
+        }
+        return { s, score: has ? (eff as number) : 0, has, late };
       });
-      const avg = per.reduce((t, p) => t + p.score, 0) / assignments.length;
+      let num = 0;
+      let den = 0;
+      per.forEach((p, i) => {
+        if (p.has || missingZero) {
+          num += wts[i] * p.score;
+          den += wts[i];
+        }
+      });
+      const avg = den > 0 ? num / den : 0;
+      const submitted = per.filter((p) => p.has).length;
       const comment = per
         .map((p, i) => {
           const c =
@@ -1689,7 +1722,7 @@ export class AssignmentsService {
         })
         .filter(Boolean)
         .join(' | ');
-      return { st, per, avg, comment };
+      return { st, per, avg, submitted, comment };
     });
     if (opts.sort) {
       people.sort((a, b) => {
@@ -1697,7 +1730,6 @@ export class AssignmentsService {
         return String(a.st.fullName || '').localeCompare(String(b.st.fullName || ''));
       });
     }
-    // Hạng (đồng hạng khi điểm TB bằng nhau) — chỉ khi bật sắp xếp
     const rankOf: number[] = [];
     people.forEach((p, i) => {
       rankOf.push(i > 0 && p.avg === people[i - 1].avg ? rankOf[i - 1] : i + 1);
@@ -1709,26 +1741,87 @@ export class AssignmentsService {
       row['Họ và tên'] = p.st.fullName || '';
       row['Lớp'] = p.st.className || '';
       assignments.forEach((_, k) => {
-        row[colName(k)] = p.per[k].has ? p.per[k].score : 0;
+        const c = p.per[k];
+        if (!c.has) row[colName(k)] = missingZero ? 0 : '—';
+        else row[colName(k)] = markLate && c.late ? `${c.score}*` : c.score;
       });
+      row['Đã nộp'] = `${p.submitted}/${nA}`;
       row['Điểm TB'] = r2(p.avg);
       if (opts.comments) row['Nhận xét'] = p.comment;
       return row;
     });
-    const legend = assignments.map((a, k) => ({
-      'Cột': colName(k),
-      'Bài tập': a.title,
-    }));
 
-    const subtitle = `${course?.title || ''}${cls ? ` — Lớp: ${cls}` : ''} — ${assignments.length} bài tập (${enrollments.length} học sinh)`;
+    // ===== Thống kê =====
+    const avgs = people.map((p) => p.avg).sort((a, b) => a - b);
+    const n = avgs.length;
+    const quantile = (arr: number[], pr: number) => {
+      if (!arr.length) return 0;
+      const idx = (arr.length - 1) * pr;
+      const lo = Math.floor(idx);
+      const hi = Math.ceil(idx);
+      return r2(arr[lo] + (arr[hi] - arr[lo]) * (idx - lo));
+    };
+    const mean = n ? r2(avgs.reduce((t, x) => t + x, 0) / n) : 0;
+    const variance = n ? r2(avgs.reduce((t, x) => t + (x - mean) ** 2, 0) / n) : 0;
+    const statRows: Record<string, any>[] = [
+      { 'Chỉ số': 'Số học sinh', 'Giá trị': n },
+      { 'Chỉ số': 'Điểm TB chung (của điểm TB)', 'Giá trị': mean },
+      { 'Chỉ số': 'Trung vị', 'Giá trị': quantile(avgs, 0.5) },
+      { 'Chỉ số': 'Tứ phân vị Q1', 'Giá trị': quantile(avgs, 0.25) },
+      { 'Chỉ số': 'Tứ phân vị Q3', 'Giá trị': quantile(avgs, 0.75) },
+      { 'Chỉ số': 'Độ lệch chuẩn', 'Giá trị': r2(Math.sqrt(variance)) },
+      { 'Chỉ số': 'Cao nhất', 'Giá trị': n ? r2(avgs[n - 1]) : 0 },
+      { 'Chỉ số': 'Thấp nhất', 'Giá trị': n ? r2(avgs[0]) : 0 },
+      { 'Chỉ số': 'Học sinh nộp đủ mọi bài', 'Giá trị': people.filter((p) => p.submitted === nA).length },
+      { 'Chỉ số': 'Học sinh chưa nộp bài nào', 'Giá trị': people.filter((p) => p.submitted === 0).length },
+    ];
+    // thống kê từng bài (trên học sinh đã nộp)
+    const perAssign = assignments.map((a, k) => {
+      const sc = people.filter((p) => p.per[k].has).map((p) => p.per[k].score);
+      return {
+        'Cột': colName(k),
+        'Bài tập': a.title,
+        'Hệ số': wts[k],
+        'Đã nộp': sc.length,
+        'Chưa nộp': n - sc.length,
+        'Điểm TB bài': sc.length ? r2(sc.reduce((t, x) => t + x, 0) / sc.length) : '—',
+      };
+    });
+    const bins = Array.from({ length: 10 }, (_, i) => ({
+      label: `${i}-${i + 1}`,
+      lo: i,
+      hi: i === 9 ? 10.01 : i + 1,
+      count: 0,
+    }));
+    for (const v of avgs) {
+      const bi = bins.find((x) => v >= x.lo && v < x.hi);
+      if (bi) bi.count++;
+    }
+
+    const subtitle = `${course?.title || ''}${cls ? ` — Lớp: ${cls}` : ''} — ${nA} bài tập (${enrollments.length} học sinh)`;
     const baseName = safeFilename(
       `bang-diem-tong-hop-${course?.title || 'khoa-hoc'}${cls ? '-' + cls : ''}`,
     );
+    const note =
+      `Điểm TB = ${hasWeights ? 'trung bình có hệ số' : 'trung bình cộng'}; ` +
+      (missingZero ? 'bài chưa nộp tính 0 điểm' : 'bài chưa nộp được bỏ qua') +
+      (markLate ? '; dấu * = nộp muộn' : '') +
+      '.';
 
     if (format === 'xlsx') {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Bảng điểm');
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(legend), 'Danh sách bài');
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(statRows.concat([{ 'Chỉ số': 'Ghi chú', 'Giá trị': note }])),
+        'Thống kê',
+      );
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(perAssign), 'Từng bài');
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(bins.map((x) => ({ 'Khoảng điểm TB': x.label, 'Số học sinh': x.count }))),
+        'Phổ điểm',
+      );
       return {
         buffer: XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
         filename: `${baseName}.xlsx`,
@@ -1737,13 +1830,13 @@ export class AssignmentsService {
       };
     }
 
-    // PDF: bảng tổng hợp + chú thích tên bài
+    // PDF
     const headers = Object.keys(rows[0] || { STT: 1, 'Họ và tên': '', 'Điểm TB': 0 });
-    const nA = assignments.length;
-    const scoreCols = 'c|'.repeat(nA + 1); // các bài + Điểm TB
     const colSpec =
-      '|c|p{4cm}|c|' + scoreCols + (opts.comments ? 'p{5cm}|' : '');
+      '|c|p{4cm}|c|' + 'c|'.repeat(nA) + 'c|c|' + (opts.comments ? 'p{5cm}|' : '');
     const head = headers.map((h) => `\\textbf{${escapeTex(h)}}`).join(' & ');
+    const statLine = (a: string, v: any, b: string, w: any) =>
+      `${escapeTex(a)} & ${escapeTex(String(v))} & ${escapeTex(b)} & ${escapeTex(String(w))} \\\\ \\hline`;
     const tex = [
       '\\documentclass[10pt,a4paper,landscape]{article}',
       '\\usepackage{vntex}',
@@ -1756,6 +1849,7 @@ export class AssignmentsService {
       '{\\Large\\bfseries BẢNG ĐIỂM TỔNG HỢP BÀI TẬP VỀ NHÀ} \\\\[4pt]',
       `\\textit{${escapeTex(subtitle)}}`,
       '\\end{center}',
+      `{\\small ${escapeTex(note)}}`,
       '\\vspace{4pt}',
       `\\begin{longtable}{${colSpec}}`,
       '\\hline',
@@ -1770,11 +1864,24 @@ export class AssignmentsService {
         (r) => headers.map((h) => escapeTex(String(r[h] ?? ''))).join(' & ') + ' \\\\ \\hline',
       ),
       '\\end{longtable}',
-      '\\subsection*{Danh sách bài tập}',
-      '\\begin{tabular}{|c|p{16cm}|}',
+      '\\subsection*{Thống kê điểm trung bình}',
+      '\\begin{tabular}{|l|c|l|c|}',
       '\\hline',
-      ...legend.map((l) => `${escapeTex(l['Cột'])} & ${escapeTex(l['Bài tập'])} \\\\ \\hline`),
+      statLine('Số học sinh', n, 'Điểm TB chung', mean),
+      statLine('Trung vị', statRows[2]['Giá trị'], 'Độ lệch chuẩn', statRows[5]['Giá trị']),
+      statLine('Q1', statRows[3]['Giá trị'], 'Q3', statRows[4]['Giá trị']),
+      statLine('Cao nhất', statRows[6]['Giá trị'], 'Thấp nhất', statRows[7]['Giá trị']),
+      statLine('Nộp đủ mọi bài', statRows[8]['Giá trị'], 'Chưa nộp bài nào', statRows[9]['Giá trị']),
       '\\end{tabular}',
+      '\\subsection*{Danh sách bài tập}',
+      '\\begin{longtable}{|c|p{12cm}|c|c|c|c|}',
+      '\\hline',
+      '\\textbf{Cột} & \\textbf{Bài tập} & \\textbf{Hệ số} & \\textbf{Đã nộp} & \\textbf{Chưa nộp} & \\textbf{TB bài} \\\\ \\hline',
+      ...perAssign.map(
+        (l) =>
+          `${escapeTex(l['Cột'])} & ${escapeTex(l['Bài tập'])} & ${l['Hệ số']} & ${l['Đã nộp']} & ${l['Chưa nộp']} & ${escapeTex(String(l['Điểm TB bài']))} \\\\ \\hline`,
+      ),
+      '\\end{longtable}',
       '\\end{document}',
     ].join('\n');
     return {
