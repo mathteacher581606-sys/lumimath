@@ -7,10 +7,8 @@ import { apiFetch } from '@/lib/api';
 import { formatAnswer } from '@/lib/answer';
 import BackButton from '@/components/BackButton';
 import LatexRenderer from '@/components/LatexRenderer';
-import AnnotateBoard from '@/components/AnnotateBoard';
-import dynamic from 'next/dynamic';
-
-const PdfAnnotator = dynamic(() => import('@/components/PdfAnnotator'), { ssr: false });
+import GradingBoard, { type BoardMap } from '@/components/GradingBoard';
+import { usePdfDoc } from '@/lib/pdf-doc';
 
 type Stroke = {
   tool: 'pen' | 'eraser' | 'highlight';
@@ -18,6 +16,43 @@ type Stroke = {
   size: number;
   points: { x: number; y: number }[];
 };
+
+function PdfInline({
+  url,
+  value,
+  templates,
+  onChange,
+  onAutosave,
+  onScoreNet,
+}: {
+  url: string;
+  value: BoardMap;
+  templates: { id: string; text: string }[];
+  onChange: (m: BoardMap) => void;
+  onAutosave: (m: BoardMap) => Promise<void>;
+  onScoreNet: (n: number) => void;
+}) {
+  const { doc, error, loading } = usePdfDoc(url);
+  if (error) {
+    return <div style={{ padding: 24, color: 'var(--color-danger)' }}>Không mở được PDF: {error}</div>;
+  }
+  if (loading || !doc) {
+    return <div style={{ padding: 24, color: 'var(--color-muted)' }}>Đang mở PDF…</div>;
+  }
+  const pages = doc.pages.map((p) => ({ key: String(p.pageNo), kind: 'pdf' as const, doc, pageNo: p.pageNo, w: p.w, h: p.h }));
+  return (
+    <GradingBoard
+      inline
+      height="82vh"
+      pages={pages}
+      value={value}
+      templates={templates}
+      onChange={onChange}
+      onAutosave={onAutosave}
+      onScoreNet={onScoreNet}
+    />
+  );
+}
 
 export default function GradeAssignmentPage() {
   const params = useParams();
@@ -130,6 +165,44 @@ export default function GradeAssignmentPage() {
   const annoImgRef = useRef<HTMLImageElement>(null);
   const annoDrawing = useRef(false);
   const annoCurrent = useRef<Stroke | null>(null);
+
+  // ===== Lưu nét chấm tự động + dấu điểm (bảng chấm GradingBoard) =====
+  // Mỗi bài nộp có bản annotations riêng (khoá theo id) để lưu nền không lẫn sang bài khác khi đổi học sinh.
+  const annoRawBySub = useRef<Record<string, any>>({});
+  const stampApplied = useRef<Record<string, number>>({});
+
+  async function boardAutosave(sid: string, key: 'boardSnapshots' | 'pdfBoard', map: Record<string, any[]>) {
+    const base = annoRawBySub.current[sid] || {};
+    const next = { ...base, [key]: { ...(base[key] || {}), ...map } };
+    annoRawBySub.current[sid] = next;
+    await apiFetch(
+      `/courses/${courseId}/assignments/${assignmentId}/submissions/${sid}/annotations`,
+      { method: 'POST', body: JSON.stringify({ annotations: next }) },
+    );
+  }
+
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+
+  // Tổng dấu điểm thay đổi → cộng/trừ phần chênh vào ô điểm
+  function applyNet(group: string, net: number, apply: (delta: number) => void) {
+    const prev = stampApplied.current[group] || 0;
+    const delta = round2(net - prev);
+    stampApplied.current = { ...stampApplied.current, [group]: net };
+    if (delta) apply(delta);
+  }
+  function applyToScore(d: number) {
+    setScore((p) => String(Math.max(0, round2((Number(p) || 0) + d))));
+  }
+  function applyToEssay(it: any, d: number) {
+    if (!it) return;
+    setEssayScores((p) => {
+      const arr = [...(p[it.itemId] || [0])];
+      const others = arr.slice(1).reduce((a, b) => a + (Number(b) || 0), 0);
+      const max = it.maxScore != null ? Number(it.maxScore) : Infinity;
+      arr[0] = Math.min(Math.max(0, round2((Number(arr[0]) || 0) + d)), Math.max(0, max - others));
+      return { ...p, [it.itemId]: arr };
+    });
+  }
 
   async function saveAnnotatedImage(originalUrl: string, dataUrl: string) {
     try {
@@ -412,6 +485,10 @@ export default function GradeAssignmentPage() {
     setPdfBoard((sub?.annotations?.pdfBoard as any) || {});
     setAnnotatedImages((sub?.annotations?.annotatedImages as any) || {});
     setPdfOpen(false);
+    if (sub) {
+      annoRawBySub.current[sub.id] = sub.annotations ? { ...(sub.annotations as any) } : {};
+      stampApplied.current = { ...(((sub.annotations as any)?.stampApplied as Record<string, number>) || {}) };
+    }
   }
 
   useEffect(() => {
@@ -519,10 +596,12 @@ export default function GradeAssignmentPage() {
           method: 'POST',
           body: JSON.stringify({
             annotations: {
+              ...(annoRawBySub.current[submission.id] || {}),
               strokes,
               essayStrokes: annoStrokes,
               boardSnapshots: tldrawSnapshots,
               pdfBoard,
+              stampApplied: stampApplied.current,
             },
           }),
         },
@@ -808,9 +887,9 @@ export default function GradeAssignmentPage() {
                                       ✓ đã chấm
                                     </span>
                                   )}
-                                  {(annoStrokes[u] || []).length > 0 && (
+                                  {(tldrawSnapshots[u] || []).length > 0 && (
                                     <span style={{ position: 'absolute', top: 4, right: 4, background: 'var(--color-danger)', color: '#fff', fontSize: 10, padding: '1px 6px', borderRadius: 8 }}>
-                                      ✏️ {(annoStrokes[u] || []).length}
+                                      ✏️ {(tldrawSnapshots[u] || []).length}
                                     </span>
                                   )}
                                 </div>
@@ -1078,126 +1157,57 @@ export default function GradeAssignmentPage() {
               </div>
             )}
 
-            {/* ===== TRÌNH XEM + CHẤM BÀI LÀM (ảnh hoặc PDF) ===== */}
+            {/* ===== TRÌNH XEM + CHẤM BÀI LÀM (ảnh hoặc PDF) — bảng chấm thống nhất ===== */}
             {(() => {
               const imgs: string[] = submission?.imageUrls || [];
               const hasPdf = !!submission?.pdfUrl;
               const both = imgs.length > 0 && hasPdf;
-              // Tab Ảnh / PDF khi học sinh nộp cả hai
               const tab: 'images' | 'pdf' = !hasPdf ? 'images' : imgs.length === 0 ? 'pdf' : viewMode;
-              if (both) {
-                const cur = imgs[Math.min(imgIndex, imgs.length - 1)];
+              if (!submission || (!imgs.length && !hasPdf)) {
                 return (
-                  <div>
+                  <div style={{ padding: 20, color: 'var(--color-muted)', textAlign: 'center' }}>
+                    Bài nộp không có ảnh hoặc PDF.
+                  </div>
+                );
+              }
+              const sid = submission.id;
+              const picked: Record<string, any[]> = {};
+              for (const u of imgs) picked[u] = (tldrawSnapshots[u] as any) || [];
+              return (
+                <div>
+                  {both && (
                     <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                      <button
-                        className={`lm-filter-btn${tab === 'images' ? ' on' : ''}`}
-                        style={{ padding: '6px 16px', fontSize: 13, fontWeight: 800 }}
-                        onClick={() => setViewMode('images')}
-                      >
-                        🖼 Ảnh bài làm ({imgs.length})
+                      <button className={`lm-filter-btn${tab === 'images' ? ' on' : ''}`} style={{ padding: '6px 16px', fontSize: 13, fontWeight: 800 }} onClick={() => setViewMode('images')}>
+                        Ảnh bài làm ({imgs.length})
                       </button>
-                      <button
-                        className={`lm-filter-btn${tab === 'pdf' ? ' on' : ''}`}
-                        style={{ padding: '6px 16px', fontSize: 13, fontWeight: 800 }}
-                        onClick={() => {
-                          setViewMode('pdf');
-                          setPdfOpen(true); // mở ngay trình chấm PDF
-                        }}
-                      >
-                        📄 PDF bài làm
+                      <button className={`lm-filter-btn${tab === 'pdf' ? ' on' : ''}`} style={{ padding: '6px 16px', fontSize: 13, fontWeight: 800 }} onClick={() => setViewMode('pdf')}>
+                        PDF bài làm
                       </button>
                     </div>
-                    {tab === 'images' ? (
-                      <div>
-                        {imgs.length > 1 && (
-                          <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: '#ddd' }}>Ảnh:</span>
-                            {imgs.map((u, i) => (
-                              <button
-                                key={i}
-                                className={`lm-filter-btn${imgIndex === i ? ' on' : ''}`}
-                                style={{ padding: '4px 10px', fontSize: 12 }}
-                                onClick={() => setImgIndex(i)}
-                              >
-                                Ảnh {i + 1}
-                                {(tldrawSnapshots[u] || []).length > 0 ? ' ✏️' : ''}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        <AnnotateBoard
-                          inline
-                          backgroundUrl={cur}
-                          snapshot={tldrawSnapshots[cur]}
-                          onSave={(els) => persistTldraw(cur, els)}
-                        />
-                      </div>
-                    ) : (
-                      <div style={{ padding: 24, textAlign: 'center', background: '#26292f', borderRadius: 10 }}>
-                        <p style={{ color: '#ddd', marginBottom: 12, fontSize: 13.5 }}>
-                          📄 Bài nộp kèm PDF — bấm để mở trình chấm PDF (vẽ trên từng trang)
-                        </p>
-                        <button
-                          className="btn-lm amber"
-                          style={{ width: 'auto', padding: '9px 22px', fontSize: 13.5, fontWeight: 800 }}
-                          onClick={() => setPdfOpen(true)}
-                        >
-                          🖊 Mở PDF để chấm (bút, highlight, tẩy…)
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              }
-              const cur = imgs.length ? imgs[Math.min(imgIndex, imgs.length - 1)] : null;
-              if (cur) {
-                return (
-                  <div>
-                    {imgs.length > 1 && (
-                      <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: '#ddd' }}>Ảnh:</span>
-                        {imgs.map((u, i) => (
-                          <button
-                            key={i}
-                            className={`lm-filter-btn${imgIndex === i ? ' on' : ''}`}
-                            style={{ padding: '4px 10px', fontSize: 12 }}
-                            onClick={() => setImgIndex(i)}
-                          >
-                            Ảnh {i + 1}
-                            {(tldrawSnapshots[u] || []).length > 0 ? ' ✏️' : ''}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <AnnotateBoard
+                  )}
+                  {tab === 'images' ? (
+                    <GradingBoard
+                      key={sid + ':img'}
                       inline
-                      backgroundUrl={cur}
-                      snapshot={tldrawSnapshots[cur]}
-                      onSave={(els) => persistTldraw(cur, els)}
+                      height="82vh"
+                      pages={imgs.map((u) => ({ key: u, kind: 'img' as const, url: u }))}
+                      value={picked}
+                      templates={templates}
+                      onChange={(m) => setTldrawSnapshots((p) => ({ ...p, ...m }))}
+                      onAutosave={(m) => boardAutosave(sid, 'boardSnapshots', m)}
+                      onScoreNet={(n) => applyNet('img', n, applyToScore)}
                     />
-                  </div>
-                );
-              }
-              if (hasPdf) {
-                return (
-                  <div style={{ padding: 24, textAlign: 'center', background: '#26292f', borderRadius: 10 }}>
-                    <p style={{ color: '#ddd', marginBottom: 12, fontSize: 13.5 }}>
-                      📄 Bài nộp là PDF — mở trình chấm PDF để vẽ trên từng trang
-                    </p>
-                    <button
-                      className="btn-lm amber"
-                      style={{ width: 'auto', padding: '9px 22px', fontSize: 13.5, fontWeight: 800 }}
-                      onClick={() => setPdfOpen(true)}
-                    >
-                      🖊 Mở PDF để chấm (bút, highlight, tẩy…)
-                    </button>
-                  </div>
-                );
-              }
-              return (
-                <div style={{ padding: 20, color: 'var(--color-muted)', textAlign: 'center' }}>
-                  Bài nộp không có ảnh hoặc PDF.
+                  ) : (
+                    <PdfInline
+                      key={sid + ':pdf'}
+                      url={submission.pdfUrl}
+                      value={pdfBoard as any}
+                      templates={templates}
+                      onChange={(m) => setPdfBoard((p) => ({ ...p, ...m }))}
+                      onAutosave={(m) => boardAutosave(sid, 'pdfBoard', m)}
+                      onScoreNet={(n) => applyNet('pdf', n, applyToScore)}
+                    />
+                  )}
                 </div>
               );
             })()}
@@ -1607,119 +1617,24 @@ export default function GradeAssignmentPage() {
         </div>
       </div>
 
-      {/* ===== MODAL VẼ LÊN PDF ===== */}
-      {pdfOpen && submission?.pdfUrl && (
-        <PdfAnnotator
-          pdfUrl={submission.pdfUrl}
-          snapshot={pdfBoard}
-          onSave={(map) => persistPdfBoard(map)}
-          onClose={() => setPdfOpen(false)}
-        />
-      )}
-
-      {/* ===== MODAL CHẤM TRỰC TIẾP TRÊN ẢNH TỰ LUẬN ===== */}
-      {annoImage && useTldraw && (
-        <AnnotateBoard
-          backgroundUrl={annoImage}
-          snapshot={tldrawSnapshots[annoImage]}
-          onSave={(els) => persistTldraw(annoImage, els)}
-          onClose={() => setAnnoImage(null)}
-        />
-      )}
-      {annoImage && !useTldraw && (
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(20,16,12,0.82)', zIndex: 90, display: 'flex', flexDirection: 'column', padding: 18 }}
-        >
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-            {([
-              ['pen', '✏️ Bút'],
-              ['eraser', '🧽 Tẩy'],
-              ['highlight', '🖍 Highlight'],
-            ] as const).map(([t, label]) => (
-              <button
-                key={t}
-                onClick={() => setTool(t)}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: 8,
-                  border: 'none',
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  background: tool === t ? 'var(--lm-amber)' : 'var(--color-surface)',
-                  color: tool === t ? '#fff' : 'var(--color-ink)',
-                }}
-              >
-                {label}
-              </button>
-            ))}
-            <label style={{ fontSize: 12, color: '#fff', display: 'flex', alignItems: 'center', gap: 4 }}>
-              Màu
-              <input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: 30, height: 24, border: 'none', background: 'none' }} />
-            </label>
-            <label style={{ fontSize: 12, color: '#fff', display: 'flex', alignItems: 'center', gap: 4 }}>
-              Cỡ
-              <input type="range" min={1} max={12} value={size} onChange={(e) => setSize(Number(e.target.value))} style={{ width: 70 }} />
-            </label>
-            <span style={{ flex: 1 }} />
-            <button
-              onClick={() => setUseTldraw(true)}
-              style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--color-surface)', cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}
-              title="Chuyển sang bảng vẽ tldraw (nhiều công cụ hơn)"
-            >
-              🎨 Bảng vẽ pro
-            </button>
-            <button onClick={annoUndo} style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--color-surface)', cursor: 'pointer', fontSize: 14 }}>↶</button>
-            <button onClick={annoRedoFn} style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--color-surface)', cursor: 'pointer', fontSize: 14 }}>↷</button>
-            <button
-              onClick={() => {
-                if (confirm('Xóa hết nét vẽ trên ảnh này?')) {
-                  setAnnoStrokes((p) => ({ ...p, [annoImage]: [] }));
-                  setAnnoRedo((p) => ({ ...p, [annoImage]: [] }));
-                  setTimeout(annoRedraw, 20);
-                }
-              }}
-              style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--color-danger-wash)', cursor: 'pointer', fontSize: 13 }}
-            >
-              🗑 Xóa nét
-            </button>
-            <button
-              onClick={() => {
-                setAnnoImage(null);
-                showToast('✅ Đã giữ nét vẽ — bấm "💾 Lưu dữ liệu" để lưu cho học sinh');
-              }}
-              style={{ padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--lm-maroon)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
-            >
-              ✅ Xong
-            </button>
-          </div>
-          <div style={{ flex: 1, overflow: 'auto', textAlign: 'center' }}>
-            <div style={{ position: 'relative', display: 'inline-block', background: '#22242a', borderRadius: 10, padding: 8 }}>
-              <img
-                ref={annoImgRef}
-                src={annoImage}
-                alt="Bài làm"
-                style={{ display: 'block', maxWidth: 'min(1100px, 94vw)', borderRadius: 6 }}
-                onLoad={() => setTimeout(annoRedraw, 50)}
-              />
-              <canvas
-                ref={annoCanvasRef}
-                style={{
-                  position: 'absolute',
-                  top: 8,
-                  left: 8,
-                  touchAction: 'none',
-                  cursor: tool === 'eraser' ? 'cell' : 'crosshair',
-                }}
-                onPointerDown={annoDown}
-                onPointerMove={annoMove}
-                onPointerUp={annoUp}
-                onPointerLeave={annoUp}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ===== BẢNG CHẤM TRỰC TIẾP TRÊN ẢNH TỰ LUẬN (đề thi) ===== */}
+      {annoImage && submission && (() => {
+        const sid = submission.id;
+        const it: any = (examReview?.results || []).find((r: any) => r.type === 'ESSAY' && (r.images || []).includes(annoImage));
+        return (
+          <GradingBoard
+            key={sid + ':' + annoImage}
+            title={it ? 'Chấm ảnh bài tự luận' : 'Chấm trực tiếp trên ảnh bài làm'}
+            pages={[{ key: annoImage, kind: 'img' as const, url: annoImage }]}
+            value={{ [annoImage]: (tldrawSnapshots[annoImage] as any) || [] }}
+            templates={templates}
+            onChange={(m) => setTldrawSnapshots((p) => ({ ...p, ...m }))}
+            onAutosave={(m) => boardAutosave(sid, 'boardSnapshots', m)}
+            onScoreNet={(n) => applyNet('item:' + (it ? it.itemId : annoImage), n, (d) => applyToEssay(it, d))}
+            onClose={() => setAnnoImage(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
