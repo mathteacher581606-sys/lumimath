@@ -666,6 +666,23 @@ export class ExamsController {
     res.send(r.buffer);
   }
 
+  // Trộn đề nhiều mã đề → file .zip (đề từng mã + đáp án + Excel bảng đáp án)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post(':id/variants')
+  async exportVariants(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() body: any,
+    @Res() res: Response,
+  ) {
+    this.rateLimit(user, 30);
+    const { buffer, filename } = await this.examsService.exportVariants(user.id, id, body || {});
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.send(buffer);
+  }
+
   // Kiểm tra LaTeX toàn đề: chỉ ra câu nào lỗi (không tải PDF)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)

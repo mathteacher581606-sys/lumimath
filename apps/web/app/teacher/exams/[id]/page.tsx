@@ -138,6 +138,19 @@ export default function ExamDetailPage() {
   // Báo cáo LaTeX: câu lỗi / đã tự sửa (từ PDF đề hoặc nút Kiểm tra LaTeX)
   const [texReport, setTexReport] = useState<any>(null);
   const [checking, setChecking] = useState(false);
+  // Trộn đề nhiều mã
+  const [mixOpen, setMixOpen] = useState(false);
+  const [mixBusy, setMixBusy] = useState(false);
+  const [mix, setMix] = useState({
+    count: 4,
+    startCode: '101',
+    shuffleQuestions: true,
+    shuffleOptions: true,
+    shuffleTF: false,
+    docx: true,
+    pdf: false,
+    tex: false,
+  });
   const [bankQuestions, setBankQuestions] = useState<any[]>([]);
   // Câu đang được sửa trực tiếp trong đề
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -372,6 +385,47 @@ export default function ExamDetailPage() {
     };
   }
 
+  async function exportVariants() {
+    const formats = (['docx', 'pdf', 'tex'] as const).filter((f) => mix[f]);
+    if (!formats.length) {
+      alert('Chọn ít nhất một định dạng (Word, PDF hoặc .tex)');
+      return;
+    }
+    setMixBusy(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/exams/${examId}/variants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          count: mix.count,
+          startCode: mix.startCode,
+          shuffleQuestions: mix.shuffleQuestions,
+          shuffleOptions: mix.shuffleOptions,
+          shuffleTF: mix.shuffleTF,
+          formats,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(String(err.message || 'Trộn đề thất bại').slice(-400));
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tron-de-${mix.startCode}.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      setMixOpen(false);
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setMixBusy(false);
+    }
+  }
+
   async function checkLatex() {
     setChecking(true);
     try {
@@ -418,6 +472,14 @@ export default function ExamDetailPage() {
             title="Biên dịch thử toàn đề, chỉ ra đúng câu nào lỗi LaTeX"
           >
             {checking ? 'Đang kiểm tra…' : 'Kiểm tra LaTeX'}
+          </button>
+          <button
+            className="btn btn-outline"
+            style={{ width: 'auto', padding: '8px 14px', fontSize: 13 }}
+            onClick={() => setMixOpen(true)}
+            title="Tạo nhiều mã đề: đảo câu, đảo phương án, kèm bảng đáp án các mã"
+          >
+            Trộn đề
           </button>
           <button className="btn btn-outline" style={{ width: 'auto', padding: '8px 14px', fontSize: 13 }} onClick={downloadUrl(`/api/exams/${examId}/answers-pdf`, 'dap_an.pdf')}>
             PDF đáp án
@@ -527,6 +589,78 @@ export default function ExamDetailPage() {
           </div>
         )}
       </div>
+
+      {mixOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'color-mix(in oklch, var(--color-ink) 45%, transparent)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000,
+            padding: 20,
+          }}
+          onClick={() => !mixBusy && setMixOpen(false)}
+        >
+          <div
+            className="card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Trộn đề nhiều mã đề"
+            style={{ width: '100%', maxWidth: 520, padding: 22 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <strong style={{ fontSize: 17 }}>Trộn đề nhiều mã đề</strong>
+            <p style={{ fontSize: 13, color: 'var(--color-muted)', margin: '6px 0 14px' }}>
+              Mỗi mã đề đảo câu trong từng phần; phương án kiểu “Cả A và B”, “Tất cả đều đúng” được giữ nguyên thứ tự.
+              Tải về 1 file .zip gồm đề từng mã, đáp án từng mã và Excel bảng đáp án các mã.
+            </p>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+              <label style={{ fontSize: 13 }}>
+                Số mã đề
+                <input
+                  type="number"
+                  min={1}
+                  max={mix.pdf ? 12 : 24}
+                  value={mix.count}
+                  onChange={(e) => setMix({ ...mix, count: Math.max(1, Math.min(mix.pdf ? 12 : 24, Number(e.target.value) || 1)) })}
+                  style={{ display: 'block', width: 100, marginTop: 4 }}
+                />
+              </label>
+              <label style={{ fontSize: 13 }}>
+                Mã bắt đầu
+                <input
+                  type="text"
+                  value={mix.startCode}
+                  onChange={(e) => setMix({ ...mix, startCode: e.target.value.replace(/[^A-Za-z0-9]/g, '').slice(0, 6) })}
+                  style={{ display: 'block', width: 100, marginTop: 4 }}
+                />
+              </label>
+            </div>
+            <div style={{ display: 'grid', gap: 6, fontSize: 13.5, marginBottom: 12 }}>
+              <label><input type="checkbox" checked={mix.shuffleQuestions} onChange={(e) => setMix({ ...mix, shuffleQuestions: e.target.checked })} /> Đảo thứ tự câu trong từng phần</label>
+              <label><input type="checkbox" checked={mix.shuffleOptions} onChange={(e) => setMix({ ...mix, shuffleOptions: e.target.checked })} /> Đảo phương án A, B, C, D</label>
+              <label><input type="checkbox" checked={mix.shuffleTF} onChange={(e) => setMix({ ...mix, shuffleTF: e.target.checked })} /> Đảo ý a), b), c), d) của câu Đúng/Sai</label>
+            </div>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13.5, marginBottom: 14 }}>
+              <span style={{ color: 'var(--color-muted)' }}>Định dạng:</span>
+              <label><input type="checkbox" checked={mix.docx} onChange={(e) => setMix({ ...mix, docx: e.target.checked })} /> Word</label>
+              <label><input type="checkbox" checked={mix.pdf} onChange={(e) => setMix({ ...mix, pdf: e.target.checked, count: e.target.checked ? Math.min(mix.count, 12) : mix.count })} /> PDF (chậm hơn)</label>
+              <label><input type="checkbox" checked={mix.tex} onChange={(e) => setMix({ ...mix, tex: e.target.checked })} /> .tex</label>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-outline" style={{ width: 'auto' }} disabled={mixBusy} onClick={() => setMixOpen(false)}>
+                Huỷ
+              </button>
+              <button type="button" className="btn" style={{ width: 'auto' }} disabled={mixBusy} onClick={exportVariants}>
+                {mixBusy ? 'Đang trộn đề…' : `Tạo ${mix.count} mã đề`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ===== THIẾT LẬP THI + ITEM ANALYSIS (Canvas-style) ===== */}
       <div className="card" style={{ marginBottom: 20, padding: 18 }}>

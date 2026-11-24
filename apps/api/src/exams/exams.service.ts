@@ -41,6 +41,55 @@ export type ExamTexOptions = {
   withSolutions?: boolean; // giữ \loigiai (mặc định có)
 };
 
+// ===== Trộn đề: ngẫu nhiên có hạt giống (cùng mã đề → cùng kết quả) =====
+function seededRandom(seed: string): () => number {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  let a = h >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleWith<T>(arr: T[], rnd: () => number): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Phương án nhắc tới phương án khác ("Cả A và B", "Tất cả đều đúng"…) → KHÔNG đảo
+function canShuffleOptions(options: any[]): boolean {
+  return !options.some((o) => {
+    const txt = String(o?.text || '').replace(/\$[^$]*\$/g, ' ');
+    return (
+      /(cả\s+(hai|ba|bốn|[A-D])|tất\s+cả|đều\s+(đúng|sai)|không\s+có\s+(phương án|đáp án|câu)|các\s+(phương án|đáp án)|(phương án|đáp án)\s+[A-D]\b)/i.test(txt) ||
+      /\b[A-D]\s*(và|,|hoặc)\s*[A-D]\b/.test(txt)
+    );
+  });
+}
+
+// Đáp án dạng chữ cho bảng đáp án: MCQ "B"; Đúng/Sai "ĐSĐĐ"; trả lời ngắn giữ nguyên
+function answerKeyText(q: any): string {
+  if (q.type === 'MCQ') return String(q.answer ?? '');
+  if (q.type === 'TRUE_FALSE') {
+    return (Array.isArray(q.options) ? q.options : [])
+      .map((o: any) => ((q.answer as any)?.[o.id] === true ? 'Đ' : 'S'))
+      .join('');
+  }
+  if (q.type === 'SHORT_ANSWER') return typeof q.answer === 'string' ? q.answer : JSON.stringify(q.answer ?? '');
+  return 'Tự luận';
+}
+
 // Tự sửa các trường của 1 câu theo lỗi TeX (lệnh lạ → bỏ lệnh giữ chữ; & lạc → \&).
 // Trả null nếu không có gì để sửa.
 const EX_TEST_CMDS = new Set(['choice', 'choiceTF', 'shortans', 'loigiai', 'True', 'immini', 'heva', 'hoac']);
@@ -2411,6 +2460,180 @@ export class ExamsService {
     return {
       buffer,
       filename: `${withAnswers ? 'dap-an' : 'de-thi'}${suffix}-${safeFilename(exam.title)}.docx`,
+    };
+  }
+
+  // ============ TRỘN ĐỀ NHIỀU MÃ ĐỀ ============
+
+  /**
+   * Trộn đề: mỗi mã đề đảo câu trong từng phần (+ đảo phương án A–D, tuỳ chọn đảo ý a–d Đúng/Sai).
+   * Trộn theo hạt giống cố định (mã đề + id đề) → xuất lại vẫn ra đúng các mã cũ.
+   * Trả về 1 file .zip: đề từng mã (Word/PDF/.tex), đáp án Word từng mã, Excel bảng đáp án + đối chiếu.
+   */
+  async exportVariants(teacherId: string, examId: string, body: any) {
+    const exam = await this.prisma.exam.findFirst({
+      where: { id: examId, teacherId },
+      include: {
+        teacher: { select: { fullName: true, school: true } },
+        items: { include: { question: true }, orderBy: { order: 'asc' } },
+      },
+    });
+    if (!exam) throw new NotFoundException('Không tìm thấy đề thi');
+    if (!exam.items.length) throw new BadRequestException('Đề chưa có câu hỏi nào');
+
+    const formats: string[] = (Array.isArray(body?.formats) ? body.formats : ['docx']).filter((f: string) =>
+      ['docx', 'pdf', 'tex'].includes(f),
+    );
+    if (!formats.length) formats.push('docx');
+    const maxCount = formats.includes('pdf') ? 12 : 24;
+    const count = Math.min(maxCount, Math.max(1, Number(body?.count) || 4));
+    const start = String(body?.startCode ?? '101').trim() || '101';
+    const codes = Array.from({ length: count }, (_, i) =>
+      /^\d+$/.test(start) ? String(Number(start) + i).padStart(start.length, '0') : `${start}${i + 1}`,
+    );
+    const opt = {
+      questions: body?.shuffleQuestions !== false,
+      options: body?.shuffleOptions !== false,
+      tf: !!body?.shuffleTF,
+    };
+
+    const { buildExamDocx } = await import('../common/docx.helper');
+    const { buildZip } = await import('../common/word/zip');
+    const entries: { name: string; data: Buffer | string }[] = [];
+    // keyTable[vị trí câu trong đề gốc theo phần][mã] — để làm bảng đáp án
+    const keyByCode = new Map<string, { part: number; num: number; key: string; orig: number }[]>();
+    const partOf = new Map<any, number>();
+    {
+      let gi = 0;
+      let prev: any;
+      for (const it of exam.items) {
+        if (it.part !== prev) {
+          gi++;
+          prev = it.part;
+        }
+        partOf.set(it, gi);
+      }
+    }
+
+    for (const code of codes) {
+      const rnd = seededRandom(`${exam.id}:${code}`);
+      // Gom theo phần (giữ thứ tự phần), đảo câu trong phần
+      const groups: any[][] = [];
+      let prevPart: any;
+      for (const it of exam.items) {
+        if (it.part !== prevPart) {
+          groups.push([]);
+          prevPart = it.part;
+        }
+        groups[groups.length - 1].push(it);
+      }
+      const variant: any[] = [];
+      const keys: { part: number; num: number; key: string; orig: number }[] = [];
+      groups.forEach((g, gi) => {
+        const order = opt.questions ? shuffleWith(g, rnd) : [...g];
+        order.forEach((it, k) => {
+          const q = { ...(it.question as any) };
+          if (q.type === 'MCQ' && opt.options && Array.isArray(q.options) && canShuffleOptions(q.options)) {
+            const perm = shuffleWith(q.options as any[], rnd);
+            const ids = (q.options as any[]).map((o: any) => o.id); // A, B, C, D theo thứ tự gốc
+            const newOpts = perm.map((o: any, i: number) => ({ ...o, id: ids[i] }));
+            const correct = perm.findIndex((o: any) => o.id === q.answer);
+            q.options = newOpts;
+            q.answer = correct >= 0 ? ids[correct] : q.answer;
+          }
+          if (q.type === 'TRUE_FALSE' && opt.tf && Array.isArray(q.options)) {
+            const perm = shuffleWith(q.options as any[], rnd);
+            const ids = (q.options as any[]).map((o: any) => o.id);
+            const ans: any = {};
+            q.options = perm.map((o: any, i: number) => {
+              ans[ids[i]] = !!(q.answer as any)?.[o.id];
+              return { ...o, id: ids[i] };
+            });
+            q.answer = ans;
+          }
+          variant.push({ ...it, question: q });
+          keys.push({
+            part: gi + 1,
+            num: k + 1,
+            key: answerKeyText(q),
+            orig: exam.items.indexOf(it),
+          });
+        });
+      });
+      variant.forEach((it, i) => (it.order = i + 1));
+      keyByCode.set(code, keys);
+
+      const docxItems = variant.map((it) => ({
+        order: it.order,
+        part: it.part,
+        score: it.score,
+        type: it.question.type,
+        content: it.question.content,
+        options: (it.question.options as any) || null,
+        answer: it.question.answer,
+        solution: it.question.solution,
+      }));
+      const common = {
+        title: exam.title,
+        school: exam.teacher.school || undefined,
+        duration: exam.duration,
+        grade: exam.grade,
+        code,
+        numbering: 'part' as const,
+        items: docxItems,
+        renderTikz: (sn: string) => this.compileTikzSnippet(sn).catch(() => null),
+      };
+      if (formats.includes('docx')) {
+        entries.push({ name: `de-${code}.docx`, data: await buildExamDocx({ ...common, withAnswers: false }) });
+        entries.push({ name: `dap-an/dap-an-${code}.docx`, data: await buildExamDocx({ ...common, withAnswers: true }) });
+      }
+      if (formats.includes('tex')) {
+        entries.push({
+          name: `de-${code}.tex`,
+          data: this.generateTex(exam.title, variant, { duration: exam.duration, code }),
+        });
+      }
+      if (formats.includes('pdf')) {
+        const r = await this.compileExamPdf(exam.title, variant, { duration: exam.duration, code });
+        entries.push({ name: `de-${code}.pdf`, data: r.buffer });
+      }
+    }
+
+    // ===== Excel: bảng đáp án các mã + đối chiếu với đề gốc =====
+    const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+    const first = keyByCode.get(codes[0]) || [];
+    const header = ['Phần', 'Câu', ...codes.map((c) => `Mã ${c}`)];
+    const rows: any[][] = [header];
+    first.forEach((k0, idx) => {
+      rows.push([
+        ROMAN[k0.part - 1] || k0.part,
+        k0.num,
+        ...codes.map((c) => keyByCode.get(c)?.[idx]?.key ?? ''),
+      ]);
+    });
+    const map: any[][] = [['Phần', 'Câu', ...codes.map((c) => `Mã ${c} → câu gốc`)]];
+    first.forEach((k0, idx) => {
+      map.push([
+        ROMAN[k0.part - 1] || k0.part,
+        k0.num,
+        ...codes.map((c) => {
+          const k = keyByCode.get(c)?.[idx];
+          if (!k) return '';
+          const it = exam.items[k.orig];
+          const g = partOf.get(it) || 1;
+          const posInPart = exam.items.filter((x) => (partOf.get(x) || 0) === g).indexOf(it) + 1;
+          return `Câu ${posInPart}`;
+        }),
+      ]);
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Bảng đáp án');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(map), 'Đối chiếu đề gốc');
+    entries.push({ name: 'bang-dap-an.xlsx', data: XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer });
+
+    return {
+      buffer: buildZip(entries),
+      filename: `tron-de-${safeFilename(exam.title)}-${codes[0]}-${codes[codes.length - 1]}.zip`,
     };
   }
 
