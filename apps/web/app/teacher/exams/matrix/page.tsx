@@ -906,7 +906,27 @@ export default function ExamMatrixPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ ids, withAnswers, mathMode: 'omml' }),
+        body: JSON.stringify({
+          ids,
+          withAnswers,
+          mathMode: 'omml',
+          // Giữ đúng thứ tự ô + phần + điểm của ma trận (trước đây câu bị xếp theo mã, dồn vào Phần I)
+          items: (() => {
+            const out: { id: string; part: number; score: number }[] = [];
+            let part = 0;
+            let prevType = '';
+            for (const s of slots) {
+              if (s.type !== prevType) {
+                part++;
+                prevType = s.type;
+              }
+              if (s.question?.id) out.push({ id: s.question.id, part, score: partScores[s.type] ?? 0.25 });
+            }
+            return out;
+          })(),
+          title: examTitle.trim() || matrixName || 'Đề thi từ ma trận',
+          duration: Number(examDuration) || 45,
+        }),
       });
       if (!res.ok) {
         alert('Xuất file thất bại');
@@ -916,7 +936,7 @@ export default function ExamMatrixPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'de-thi-tu-ma-tran.docx';
+      a.download = withAnswers ? 'de-thi-tu-ma-tran-dap-an.docx' : 'de-thi-tu-ma-tran.docx';
       a.click();
     } catch (e: any) {
       alert(e.message);

@@ -443,19 +443,21 @@ export default function ExamDetailPage() {
           </button>
           <button
             className="btn btn-outline"
-            style={{ width: 'auto', padding: '8px 14px', fontSize: 13, opacity: 0.75 }}
-            title="Công thức là phương trình Word (không có dấu $) — hiển thị đẹp, chỉnh sửa được trong Word"
-            onClick={downloadUrl(`/api/exams/${examId}/docx`, 'de_thi_equation.docx')}
+            style={{ width: 'auto', padding: '8px 14px', fontSize: 13 }}
+            title="Công thức là phương trình Word — bấm vào sửa được; MathType: Convert Equations để đổi sang MathType"
+            onClick={downloadUrl(`/api/exams/${examId}/docx`, 'de_thi.docx')}
+            disabled={!!dlBusy}
           >
-            Word đề (Equation)
+            {dlBusy === 'de_thi.docx' ? 'Đang tạo Word…' : 'Word đề'}
           </button>
           <button
             className="btn btn-outline"
-            style={{ width: 'auto', padding: '8px 14px', fontSize: 13, opacity: 0.75 }}
-            title="Đáp án công thức là phương trình Word"
-            onClick={downloadUrl(`/api/exams/${examId}/docx-answers`, 'dap_an_equation.docx')}
+            style={{ width: 'auto', padding: '8px 14px', fontSize: 13 }}
+            title="Đề kèm đáp án tô đỏ, lời giải từng câu và bảng đáp án cuối đề"
+            onClick={downloadUrl(`/api/exams/${examId}/docx-answers`, 'dap_an.docx')}
+            disabled={!!dlBusy}
           >
-            Word đáp án (Equation)
+            {dlBusy === 'dap_an.docx' ? 'Đang tạo Word…' : 'Word đáp án'}
           </button>
           <button
             className="btn"

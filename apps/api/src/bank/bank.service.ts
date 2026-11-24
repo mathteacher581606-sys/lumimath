@@ -1591,6 +1591,8 @@ export class BankService {
     ids: string[],
     withAnswers: boolean,
     mathMode: 'omml' | 'tex' = 'omml',
+    // Từ trang ma trận: phần + điểm của từng câu (đúng thứ tự ô) và tên đề
+    layout?: { items?: { id: string; part: number; score: number }[]; title?: string; duration?: number },
   ) {
     const bank = await this.getBank(teacherId);
     const list = await this.prisma.question.findMany({
@@ -1601,22 +1603,48 @@ export class BankService {
     const pos = new Map((ids || []).map((id, i) => [id, i]));
     list.sort((a, b) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0));
     const { buildExamDocx } = await import('../common/docx.helper');
-    const items = list.map((q: any, i: number) => ({
-      order: i + 1,
-      part: 1,
-      score: 0.25,
-      type: q.type,
-      content: q.content,
-      options: (q.options as any) || null,
-      answer: q.answer,
-      solution: q.solution,
-    }));
+    const byId = new Map(list.map((q: any) => [q.id, q]));
+    const rank: Record<string, number> = { MCQ: 0, TRUE_FALSE: 1, SHORT_ANSWER: 2, ESSAY: 3 };
+    let items: any[];
+    const fromMatrix = !!layout?.items?.length;
+    if (fromMatrix) {
+      items = layout!.items!
+        .filter((x) => byId.has(x.id))
+        .map((x, i) => {
+          const q: any = byId.get(x.id);
+          return {
+            order: i + 1,
+            part: Number(x.part) || 1,
+            score: Number(x.score) || 0,
+            type: q.type,
+            content: q.content,
+            options: (q.options as any) || null,
+            answer: q.answer,
+            solution: q.solution,
+          };
+        });
+    } else {
+      // Câu chọn lẻ từ ngân hàng: gom theo loại câu (mỗi loại 1 phần), giữ thứ tự chọn
+      const sorted = [...list].sort((a: any, b: any) => (rank[a.type] ?? 9) - (rank[b.type] ?? 9) || (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0));
+      items = sorted.map((q: any, i: number) => ({
+        order: i + 1,
+        part: (rank[q.type] ?? 9) + 1,
+        score: 0,
+        type: q.type,
+        content: q.content,
+        options: (q.options as any) || null,
+        answer: q.answer,
+        solution: q.solution,
+      }));
+    }
     const buffer = await buildExamDocx({
-      title: 'NGÂN HÀNG CÂU HỎI',
-      duration: 0,
+      title: fromMatrix ? String(layout?.title || 'ĐỀ THI TỪ MA TRẬN') : 'CÂU HỎI TỪ NGÂN HÀNG',
+      duration: fromMatrix ? Number(layout?.duration) || 0 : 0,
+      header: fromMatrix,
       items,
       withAnswers,
       mathMode,
+      renderTikz: (sn) => this.examsService.compileTikzSnippet(sn).catch(() => null),
     });
     const suffix = mathMode === 'tex' ? '-tex' : '';
     const filename = `ngan-hang-cau-hoi${withAnswers ? '-dapan' : ''}${suffix}.docx`;
@@ -1761,9 +1789,13 @@ export class BankService {
     const buffer = await buildExamDocx({
       title,
       duration: 0,
+      header: false,
+      partHeadings: false,
+      numbering: 'continuous',
       items,
       withAnswers,
       mathMode: (body?.mathMode as 'omml' | 'tex') || 'omml',
+      renderTikz: (sn) => this.examsService.compileTikzSnippet(sn).catch(() => null),
     });
     return {
       buffer,

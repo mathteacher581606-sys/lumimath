@@ -200,6 +200,7 @@ export class BankController {
       body?.ids || [],
       !!body?.withAnswers,
       body?.mathMode === 'tex' ? 'tex' : 'omml',
+      { items: Array.isArray(body?.items) ? body.items : undefined, title: body?.title, duration: body?.duration },
     );
     res.setHeader(
       'Content-Type',

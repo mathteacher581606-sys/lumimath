@@ -17,6 +17,7 @@ import { MailService } from '../mail/mail.service';
 import { CreateExamDto } from './dto/create-exam.dto';
 import { buildTablePdf, buildXlsx, escapeTex, safeFilename } from '../common/export.helper';
 import { fixFromLog, normalizeTex, texToPlainText, undefinedMacrosFromLog } from '../common/tex-autofix';
+import { partInstruction } from '../common/exam-format';
 import { articleHead, isMissingLumimath, legacyFallback, LEGACY_PACKAGES, LUMIMATH_PKG, standaloneDoc } from '../common/tex-preamble';
 import * as XLSX from 'xlsx';
 
@@ -75,22 +76,6 @@ function repairItemFields(it: any, err: string): any | null {
   return changed ? next : null;
 }
 
-// Lời dẫn của từng phần theo mẫu đề 2025
-function partInstruction(type: string, from: number, to: number): string {
-  const range = from === to ? `câu ${from}` : `câu ${from} đến câu ${to}`;
-  switch (type) {
-    case 'MCQ':
-      return `Câu trắc nghiệm nhiều phương án lựa chọn. Thí sinh trả lời từ ${range}. Mỗi câu hỏi thí sinh chỉ chọn một phương án.`;
-    case 'TRUE_FALSE':
-      return `Câu trắc nghiệm đúng sai. Thí sinh trả lời từ ${range}. Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn đúng hoặc sai.`;
-    case 'SHORT_ANSWER':
-      return `Câu trắc nghiệm trả lời ngắn. Thí sinh trả lời từ ${range}.`;
-    case 'ESSAY':
-      return `Tự luận. Thí sinh trình bày lời giải từ ${range}.`;
-    default:
-      return `Thí sinh trả lời từ ${range}.`;
-  }
-}
 
 // Trích các block tikz/tkz-tab VÀ bảng tabular từ nội dung câu hỏi
 export function extractTikzBlocks(text: string): string[] {
@@ -2407,6 +2392,9 @@ export class ExamsService {
       grade: exam.grade,
       teacherName: exam.teacher.fullName,
       mathMode,
+      numbering: 'part',
+      // Hình TikZ/bảng biến thiên: lấy ảnh đã biên dịch (cache), chưa có thì biên dịch ngay
+      renderTikz: (sn) => this.compileTikzSnippet(sn).catch(() => null),
       items: exam.items.map((it) => ({
         order: it.order,
         part: it.part,

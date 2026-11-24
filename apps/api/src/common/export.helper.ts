@@ -65,7 +65,9 @@ export function safeFilename(name: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D') // trước đây "Đề" → "-e"
     .replace(/[^a-zA-Z0-9-_]/g, '-')
     .replace(/-+/g, '-')
-    .toLowerCase();
+    .replace(/^-|-$/g, '')
+    .toLowerCase() || 'file';
 }
