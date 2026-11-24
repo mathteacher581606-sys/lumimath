@@ -96,7 +96,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:4000/api/auth/me        
 
 Hiến pháp dự án: `.specify/memory/constitution.md` (6 nguyên tắc — đọc trước khi lập kế hoạch).
 
-## 7. Trạng thái hiện tại (tính đến 15/11/2026)
+## 7. Trạng thái hiện tại (tính đến 25/11/2026)
 
 Các feature đã xong (xem chi tiết trong `specs/`):
 
@@ -112,6 +112,8 @@ Các feature đã xong (xem chi tiết trong `specs/`):
 | 009 | Tải đáp án PDF + tự sửa LaTeX | `GET /exams/:id/attempts/:aid/answers-pdf` |
 | 010 | Sửa ảnh upload bị hỏng | quality 0–100 |
 | 014 | 5 bảng màu + trang chủ HS + Cài đặt 3 tab | đợt 1; `GET/PATCH /auth/profile` |
+| 018 | Bảng chấm bài thống nhất (iPad) | xuất PDF bài đã chấm, HS xem bài chấm |
+| 019 | Ma trận · PDF/.tex/Word · Trộn đề | Word tự viết LaTeX→OMML (`common/word/`), `POST /exams/:id/variants`, `/check-latex` |
 
 ## 8. Nhận việc từ file task
 
