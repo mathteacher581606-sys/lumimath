@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { isImageFile } from '@/lib/image-upload';
+import CameraCapture, { cameraSupported } from '@/components/CameraCapture';
 
 // file: ảnh chọn trên máy (chưa có nếu khôi phục từ bài làm dở); url: đã tải lên máy chủ
 export type UpImage = {
@@ -36,6 +37,9 @@ export default function ImageUploader({
   const camRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [notice, setNotice] = useState('');
+  const [camOpen, setCamOpen] = useState(false);
+  const [canLive, setCanLive] = useState(false);
+  useEffect(() => setCanLive(cameraSupported()), []);
 
   // Bản mới nhất của danh sách: các lượt tải xong cùng lúc không ghi đè lẫn nhau
   const latest = useRef(images);
@@ -75,6 +79,17 @@ export default function ImageUploader({
     if (disabled) return;
     onPickStart?.();
     (which === 'cam' ? camRef : pickRef).current?.click();
+  }
+
+  function openLive() {
+    if (disabled) return;
+    setNotice('');
+    onPickStart?.();
+    setCamOpen(true);
+  }
+  function closeLive() {
+    setCamOpen(false);
+    onPickEnd?.();
   }
 
   function addFiles(files: FileList | File[]) {
@@ -184,8 +199,13 @@ export default function ImageUploader({
         }}
       >
         <div className="iu-actions">
-          <button type="button" className="iu-btn is-primary" disabled={disabled} onClick={() => openPicker('cam')}>
-            Chụp ảnh
+          {canLive && (
+            <button type="button" className="iu-btn is-primary" disabled={disabled} onClick={openLive}>
+              📷 Chụp ngay trong trang
+            </button>
+          )}
+          <button type="button" className={`iu-btn${canLive ? '' : ' is-primary'}`} disabled={disabled} onClick={() => openPicker('cam')}>
+            {canLive ? 'Chụp bằng camera máy' : 'Chụp ảnh'}
           </button>
           <button type="button" className="iu-btn" disabled={disabled} onClick={() => openPicker('pick')}>
             Chọn ảnh có sẵn
@@ -205,6 +225,16 @@ export default function ImageUploader({
         />
         <input ref={pickRef} type="file" accept="image/*" multiple hidden disabled={disabled} onChange={onFiles} />
       </div>
+      {camOpen && (
+        <CameraCapture
+          onShot={(f) => addFiles([f])}
+          onClose={closeLive}
+          onUnavailable={(msg) => {
+            closeLive();
+            setNotice(msg);
+          }}
+        />
+      )}
       {notice && (
         <p className="iu-notice" role="status">
           {notice}
