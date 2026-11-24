@@ -510,7 +510,9 @@ export default function ExamMatrixPage() {
         title: examTitle.trim(),
         duration: Number(examDuration) || 45,
         published,
-        questionIds: ids,
+        // Đúng vị trí từng ô (null = ô trống → bỏ qua), server không tự bốc thêm câu
+        questionIds: slots.map((s) => s.question?.id || null),
+        strict: true,
         matrix: { parts: matrixParts },
       };
       if (examGrade) body.grade = Number(examGrade);
@@ -674,7 +676,8 @@ export default function ExamMatrixPage() {
         }
 
         const buildParams = (diff: string) => {
-          const p = new URLSearchParams({ type: s.type, limit: '30' });
+          // Bốc ngẫu nhiên trên TOÀN BỘ câu khớp bộ lọc, trừ các câu đã dùng trong ma trận
+          const p = new URLSearchParams({ type: s.type, limit: '1', exclude: used.join(',') });
           if (diff) p.set('difficulty', diff);
           if (!random) {
             if (s.form) p.set('form', s.form);
@@ -687,18 +690,18 @@ export default function ExamMatrixPage() {
         let pool: any = { items: [] };
         try {
           let params = buildParams(targetDiff);
-          pool = await apiFetch(`/bank/questions-paged?${params.toString()}`);
+          pool = await apiFetch(`/bank/questions-random?${params.toString()}`);
           let candidates = (pool.items || []).filter((q: any) => !used.includes(q.id));
           // Nới lọc MỨC nếu không đủ (giữ nguyên lớp/chủ đề/dạng)
           if (!candidates.length && targetDiff) {
             const params2 = buildParams('');
-            pool = await apiFetch(`/bank/questions-paged?${params2.toString()}`);
+            pool = await apiFetch(`/bank/questions-random?${params2.toString()}`);
             candidates = (pool.items || []).filter((q: any) => !used.includes(q.id));
           }
           // Chế độ NGẪU NHIÊN: cho phép nới tới "chỉ đúng kiểu câu" (để sinh đủ ma trận)
           if (!candidates.length && random) {
-            const params3 = new URLSearchParams({ type: s.type, limit: '30' });
-            pool = await apiFetch(`/bank/questions-paged?${params3.toString()}`);
+            const params3 = new URLSearchParams({ type: s.type, limit: '1', exclude: used.join(',') });
+            pool = await apiFetch(`/bank/questions-random?${params3.toString()}`);
             candidates = (pool.items || []).filter((q: any) => !used.includes(q.id));
           }
           if (!candidates.length) {
@@ -782,12 +785,12 @@ export default function ExamMatrixPage() {
     setBusy(true);
     try {
       const used = slots.filter((x) => x.question?.id).map((x) => x.question.id);
-      const params = new URLSearchParams({ type: s.type, limit: '30' });
+      const params = new URLSearchParams({ type: s.type, limit: '1', exclude: used.join(',') });
       if (s.difficulty) params.set('difficulty', s.difficulty);
       if (s.form) params.set('form', s.form);
       if (s.grade) params.set('grade', s.grade);
       appendTopicParams(params, s);
-      const data = await apiFetch(`/bank/questions-paged?${params.toString()}`);
+      const data = await apiFetch(`/bank/questions-random?${params.toString()}`);
       const candidates = (data.items || []).filter((q: any) => !used.includes(q.id));
       if (!candidates.length) {
         alert('Ngân hàng không còn câu nào khác phù hợp với ô này.');

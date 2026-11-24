@@ -133,6 +133,11 @@ export default function ExamDetailPage() {
   const examId = params.id as string;
 
   const [exam, setExam] = useState<any>(null);
+  // Đang tải file nào (tránh bấm nhiều lần khi PDF biên dịch lâu)
+  const [dlBusy, setDlBusy] = useState('');
+  // Báo cáo LaTeX: câu lỗi / đã tự sửa (từ PDF đề hoặc nút Kiểm tra LaTeX)
+  const [texReport, setTexReport] = useState<any>(null);
+  const [checking, setChecking] = useState(false);
   const [bankQuestions, setBankQuestions] = useState<any[]>([]);
   // Câu đang được sửa trực tiếp trong đề
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -328,23 +333,55 @@ export default function ExamDetailPage() {
 
   function downloadUrl(path: string, filename: string) {
     return async () => {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${path}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        ...(path.includes('compile') ? { method: 'POST' } : {}),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(String(err.message || '').slice(-400));
-        return;
+      if (dlBusy) return;
+      setDlBusy(filename);
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${path}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          ...(path.includes('compile') ? { method: 'POST' } : {}),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(String(err.message || 'Tải file thất bại').slice(-400));
+          return;
+        }
+        // PDF đề: máy chủ báo lại câu lỗi LaTeX đã thay bằng chữ thuần / đã tự sửa
+        const rep = res.headers.get('X-Tex-Report');
+        if (rep) {
+          try {
+            setTexReport({ ...JSON.parse(decodeURIComponent(rep)), source: 'pdf' });
+          } catch {
+            /* bỏ qua */
+          }
+        } else if (path.includes('compile')) {
+          setTexReport(null);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      } catch (e: any) {
+        alert(e.message);
+      } finally {
+        setDlBusy('');
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
     };
+  }
+
+  async function checkLatex() {
+    setChecking(true);
+    try {
+      const r = await apiFetch(`/exams/${examId}/check-latex`, { method: 'POST' });
+      setTexReport({ ...r, source: 'check' });
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setChecking(false);
+    }
   }
 
   if (loading) return <div className="page-container">Đang tải…</div>;
@@ -370,8 +407,17 @@ export default function ExamDetailPage() {
           <span className="badge">Tổng {exam.totalScore} điểm</span>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-          <button className="btn btn-outline" style={{ width: 'auto', padding: '8px 14px', fontSize: 13 }} onClick={downloadUrl(`/api/exams/${examId}/compile`, 'de_thi.pdf')}>
-            PDF đề
+          <button className="btn btn-outline" style={{ width: 'auto', padding: '8px 14px', fontSize: 13 }} onClick={downloadUrl(`/api/exams/${examId}/compile`, 'de_thi.pdf')} disabled={!!dlBusy}>
+            {dlBusy === 'de_thi.pdf' ? 'Đang biên dịch…' : 'PDF đề'}
+          </button>
+          <button
+            className="btn btn-outline"
+            style={{ width: 'auto', padding: '8px 14px', fontSize: 13 }}
+            onClick={checkLatex}
+            disabled={checking}
+            title="Biên dịch thử toàn đề, chỉ ra đúng câu nào lỗi LaTeX"
+          >
+            {checking ? 'Đang kiểm tra…' : 'Kiểm tra LaTeX'}
           </button>
           <button className="btn btn-outline" style={{ width: 'auto', padding: '8px 14px', fontSize: 13 }} onClick={downloadUrl(`/api/exams/${examId}/answers-pdf`, 'dap_an.pdf')}>
             PDF đáp án
@@ -429,6 +475,55 @@ export default function ExamDetailPage() {
             {exam.isTemplate ? '📋 Đang là template' : '📋 Lưu làm template'}
           </button>
         </div>
+        {texReport && (
+          <div
+            className="card"
+            role="status"
+            style={{
+              marginTop: 12,
+              padding: 14,
+              borderLeft: `4px solid var(${texReport.bad?.length ? '--color-warning' : '--color-success'})`,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+              <strong style={{ fontSize: 14 }}>
+                {texReport.bad?.length
+                  ? `${texReport.bad.length} câu lỗi LaTeX${texReport.source === 'pdf' ? ' — trong PDF đã hiển thị dạng chữ thuần' : ''}`
+                  : 'LaTeX toàn đề không có lỗi'}
+              </strong>
+              <button
+                type="button"
+                className="btn btn-outline"
+                style={{ width: 'auto', padding: '2px 10px', fontSize: 12 }}
+                onClick={() => setTexReport(null)}
+                aria-label="Đóng báo cáo LaTeX"
+              >
+                ✕
+              </button>
+            </div>
+            {texReport.plainFallback && (
+              <p style={{ fontSize: 13, color: 'var(--color-danger)', margin: '6px 0 0' }}>
+                Lỗi nằm ngoài các câu hỏi — toàn đề phải hiển thị dạng chữ thuần. Hãy báo cho quản trị.
+              </p>
+            )}
+            {texReport.bad?.length > 0 && (
+              <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13 }}>
+                {texReport.bad.map((b: any, i: number) => (
+                  <li key={i} style={{ marginBottom: 4 }}>
+                    <b>{b.label}</b>
+                    {b.code ? ` (mã ${b.code})` : ''}:{' '}
+                    <span style={{ color: 'var(--color-muted)' }}>{b.error || 'lỗi biên dịch'}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {texReport.fixes?.length > 0 && (
+              <p style={{ fontSize: 12.5, color: 'var(--color-muted)', margin: '8px 0 0' }}>
+                Đã tự sửa: {texReport.fixes.join('; ')}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ===== THIẾT LẬP THI + ITEM ANALYSIS (Canvas-style) ===== */}

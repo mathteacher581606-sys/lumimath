@@ -293,6 +293,65 @@ export function normalizeTex(input: string): AutoFixResult {
   return { tex, fixes };
 }
 
+/** Tên macro chưa định nghĩa theo log TeX: lệnh CUỐI của dòng ngữ cảnh ngay sau "! Undefined…" */
+export function undefinedMacrosFromLog(log: string): string[] {
+  const names = new Set<string>();
+  const lines = String(log || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (!/Undefined control sequence/i.test(lines[i])) continue;
+    for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+      const ln = lines[j];
+      if (!ln.trim()) continue;
+      const all = ln.match(/\\[a-zA-Z@]+/g);
+      if (all && all.length) {
+        names.add(all[all.length - 1].slice(1));
+        break;
+      }
+      if (/^\s*l\.\d+/.test(ln)) break;
+    }
+  }
+  return Array.from(names);
+}
+
+const TABLEISH =
+  'tabular|tabularx|longtable|array|align\\*?|aligned|alignat\\*?|alignedat|cases|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|split|gathered|eqnarray\\*?|tikzpicture|tkzTab';
+
+/** Escape & lạc ở dòng TeX báo lỗi (l.<số>), chỉ khi dòng đó không ở trong môi trường căn cột */
+export function escapeAmpAtErrorLine(
+  tex: string,
+  log: string,
+): { tex: string; changed: boolean; line?: number } {
+  const m = /(?:^|\n)\s*l\.(\d+)/.exec(String(log || ''));
+  if (!m) return { tex, changed: false };
+  const lines = tex.split('\n');
+  const n = Number(m[1]);
+  const beginRe = new RegExp('\\\\begin\\{(?:' + TABLEISH + ')\\}', 'g');
+  const endRe = new RegExp('\\\\end\\{(?:' + TABLEISH + ')\\}', 'g');
+  const depthBefore = (idx: number) => {
+    let d = 0;
+    for (let k = 0; k < idx; k++) {
+      d += (lines[k].match(beginRe) || []).length - (lines[k].match(endRe) || []).length;
+    }
+    return d;
+  };
+  // Dòng báo lỗi (cho phép lệch ±2 dòng nếu server chèn/bớt dòng mở đầu)
+  for (const cand of [n, n - 1, n + 1, n - 2, n + 2]) {
+    const idx = cand - 1;
+    if (idx < 0 || idx >= lines.length) continue;
+    const line = lines[idx];
+    if (!/(?<!\\)&/.test(line)) continue;
+    if (depthBefore(idx) > 0) continue;
+    if (beginRe.test(line)) {
+      beginRe.lastIndex = 0;
+      continue;
+    }
+    beginRe.lastIndex = 0;
+    lines[idx] = line.replace(/(?<!\\)&/g, '\\&');
+    return { tex: lines.join('\n'), changed: true, line: cand };
+  }
+  return { tex, changed: false };
+}
+
 /** Lớp 2 — sửa theo log lỗi thật của TeX */
 export function fixFromLog(tex: string, log: string): AutoFixResult {
   let out = tex;
@@ -311,41 +370,28 @@ export function fixFromLog(tex: string, log: string): AutoFixResult {
     if (out !== before) fixes.push(`bỏ môi trường lạ \\begin{${env}}`);
   }
 
-  // 2) Undefined control sequence → xoá các macro lạ
+  // 2) Undefined control sequence → CHỈ xoá macro được TeX nêu tên trong log
+  //    (trước đây quét cả tài liệu → xoá nhầm \choiceTF, \shortans, \tkzTabInit… làm nát đề)
   if (/Undefined control sequence/i.test(src)) {
-    const names = new Set<string>();
-    // Tên macro có thể nằm trong log dạng "\ten" (một dấu \) hoặc trong nội dung
-    const re = /\\([a-zA-Z@]{2,})/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(src))) {
-      const name = m[1];
-      if (!CORE_MACROS.has(name)) names.add(name);
-    }
-    // Bổ sung: macro lạ có trong chính nội dung (TeX không luôn in tên ra log)
-    const any = /\\([a-zA-Z@]{2,})/g;
-    while ((m = any.exec(out))) {
-      const name = m[1];
-      if (!CORE_MACROS.has(name)) names.add(name);
-    }
-    for (const name of names) {
+    for (const name of undefinedMacrosFromLog(src)) {
+      if (CORE_MACROS.has(name)) continue;
       const before = out;
-      const r = rewriteMacro(out, name, []);
-      if (r.tex !== before) {
-        out = r.tex;
-        fixes.push(`xoá macro lạ \\${name}`);
-      }
+      // \ten{đối số} → giữ đối số đầu (không mất chữ); \ten trơn → bỏ (không cắt nhầm \tenDai)
+      const r = rewriteMacro(out, name, [0]);
+      out = r.changed
+        ? r.tex
+        : out.replace(new RegExp('\\\\' + name + '(?![a-zA-Z@])', 'g'), ' ');
+      if (out !== before) fixes.push(`xoá macro lạ \\${name}`);
     }
   }
 
-  // 3) Misplaced alignment tab character & (không có bảng/căn hàng)
+  // 3) Misplaced alignment tab character & → escape & ở ĐÚNG DÒNG báo lỗi
+  //    (dòng đó không nằm trong bảng/hệ/ma trận). Không còn đòi cả tài liệu không có bảng.
   if (/Misplaced alignment tab character/i.test(src)) {
-    const hasTableish =
-      /\\begin\{(tabular|tabularx|array|align|aligned|alignedat|cases|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|split|gathered)/.test(
-        out,
-      );
-    if (!hasTableish) {
-      out = out.replace(/(?<!\\)&/g, '\\&');
-      fixes.push('escape ký tự & ngoài môi trường bảng');
+    const r = escapeAmpAtErrorLine(out, src);
+    if (r.changed) {
+      out = r.tex;
+      fixes.push('escape ký tự & lạc ở dòng ' + r.line);
     }
   }
 

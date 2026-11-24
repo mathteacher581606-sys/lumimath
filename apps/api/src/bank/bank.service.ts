@@ -1449,6 +1449,35 @@ export class BankService {
     return Array.from(new Set(raw.map((s) => s.trim()).filter(Boolean)));
   }
 
+  // Bốc NGẪU NHIÊN trên TOÀN BỘ câu khớp bộ lọc (không chỉ 30 câu mới nhất), trừ các câu exclude
+  async randomQuestions(teacherId: string, query: any) {
+    const bank = await this.getBank(teacherId);
+    const where: any = { bankId: bank.id };
+    if (query.type) where.type = query.type;
+    if (query.grade) where.grade = Number(query.grade);
+    const roots = this.readTopicIds(query);
+    if (roots.length) where.topicId = { in: await this.topicWithDescendants(bank.id, roots) };
+    if (query.form) where.form = query.form;
+    if (query.difficulty) where.difficulty = query.difficulty;
+    const exclude = String(query.exclude || '')
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    if (exclude.length) where.id = { notIn: exclude };
+    const limit = Math.min(50, Math.max(1, Number(query.limit) || 1));
+    const ids = await this.prisma.question.findMany({ where, select: { id: true } });
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    const pick = ids.slice(0, limit).map((x) => x.id);
+    const rows = pick.length
+      ? await this.prisma.question.findMany({ where: { id: { in: pick } }, include: { topic: true } })
+      : [];
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return { items: pick.map((id) => byId.get(id)).filter(Boolean), total: ids.length };
+  }
+
   async listQuestionsPaged(teacherId: string, query: any) {
     const bank = await this.getBank(teacherId);
     const where: any = { bankId: bank.id };
@@ -1566,9 +1595,11 @@ export class BankService {
     const bank = await this.getBank(teacherId);
     const list = await this.prisma.question.findMany({
       where: { bankId: bank.id, id: { in: (ids || []).slice(0, 200) } },
-      orderBy: { code: 'asc' },
     });
     if (!list.length) throw new BadRequestException('Chưa chọn câu hỏi nào');
+    // Giữ ĐÚNG thứ tự giáo viên chọn (trước đây xếp theo mã câu → lẫn thứ tự ma trận)
+    const pos = new Map((ids || []).map((id, i) => [id, i]));
+    list.sort((a, b) => (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0));
     const { buildExamDocx } = await import('../common/docx.helper');
     const items = list.map((q: any, i: number) => ({
       order: i + 1,
@@ -1590,6 +1621,38 @@ export class BankService {
     const suffix = mathMode === 'tex' ? '-tex' : '';
     const filename = `ngan-hang-cau-hoi${withAnswers ? '-dapan' : ''}${suffix}.docx`;
     return { buffer, filename };
+  }
+
+  // Xuất các câu đã chọn ra file .tex chuẩn ex_test (mở bằng TeX trên máy giáo viên)
+  // Gom theo loại câu: Trắc nghiệm → Đúng/Sai → Trả lời ngắn → Tự luận, giữ thứ tự chọn trong mỗi loại
+  async exportQuestionsTex(teacherId: string, ids: string[], withSolutions = true) {
+    const bank = await this.getBank(teacherId);
+    const want = (ids || []).slice(0, 500);
+    const list = await this.prisma.question.findMany({
+      where: { bankId: bank.id, id: { in: want } },
+    });
+    if (!list.length) throw new BadRequestException('Chưa chọn câu hỏi nào');
+    const pos = new Map(want.map((id, i) => [id, i]));
+    const rank: Record<string, number> = { MCQ: 0, TRUE_FALSE: 1, SHORT_ANSWER: 2, ESSAY: 3 };
+    list.sort(
+      (a, b) =>
+        (rank[a.type] ?? 9) - (rank[b.type] ?? 9) || (pos.get(a.id) ?? 0) - (pos.get(b.id) ?? 0),
+    );
+    const items = list.map((q: any, i: number) => ({
+      order: i + 1,
+      part: (rank[q.type] ?? 9) + 1,
+      score: 0,
+      question: q,
+    }));
+    const tex = this.examsService.generateTex('CÂU HỎI TỪ NGÂN HÀNG', items, {
+      header: false,
+      duration: 0,
+      withSolutions,
+    });
+    return {
+      buffer: Buffer.from(tex, 'utf8'),
+      filename: `ngan-hang-cau-hoi-${list.length}-cau.tex`,
+    };
   }
 
   // ============ PHIẾU HỌC TẬP THEO DẠNG BÀI ============

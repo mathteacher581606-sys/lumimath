@@ -49,4 +49,9 @@ export class CreateExamDto {
   @IsOptional()
   @Allow()
   questionIds?: string[];
+
+  // true: questionIds[i] ứng đúng ô thứ i của ma trận (null = ô trống, bỏ qua — không tự bốc câu)
+  @IsOptional()
+  @Allow()
+  strict?: boolean;
 }

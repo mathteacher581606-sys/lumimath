@@ -37,10 +37,10 @@ Cho hàm số $y = x^2 - 2x + 3$. Tọa độ đỉnh của parabol là
 \\begin{ex}
 Cho hàm số $y = x^3 - 3x$. Xét tính đúng sai:
 \\choiceTF
-{\\TrueTF Hàm số có hai điểm cực trị}
-{\\FalseTF Hàm số đồng biến trên $\\mathbb{R}$}
-{\\TrueTF Đồ thị nhận gốc tọa độ làm tâm đối xứng}
-{\\FalseTF Hàm số có giá trị lớn nhất bằng $2$}
+{\\True Hàm số có hai điểm cực trị}
+{Hàm số đồng biến trên $\\mathbb{R}$}
+{\\True Đồ thị nhận gốc tọa độ làm tâm đối xứng}
+{Hàm số có giá trị lớn nhất bằng $2$}
 \\end{ex}
 
 \\begin{ex}

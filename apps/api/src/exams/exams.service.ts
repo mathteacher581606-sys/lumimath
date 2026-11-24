@@ -16,12 +16,81 @@ import { AiService } from '../ai/ai.service';
 import { MailService } from '../mail/mail.service';
 import { CreateExamDto } from './dto/create-exam.dto';
 import { buildTablePdf, buildXlsx, escapeTex, safeFilename } from '../common/export.helper';
-import { fixFromLog, normalizeTex, texToPlainText } from '../common/tex-autofix';
-import { articleHead, isMissingLumimath, legacyFallback, LUMIMATH_PKG, standaloneDoc } from '../common/tex-preamble';
+import { fixFromLog, normalizeTex, texToPlainText, undefinedMacrosFromLog } from '../common/tex-autofix';
+import { articleHead, isMissingLumimath, legacyFallback, LEGACY_PACKAGES, LUMIMATH_PKG, standaloneDoc } from '../common/tex-preamble';
 import * as XLSX from 'xlsx';
 
 // Thư mục lưu cache ảnh TikZ (dùng chung cho mọi người dùng, sống sót qua restart)
 const TIKZ_DIR = path.join(process.cwd(), 'storage', 'tikz');
+
+export type BadTexItem = {
+  label: string; // "Phần I – Câu 3"
+  questionId: string | null;
+  code: string | null;
+  error: string;
+};
+
+export type ExamTexOptions = {
+  forCompile?: boolean; // dùng lumimath (biên dịch trên server)
+  duration?: number | null;
+  code?: string; // mã đề (trộn đề)
+  numbering?: 'part' | 'continuous';
+  header?: boolean; // khung đầu đề (họ tên, SBD, thời gian)
+  partHeadings?: boolean; // tiêu đề PHẦN I/II/III
+  withSolutions?: boolean; // giữ \loigiai (mặc định có)
+};
+
+// Tự sửa các trường của 1 câu theo lỗi TeX (lệnh lạ → bỏ lệnh giữ chữ; & lạc → \&).
+// Trả null nếu không có gì để sửa.
+const EX_TEST_CMDS = new Set(['choice', 'choiceTF', 'shortans', 'loigiai', 'True', 'immini', 'heva', 'hoac']);
+function repairItemFields(it: any, err: string): any | null {
+  const q = it?.question;
+  if (!q) return null;
+  const names = undefinedMacrosFromLog(err).filter((n) => !EX_TEST_CMDS.has(n));
+  const amp = /Misplaced alignment tab character/i.test(err);
+  if (!names.length && !amp) return null;
+  const tableish = /\\begin\{(tabular|array|align|aligned|alignat|cases|matrix|pmatrix|bmatrix|vmatrix|split|gathered|tikzpicture)/;
+  const fix = (v: any): any => {
+    if (typeof v !== 'string' || !v) return v;
+    let out = v;
+    for (const n of names) {
+      out = out.replace(new RegExp('\\\\' + n + '(?![a-zA-Z@])\\s*(?:\\{([^{}]*)\\})?', 'g'), (_m, a) => a || ' ');
+    }
+    if (amp && !tableish.test(out)) out = out.replace(/(?<!\\)&/g, '\\&');
+    return out;
+  };
+  const next = {
+    ...it,
+    question: {
+      ...q,
+      content: fix(q.content),
+      options: Array.isArray(q.options) ? q.options.map((o: any) => ({ ...o, text: fix(o.text) })) : q.options,
+      solution: fix(q.solution),
+    },
+  };
+  const changed =
+    next.question.content !== q.content ||
+    next.question.solution !== q.solution ||
+    (Array.isArray(q.options) && q.options.some((o: any, i: number) => o.text !== next.question.options[i].text));
+  return changed ? next : null;
+}
+
+// Lời dẫn của từng phần theo mẫu đề 2025
+function partInstruction(type: string, from: number, to: number): string {
+  const range = from === to ? `câu ${from}` : `câu ${from} đến câu ${to}`;
+  switch (type) {
+    case 'MCQ':
+      return `Câu trắc nghiệm nhiều phương án lựa chọn. Thí sinh trả lời từ ${range}. Mỗi câu hỏi thí sinh chỉ chọn một phương án.`;
+    case 'TRUE_FALSE':
+      return `Câu trắc nghiệm đúng sai. Thí sinh trả lời từ ${range}. Trong mỗi ý a), b), c), d) ở mỗi câu, thí sinh chọn đúng hoặc sai.`;
+    case 'SHORT_ANSWER':
+      return `Câu trắc nghiệm trả lời ngắn. Thí sinh trả lời từ ${range}.`;
+    case 'ESSAY':
+      return `Tự luận. Thí sinh trình bày lời giải từ ${range}.`;
+    default:
+      return `Thí sinh trả lời từ ${range}.`;
+  }
+}
 
 // Trích các block tikz/tkz-tab VÀ bảng tabular từ nội dung câu hỏi
 export function extractTikzBlocks(text: string): string[] {
@@ -172,7 +241,7 @@ export class ExamsService {
     });
 
     // Sinh mã .tex + tổng điểm
-    const texSource = this.generateTex(exam.title, exam.items);
+    const texSource = this.generateTex(exam.title, exam.items, { duration: exam.duration });
     await this.prisma.exam.update({ where: { id: exam.id }, data: { texSource } });
 
     // Biên dịch sẵn hình tikz/tabular trong các câu
@@ -266,6 +335,53 @@ export class ExamsService {
     };
   }
 
+  // Ghép câu theo ĐÚNG VỊ TRÍ ô ma trận (bỏ ô trống), kiểm tra câu đúng loại của phần
+  private async itemsFromAlignedIds(
+    bankId: string,
+    parts: any[],
+    ids: (string | null)[],
+  ): Promise<{ items: { questionId: string; part: number; order: number; score: number }[]; totalScore: number }> {
+    const slots: { part: number; type: string; score: number }[] = [];
+    parts.forEach((p: any, pi: number) => {
+      for (let k = 0; k < (Number(p.count) || 0); k++) {
+        slots.push({ part: pi + 1, type: p.type, score: Number(p.score) || 0 });
+      }
+    });
+    if (ids.length !== slots.length) {
+      throw new BadRequestException(
+        `Số ô ma trận (${slots.length}) không khớp danh sách câu (${ids.length}). Tải lại trang rồi thử lại.`,
+      );
+    }
+    const real = ids.filter((x): x is string => !!x);
+    if (new Set(real).size !== real.length) {
+      throw new BadRequestException('Có câu hỏi bị chọn trùng ở nhiều ô ma trận');
+    }
+    const qs = await this.prisma.question.findMany({
+      where: { bankId, id: { in: real } },
+      select: { id: true, type: true },
+    });
+    const typeOf = new Map(qs.map((q) => [q.id, q.type as string]));
+    const items: { questionId: string; part: number; order: number; score: number }[] = [];
+    let order = 1;
+    ids.forEach((id, i) => {
+      if (!id) return;
+      const t = typeOf.get(id);
+      if (!t) throw new BadRequestException(`Ô ${i + 1}: câu hỏi không có trong ngân hàng của bạn`);
+      if (t !== slots[i].type) {
+        throw new BadRequestException(`Ô ${i + 1}: câu hỏi không đúng loại của phần (${t} ≠ ${slots[i].type})`);
+      }
+      items.push({ questionId: id, part: slots[i].part, order: order++, score: slots[i].score });
+    });
+    // Phần không còn câu nào → đánh lại số phần liên tiếp (1, 2, 3…)
+    const partMap = new Map<number, number>();
+    for (const it of items) {
+      if (!partMap.has(it.part)) partMap.set(it.part, partMap.size + 1);
+      it.part = partMap.get(it.part)!;
+    }
+    const totalScore = Math.round(items.reduce((t, it) => t + it.score, 0) * 100) / 100;
+    return { items, totalScore };
+  }
+
   // SINH ĐỀ + DUYỆT (chưa lưu): trả về câu hỏi đầy đủ theo từng phần để GV duyệt
   async generate(teacherId: string, dto: CreateExamDto) {
     const bank = await this.getBank(teacherId);
@@ -313,22 +429,28 @@ export class ExamsService {
     const bank = await this.getBank(teacherId);
     const parts: any[] = dto.matrix?.parts || [];
 
-    const fixedIds =
-      dto.questionIds && dto.questionIds.length ? dto.questionIds : undefined;
-    const { slots, totalScore } = await this.pickForMatrix(
-      bank.id,
-      parts,
-      fixedIds,
-    );
-
-    const examItems = slots
-      .filter((s) => s.questionId)
-      .map((s) => ({
-        questionId: s.questionId,
-        part: s.part,
-        order: s.order,
-        score: s.score,
-      }));
+    let examItems: { questionId: string; part: number; order: number; score: number }[];
+    let totalScore: number;
+    if ((dto as any).strict && Array.isArray(dto.questionIds)) {
+      // Ma trận đã DUYỆT: questionIds[i] ứng đúng ô thứ i (null = ô trống → BỎ QUA, không tự bốc)
+      const r = await this.itemsFromAlignedIds(bank.id, parts, dto.questionIds as any[]);
+      examItems = r.items;
+      totalScore = r.totalScore;
+    } else {
+      const fixedIds =
+        dto.questionIds && dto.questionIds.length ? dto.questionIds : undefined;
+      const picked = await this.pickForMatrix(bank.id, parts, fixedIds);
+      totalScore = picked.totalScore;
+      examItems = picked.slots
+        .filter((s) => s.questionId)
+        .map((s) => ({
+          questionId: s.questionId,
+          part: s.part,
+          order: s.order,
+          score: s.score,
+        }));
+    }
+    if (!examItems.length) throw new BadRequestException('Đề chưa có câu hỏi nào');
 
     const exam = await this.prisma.exam.create({
       data: {
@@ -362,7 +484,7 @@ export class ExamsService {
       },
     });
 
-    const texSource = this.generateTex(exam.title, exam.items);
+    const texSource = this.generateTex(exam.title, exam.items, { duration: exam.duration });
     await this.prisma.exam.update({
       where: { id: exam.id },
       data: { texSource },
@@ -991,7 +1113,7 @@ export class ExamsService {
       },
     });
     if (!exam) return;
-    const texSource = this.generateTex(exam.title, exam.items);
+    const texSource = this.generateTex(exam.title, exam.items, { duration: exam.duration });
     const totalScore = Math.round(
       exam.items.reduce((s, i) => s + i.score, 0) * 100,
     ) / 100;
@@ -1131,15 +1253,10 @@ export class ExamsService {
     return { restored: true };
   }
 
+  // Tải .tex: luôn sinh MỚI từ câu hỏi hiện tại (bản lưu lúc tạo đề có thể đã cũ)
   async getTex(teacherId: string, id: string) {
-    const exam = await this.prisma.exam.findFirst({
-      where: { id, teacherId },
-    });
-    if (!exam) throw new NotFoundException('Không tìm thấy đề thi');
-    if (!exam.texSource) {
-      throw new NotFoundException('Đề chưa có mã .tex');
-    }
-    return exam.texSource;
+    const { tex } = await this.buildExamTex(teacherId, id);
+    return tex;
   }
 
   // Chặn các lệnh TeX nguy hiểm trước khi gửi đi biên dịch (lớp bảo vệ thứ 2,
@@ -1492,9 +1609,11 @@ export class ExamsService {
       const line = lines[i].trim();
       if (line.startsWith('!')) {
         important.push(line);
-        // Kèm dòng "l.<số>" gần đó (dòng nguồn bị lỗi)
-        for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+        // Kèm dòng ngữ cảnh "<argument> … \lệnh" (TeX nêu lệnh lỗi nằm trong đối số)
+        // và dòng "l.<số>" (dòng nguồn bị lỗi) — bộ tự sửa cần cả hai
+        for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
           const next = lines[j].trim();
+          if (next.startsWith('<') && /\\[A-Za-z@]/.test(next)) important.push(next);
           if (next.startsWith('l.')) {
             important.push(next);
             break;
@@ -1711,16 +1830,183 @@ export class ExamsService {
   }
 
   async compile(teacherId: string, id: string) {
-    let tex = await this.getTex(teacherId, id);
-    tex = this.patchHevaDefinition(tex);
-    tex = this.fixInvalidMathDelims(tex);
-    const pdf = await this.compileRaw(tex);
-    const pdfUrl = `/api/exams/${id}/pdf`;
+    const { exam } = await this.buildExamTex(teacherId, id);
+    const r = await this.compileExamPdf(exam.title, exam.items, { duration: exam.duration });
     await this.prisma.exam.update({
       where: { id },
-      data: { pdfUrl },
+      data: { pdfUrl: `/api/exams/${id}/pdf` },
     });
-    return pdf;
+    return r;
+  }
+
+  // Kiểm tra LaTeX toàn đề (không tải PDF): danh sách câu lỗi + các sửa tự động
+  async checkExamLatex(teacherId: string, id: string) {
+    const { exam } = await this.buildExamTex(teacherId, id);
+    const r = await this.compileExamPdf(exam.title, exam.items, { duration: exam.duration });
+    return { ok: !r.bad.length, fixes: r.fixes, bad: r.bad, plainFallback: r.plainFallback };
+  }
+
+  /**
+   * Biên dịch PDF đề, KHÔNG để 1 câu lỗi làm hỏng cả đề:
+   *  1) biên dịch; lỗi → sửa theo log (macro lạ, & lạc, ngoặc…) tối đa 3 lần
+   *  2) vẫn lỗi → CHIA ĐÔI danh sách câu để tìm đúng câu lỗi; câu lỗi được thay bằng bản chữ
+   *     thuần (giữ nội dung, bỏ định dạng) và báo lại cho giáo viên (Phần/Câu/mã câu/lỗi)
+   *  3) bất đắc dĩ → toàn đề dạng chữ thuần
+   */
+  async compileExamPdf(
+    title: string,
+    items: any[],
+    opts: ExamTexOptions = {},
+  ): Promise<{ buffer: Buffer; fixes: string[]; bad: BadTexItem[]; plainFallback: boolean }> {
+    const build = (list: any[]) =>
+      this.fixInvalidMathDelims(
+        this.patchHevaDefinition(this.generateTex(title, list, { ...opts, forCompile: true })),
+      );
+    const fixes: string[] = [];
+    let tex = build(items);
+    let lastErr = '';
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        return { buffer: await this.compileRaw(tex), fixes, bad: [], plainFallback: false };
+      } catch (e: any) {
+        lastErr = String(e?.message || e || '');
+        if (attempt === 3) break;
+        const next = fixFromLog(tex, lastErr);
+        if (next.tex === tex || !next.fixes.length) break;
+        tex = next.tex;
+        fixes.push(...next.fixes);
+      }
+    }
+
+    // 2) Tìm câu lỗi bằng chia đôi (giới hạn số lần biên dịch để không treo máy chủ)
+    let budget = 26;
+    const errOf = new Map<any, string>();
+    const tryList = async (list: any[]): Promise<string | null> => {
+      budget--;
+      try {
+        await this.compileRaw(build(list));
+        return null;
+      } catch (e: any) {
+        return String(e?.message || e || 'lỗi');
+      }
+    };
+    const findBad = async (list: any[], knownErr?: string): Promise<any[]> => {
+      if (!list.length || budget <= 0) return [];
+      const err = knownErr !== undefined ? knownErr : await tryList(list);
+      if (!err) return [];
+      if (list.length === 1) {
+        errOf.set(list[0], err);
+        return list;
+      }
+      const mid = Math.ceil(list.length / 2);
+      const left = await findBad(list.slice(0, mid));
+      const right = await findBad(list.slice(mid));
+      return [...left, ...right];
+    };
+    const found = await findBad(items, lastErr);
+    // 2b) Thử TỰ SỬA riêng từng câu lỗi (lệnh lạ, & lạc) trước khi phải đổi sang chữ thuần
+    const repaired = new Map<any, any>();
+    for (const it of found) {
+      let cur = it;
+      let err = errOf.get(it) || '';
+      for (let k = 0; k < 2 && budget > 0; k++) {
+        const next = repairItemFields(cur, err);
+        if (!next) break;
+        const e2 = await tryList([next]);
+        if (!e2) {
+          repaired.set(it, next);
+          break;
+        }
+        cur = next;
+        err = e2;
+        errOf.set(it, e2);
+      }
+    }
+    const numbering = opts.numbering || 'part';
+    for (const d of this.describeBad(items, [...repaired.keys()], errOf, numbering)) {
+      fixes.push(`${d.label}: đã tự sửa lỗi LaTeX`);
+    }
+    const badItems = found.filter((it) => !repaired.has(it));
+    if (found.length) {
+      const badSet = new Set(badItems);
+      const safeItems = items.map(
+        (it) => repaired.get(it) || (badSet.has(it) ? this.plainTextItem(it) : it),
+      );
+      try {
+        const buffer = await this.compileRaw(build(safeItems));
+        return {
+          buffer,
+          fixes,
+          bad: this.describeBad(items, badItems, errOf, numbering),
+          plainFallback: false,
+        };
+      } catch {
+        /* rơi xuống bản chữ thuần toàn đề */
+      }
+    }
+
+    // 3) Bất đắc dĩ: toàn bộ câu dạng chữ thuần
+    const buffer = await this.compileRaw(build(items.map((it) => this.plainTextItem(it))));
+    return {
+      buffer,
+      fixes: [...fixes, 'toàn đề chuyển sang chữ thuần (lỗi ngoài các câu hỏi)'],
+      bad: this.describeBad(items, found, errOf, opts.numbering || 'part'),
+      plainFallback: true,
+    };
+  }
+
+  // Bản "chữ thuần" của 1 câu: giữ chữ/ký hiệu, bỏ mọi lệnh LaTeX → luôn biên dịch được
+  private plainTextItem(it: any): any {
+    const plain = (x: any) => escapeTex(texToPlainText(String(x || '')));
+    const q = it.question || {};
+    return {
+      ...it,
+      question: {
+        ...q,
+        content:
+          '\\textit{[Câu này có lỗi LaTeX — đang hiển thị dạng chữ thuần]} ' + plain(q.content),
+        options: Array.isArray(q.options)
+          ? q.options.map((o: any) => ({ ...o, text: plain(o.text) }))
+          : q.options,
+        answer: q.type === 'SHORT_ANSWER' ? plain(q.answer) : q.answer,
+        solution: q.solution ? plain(q.solution) : null,
+      },
+    };
+  }
+
+  private describeBad(
+    items: any[],
+    bad: any[],
+    errOf: Map<any, string>,
+    numbering: 'part' | 'continuous',
+  ): BadTexItem[] {
+    const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+    const label = new Map<any, string>();
+    let gi = -1;
+    let prevPart: any = undefined;
+    let k = 0;
+    let run = 0;
+    for (const it of items) {
+      if (it.part !== prevPart) {
+        gi++;
+        prevPart = it.part;
+        k = 0;
+      }
+      k++;
+      run++;
+      label.set(it, `Phần ${ROMAN[gi] || gi + 1} – Câu ${numbering === 'part' ? k : run}`);
+    }
+    return bad.map((it) => ({
+      label: label.get(it) || '',
+      questionId: it.question?.id || it.questionId || null,
+      code: it.question?.code || null,
+      error: String(errOf.get(it) || '')
+        .split('\n')
+        .filter((l) => l.trim())
+        .slice(0, 3)
+        .join(' · ')
+        .slice(0, 300),
+    }));
   }
 
   // Bỏ \[ \] xuất hiện BÊN TRONG $...$ (không hợp lệ → lỗi "Bad math environment delimiter")
@@ -3155,100 +3441,138 @@ export class ExamsService {
 
   // ============ SINH MÃ .tex (ex_test) ============
 
-  private generateTex(examTitle: string, items: any[]): string {    const lines: string[] = [];
-    lines.push('\\documentclass[12pt]{article}');
-    lines.push('\\usepackage{ex_test}');
-    lines.push('\\usepackage{amsmath}');
-    lines.push('\\usepackage{amssymb}');
-    lines.push('\\usepackage{amsfonts}');
-    lines.push('\\usepackage{mathtools}');
-    lines.push('\\usepackage{siunitx}');
-    lines.push('\\usepackage{cancel}');
-    lines.push('\\usepackage{empheq}');
-    lines.push('\\usepackage{systeme}');
-    lines.push('\\usepackage{tikz}');
-    lines.push('\\usepackage{pgfplots}');
-    lines.push('\\pgfplotsset{compat=1.16}');
-    lines.push(
-      '\\usetikzlibrary{arrows.meta,calc,patterns,patterns.meta,decorations.pathreplacing,decorations.markings,decorations.pathmorphing,decorations.shapes,decorations.text,decorations.fractals,decorations.footprints,angles,quotes,shapes,shapes.geometric,shapes.misc,shapes.symbols,shapes.arrows,shapes.multipart,positioning,fit,matrix,chains,scopes,through,backgrounds,fadings,shadows,mindmap,trees,plotmarks,intersections,3d,perspective,math,spy,automata,er,petri,datavisualization,datavisualization.formats.functions,lindenmayersystems,calendar,folding,graphs,graphs.standard}',
-    );
-    lines.push('\\usepackage{tkz-base}');
-    lines.push('\\usepackage{tkz-tab}');
-    lines.push('\\usepackage{tkz-euclide}');
-    lines.push('\\usepackage{circuitikz}');
-    lines.push('\\usepackage{tikz-cd}');
-    lines.push('\\usepackage{tikz-3dplot}');
-    lines.push('\\IfFileExists{yhmath.sty}{\\usepackage{yhmath}}{}');
-    lines.push('\\providecommand{\\wideparen}[1]{\\overset{\\frown}{#1}}');
-    // Macro VN thường gặp trong đề của giáo viên (chỉ thêm nếu chưa có — tránh xung đột ex_test)
+  /**
+   * Sinh mã .tex của đề theo gói ex_test.
+   * - forCompile: dùng bộ gói chung lumimath (nhanh, chỉ có trên server); file TẢI VỀ dùng
+   *   danh sách gói chuẩn (máy giáo viên không có lumimath).
+   * - Mỗi PHẦN có tiêu đề + điểm; đánh số câu LẠI TỪ 1 ở mỗi phần (chuẩn đề 2025) hoặc liên tục.
+   * - Câu Đúng/Sai: ý đúng đánh dấu \True (ex_test); \TrueTF/\FalseTF là lệnh in nhãn, KHÔNG dùng.
+   */
+  generateTex(examTitle: string, items: any[], opts: ExamTexOptions = {}): string {
+    const numbering = opts.numbering || 'part';
+    const lines: string[] = [];
+    if (opts.forCompile) lines.push(...articleHead('12pt'));
+    else {
+      lines.push('\\documentclass[12pt,a4paper]{article}');
+      lines.push(...LEGACY_PACKAGES);
+    }
+    // Lề A4 gọn (không xung đột nếu gói chung đã nạp geometry)
     lines.push('\\makeatletter');
-    lines.push('\\@ifundefined{heva}{\\newcommand{\\heva}[1]{\\ensuremath{\\left\\{\\begin{aligned}#1\\end{aligned}\\right.}}}{}');
-    lines.push('\\@ifundefined{hoac}{\\newcommand{\\hoac}[1]{\\ensuremath{\\left[\\begin{aligned}#1\\end{aligned}\\right.}}}{}');
-    lines.push('\\@ifundefined{itemch}{\\newenvironment{itemch}{\\begin{itemize}}{\\end{itemize}}}{}');
-    lines.push('\\@ifundefined{itemchoice}{\\newenvironment{itemchoice}{\\begin{itemize}}{\\end{itemize}}}{}');
+    lines.push(
+      '\\@ifpackageloaded{geometry}{\\geometry{a4paper,top=1.5cm,bottom=1.6cm,left=1.8cm,right=1.5cm}}{\\usepackage[a4paper,top=1.5cm,bottom=1.6cm,left=1.8cm,right=1.5cm]{geometry}}',
+    );
     lines.push('\\makeatother');
     lines.push('\\begin{document}');
-    lines.push(
-      '\\begin{center}{\\Large ' + this.escapeLatex(examTitle) + '}\\end{center}',
-    );
+
+    if (opts.header !== false) {
+      const dur = opts.duration ?? 45;
+      lines.push('\\begin{center}');
+      lines.push('{\\large\\bfseries ' + this.escapeLatex(examTitle) + '}\\\\[3pt]');
+      if (dur > 0) {
+        lines.push(`\\textit{Thời gian làm bài: ${dur} phút, không kể thời gian phát đề}`);
+      }
+      lines.push('\\end{center}');
+      lines.push(
+        '\\noindent Họ và tên: \\makebox[7.5cm]{\\dotfill}\\hfill Số báo danh: \\makebox[3.2cm]{\\dotfill}' +
+          (opts.code ? '\\hfill\\fbox{\\textbf{Mã đề: ' + this.escapeLatex(opts.code) + '}}' : ''),
+      );
+      lines.push('\\par\\noindent\\rule{\\linewidth}{0.4pt}');
+    } else {
+      lines.push('\\begin{center}{\\large\\bfseries ' + this.escapeLatex(examTitle) + '}\\end{center}');
+    }
     lines.push('');
 
-    let currentPart = 0;
-    let qIndex = 0;
-    for (const item of items) {
-      const q = item.question;
-      if (item.part !== currentPart) {
-        currentPart = item.part;
-        lines.push('% ===== PHAN ' + currentPart + ' =====');
-      }
-      qIndex++;
-      lines.push('\\begin{ex}');
-      lines.push(this.sanitizeTexContent(q.content));
-
-      if (q.type === QuestionType.MCQ && Array.isArray(q.options)) {
-        lines.push('\\choice');
-        for (const opt of q.options) {
-          const correct = opt.id === q.answer;
-          lines.push(correct ? '{\\True ' + this.sanitizeTexContent(opt.text) + '}' : '{' + this.sanitizeTexContent(opt.text) + '}');
-        }
-      } else if (
-        q.type === QuestionType.TRUE_FALSE &&
-        Array.isArray(q.options)
-      ) {
-        lines.push('\\choiceTF');
-        for (const opt of q.options) {
-          const isTrue =
-            q.answer && typeof q.answer === 'object' && q.answer[opt.id] === true;
-          lines.push(
-            '{' + (isTrue ? '\\TrueTF ' : '\\FalseTF ') + this.sanitizeTexContent(opt.text) + '}',
-          );
-        }
-      } else if (q.type === QuestionType.SHORT_ANSWER) {
-        const ans =
-          typeof q.answer === 'string' ? q.answer : JSON.stringify(q.answer);
-        lines.push('\\shortans{' + ans + '}');
-      }
-
-      if (q.solution) {
-        lines.push('\\loigiai{' + this.sanitizeTexContent(q.solution) + '}');
-      }
-
-      lines.push('\\end{ex}');
-      lines.push('');
+    // Gom các câu LIÊN TIẾP cùng phần
+    const groups: { part: number; items: any[] }[] = [];
+    for (const it of items) {
+      const g = groups[groups.length - 1];
+      if (g && g.part === it.part) g.items.push(it);
+      else groups.push({ part: it.part, items: [it] });
     }
+    const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+    let runFrom = 1;
+    groups.forEach((g, gi) => {
+      const type = g.items[0]?.question?.type;
+      const n = g.items.length;
+      const from = numbering === 'part' ? 1 : runFrom;
+      const to = from + n - 1;
+      runFrom += n;
+      if (opts.partHeadings !== false) {
+        const score =
+          Math.round(g.items.reduce((t: number, it: any) => t + (Number(it.score) || 0), 0) * 100) / 100;
+        const scoreTxt = score > 0 ? ` (${String(score).replace('.', ',')} điểm)` : '';
+        lines.push(
+          `\\par\\medskip\\noindent\\textbf{PHẦN ${ROMAN[gi] || gi + 1}.${scoreTxt}} ` +
+            partInstruction(type, from, to),
+        );
+        lines.push('\\par\\smallskip');
+      } else {
+        lines.push(`% ===== PHAN ${gi + 1} =====`);
+      }
+      if (numbering === 'part') lines.push('\\setcounter{ex}{0}');
+
+      for (const item of g.items) {
+        const q = item.question;
+        lines.push('\\begin{ex}');
+        lines.push(this.sanitizeTexContent(q.content));
+        if (q.type === QuestionType.MCQ && Array.isArray(q.options)) {
+          lines.push('\\choice');
+          for (const opt of q.options) {
+            const correct = opt.id === q.answer;
+            lines.push('{' + (correct ? '\\True ' : '') + this.sanitizeTexContent(opt.text) + '}');
+          }
+        } else if (q.type === QuestionType.TRUE_FALSE && Array.isArray(q.options)) {
+          lines.push('\\choiceTF');
+          for (const opt of q.options) {
+            const isTrue = q.answer && typeof q.answer === 'object' && q.answer[opt.id] === true;
+            lines.push('{' + (isTrue ? '\\True ' : '') + this.sanitizeTexContent(opt.text) + '}');
+          }
+        } else if (q.type === QuestionType.SHORT_ANSWER) {
+          const ans = typeof q.answer === 'string' ? q.answer : JSON.stringify(q.answer ?? '');
+          lines.push('\\shortans{' + this.sanitizeTexContent(ans) + '}');
+        }
+        if (q.solution && opts.withSolutions !== false) {
+          lines.push('\\loigiai{' + this.sanitizeTexContent(q.solution) + '}');
+        }
+        lines.push('\\end{ex}');
+        lines.push('');
+      }
+    });
 
     lines.push('\\end{document}');
     return lines.join('\n');
   }
 
+  /** Sinh .tex mới nhất của đề từ dữ liệu hiện tại (không dùng bản lưu cũ) */
+  async buildExamTex(
+    teacherId: string,
+    id: string,
+    opts: ExamTexOptions = {},
+  ): Promise<{ tex: string; exam: any }> {
+    const exam = await this.prisma.exam.findFirst({
+      where: { id, teacherId },
+      include: { items: { include: { question: true }, orderBy: { order: 'asc' } } },
+    });
+    if (!exam) throw new NotFoundException('Không tìm thấy đề thi');
+    if (!exam.items.length) throw new BadRequestException('Đề chưa có câu hỏi nào');
+    const tex = this.generateTex(exam.title, exam.items, { duration: exam.duration, ...opts });
+    return { tex, exam };
+  }
+
   // Sinh .tex cho phiếu học tập (dùng chung cấu trúc ex_test)
   worksheetTex(title: string, items: any[]): string {
-    return this.generateTex(title, items);
+    return this.generateTex(title, items, {
+      header: false,
+      partHeadings: false,
+      numbering: 'continuous',
+      duration: 0,
+    });
   }
 
   // Chuẩn hóa nội dung trước khi biên dịch PDF: eqnarray* không an toàn trong ex_test → align*
   private sanitizeTexContent(s: string): string {
-    let tex = String(s || '').replace(
+    // "10%" (thiếu \) → LaTeX coi % là chú thích, âm thầm nuốt phần còn lại của dòng
+    let tex = String(s || '').replace(/(\d\s?)(?<!\\)%/g, '$1\\%').replace(
       /\\begin\{eqnarray\*?\}([\s\S]*?)\\end\{eqnarray\*?\}/g,
       (m: string, inner: string) =>
         `\\begin{align*}${inner.replace(/&&/g, '&')}\\end{align*}`,

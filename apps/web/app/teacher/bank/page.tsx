@@ -1000,6 +1000,41 @@ export default function BankPage() {
     }
   }
 
+  // Xuất .tex THẬT (ex_test) — trước đây nút này tải về file Word
+  async function exportSelectedTex() {
+    const ids = selectedIds.length ? selectedIds : questions.map((q) => q.id);
+    if (!ids.length) {
+      alert('Chưa có câu hỏi nào để xuất');
+      return;
+    }
+    setExporting(true);
+    setShowExportMenu(false);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/bank/questions/export-tex', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(String(err.message || 'Xuất file thất bại').slice(-300));
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ngan-hang-cau-hoi-${ids.length}-cau.tex`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function exportSelected(withAnswers: boolean, mathMode: 'omml' | 'tex') {
     const ids = selectedIds.length ? selectedIds : questions.map((q) => q.id);
     if (!ids.length) {
@@ -1633,7 +1668,8 @@ export default function BankPage() {
         options.forEach((opt) => {
           if (!opt.text.trim()) return;
           const isTrue = tfAnswers[opt.id] === true;
-          lines.push(`{${isTrue ? '\\TrueTF' : '\\FalseTF'} ${opt.text}}`);
+          // ex_test: ý đúng đánh dấu \True (\TrueTF/\FalseTF là lệnh in nhãn a), b)…)
+          lines.push(`{${isTrue ? '\\True ' : ''}${opt.text}}`);
         });
       }
       if (solution.trim()) {
@@ -2561,7 +2597,7 @@ export default function BankPage() {
           <button type="button" className="bk-selbar-btn" onClick={() => exportSelected(true, 'omml')} disabled={exporting}>
             Xuất kèm đáp án
           </button>
-          <button type="button" className="bk-selbar-btn" onClick={() => exportSelected(false, 'tex')} disabled={exporting}>
+          <button type="button" className="bk-selbar-btn" onClick={exportSelectedTex} disabled={exporting}>
             Xuất .tex
           </button>
           <span className="bk-selbar-sp" />
@@ -2661,14 +2697,17 @@ export default function BankPage() {
                   ? `Xuất ${selectedIds.length} câu đã chọn`
                   : `Chưa chọn câu nào — sẽ xuất ${questions.length} câu trên trang`}
               </div>
+              <button type="button" className="toolbar-menu-item" onClick={exportSelectedTex}>
+                📄 File .tex (ex_test, kèm lời giải)
+              </button>
               <button type="button" className="toolbar-menu-item" onClick={() => exportSelected(false, 'omml')}>
-                📄 Đề (Word, công thức MathType)
+                📄 Đề (Word, công thức sửa được)
               </button>
               <button type="button" className="toolbar-menu-item" onClick={() => exportSelected(true, 'omml')}>
                 📄 Đề + đáp án & lời giải (Word)
               </button>
               <button type="button" className="toolbar-menu-item" onClick={() => exportSelected(false, 'tex')}>
-                📄 Đề (cú pháp TeX — MathType Toggle TeX)
+                📄 Đề Word (cú pháp TeX — MathType Toggle TeX)
               </button>
               <button type="button" className="toolbar-menu-item" onClick={() => exportSelected(true, 'tex')}>
                 📄 Đề + đáp án (cú pháp TeX)

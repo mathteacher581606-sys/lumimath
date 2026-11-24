@@ -163,6 +163,29 @@ export class BankController {
     return this.bankService.listQuestionsPaged(user.id, query);
   }
 
+  // Xuất các câu hỏi đã chọn ra file .tex (ex_test)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post('questions/export-tex')
+  async exportQuestionsTex(@CurrentUser() user: any, @Body() body: any, @Res() res: Response) {
+    const { buffer, filename } = await this.bankService.exportQuestionsTex(
+      user.id,
+      body?.ids || [],
+      body?.withSolutions !== false,
+    );
+    res.setHeader('Content-Type', 'application/x-tex; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.send(buffer);
+  }
+
+  // Bốc ngẫu nhiên câu hỏi theo bộ lọc trên toàn ngân hàng (khai báo trước 'questions/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Get('questions-random')
+  randomQuestions(@CurrentUser() user: any, @Query() query: any) {
+    return this.bankService.randomQuestions(user.id, query);
+  }
+
   // Xuất các câu hỏi đã chọn ra .docx (đề hoặc kèm đáp án)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TEACHER)

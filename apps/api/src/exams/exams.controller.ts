@@ -652,9 +652,27 @@ export class ExamsController {
     @Param('id') id: string,
     @Res() res: Response,
   ) {
-    const pdf = await this.examsService.compile(user.id, id);
+    const r = await this.examsService.compile(user.id, id);
     res.setHeader('Content-Disposition', 'attachment; filename="exam.pdf"');
-    res.send(pdf);
+    // Báo lại cho giao diện: câu nào lỗi LaTeX đã được thay bằng chữ thuần, đã tự sửa gì
+    if (r.bad.length || r.fixes.length) {
+      res.setHeader(
+        'X-Tex-Report',
+        encodeURIComponent(
+          JSON.stringify({ fixes: r.fixes.slice(0, 10), bad: r.bad.slice(0, 30), plainFallback: r.plainFallback }),
+        ).slice(0, 7000),
+      );
+    }
+    res.send(r.buffer);
+  }
+
+  // Kiểm tra LaTeX toàn đề: chỉ ra câu nào lỗi (không tải PDF)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TEACHER)
+  @Post(':id/check-latex')
+  checkLatex(@CurrentUser() user: any, @Param('id') id: string) {
+    this.rateLimit(user, 20);
+    return this.examsService.checkExamLatex(user.id, id);
   }
 
   // Sửa nội dung/đáp án câu hỏi ngay trong đề (cập nhật luôn ngân hàng câu hỏi)
