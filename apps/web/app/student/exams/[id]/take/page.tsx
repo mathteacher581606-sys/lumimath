@@ -166,12 +166,17 @@ export default function TakeExam() {
   // toàn màn hình — KHÔNG tính là rời trang. Ân hạn tối đa 3 phút khi đang chọn ảnh,
   // và thêm 4 giây sau khi quay lại (các sự kiện ẩn/hiện, toàn màn hình đến trễ).
   const pickingUntilRef = useRef(0);
+  const MAX_WARNINGS = 5; // số lần cảnh báo được phép; vi phạm lần kế tiếp thì tự nộp
+  const warningsRef = useRef(0);
+  const lastStrikeRef = useRef(0);
+  const submittingRef = useRef(false);
+  submittingRef.current = submitting;
   const [needFullscreen, setNeedFullscreen] = useState(false);
   const onPickStart = useCallback(() => {
     pickingUntilRef.current = Date.now() + 3 * 60 * 1000;
   }, []);
   const onPickEnd = useCallback(() => {
-    pickingUntilRef.current = Date.now() + 4000;
+    pickingUntilRef.current = Date.now() + 8000;
     // Android thoát toàn màn hình khi mở camera → mời bật lại (cần một lần chạm)
     setTimeout(() => {
       if (document.fullscreenEnabled && !document.fullscreenElement && !submittedRef.current) setNeedFullscreen(true);
@@ -184,23 +189,30 @@ export default function TakeExam() {
     const strike = (reason: string) => {
       if (submittedRef.current) return; // đã nộp (vd. thoát toàn màn hình sau khi nộp)
       if (Date.now() < pickingUntilRef.current) return; // đang chụp/chọn ảnh bài làm
-      setWarnings((w) => {
-        const nw = w + 1;
-        if (nw >= 3) {
-          setWarnMsg(`${reason} quá 3 lần — bài thi đang được tự động nộp.`);
-          doSubmitRef.current();
-        } else {
-          setWarnMsg(`Cảnh báo ${nw}/3: ${reason}. Lần thứ 3 bài sẽ tự nộp.`);
-        }
-        return nw;
-      });
+      // Đang nộp bài / tải ảnh lên thì không tính cảnh báo
+      if (submittingRef.current) return;
+      // Mỗi lần rời trang chỉ tính 1 cảnh báo (ẩn trang + thoát toàn màn hình thường đến cùng lúc)
+      const now = Date.now();
+      if (now - lastStrikeRef.current < 1500) return;
+      lastStrikeRef.current = now;
+      const nw = warningsRef.current + 1;
+      warningsRef.current = nw;
+      setWarnings(nw);
+      if (nw > MAX_WARNINGS) {
+        setWarnMsg(`${reason} quá ${MAX_WARNINGS} lần cảnh báo — bài thi đang được tự động nộp.`);
+        doSubmitRef.current();
+      } else if (nw === MAX_WARNINGS) {
+        setWarnMsg(`Cảnh báo ${nw}/${MAX_WARNINGS}: ${reason}. Đây là cảnh báo cuối — vi phạm thêm 1 lần nữa bài sẽ tự nộp.`);
+      } else {
+        setWarnMsg(`Cảnh báo ${nw}/${MAX_WARNINGS}: ${reason}. Còn ${MAX_WARNINGS - nw} lần cảnh báo nữa trước khi bài tự nộp.`);
+      }
     };
     const onVisibility = () => {
       if (document.hidden) strike('Em đã rời khỏi trang làm bài');
     };
     const onVisibilityBack = () => {
       // Quay lại từ camera mà trình duyệt không báo "cancel"/"change" → vẫn gia hạn ngắn
-      if (!document.hidden && Date.now() < pickingUntilRef.current) pickingUntilRef.current = Date.now() + 4000;
+      if (!document.hidden && Date.now() < pickingUntilRef.current) pickingUntilRef.current = Date.now() + 8000;
     };
     const onFullscreenChange = () => {
       if (document.fullscreenElement) setNeedFullscreen(false);
@@ -361,6 +373,10 @@ export default function TakeExam() {
     const token = localStorage.getItem('token');
     const submitNow = () => {
       if (submittedRef.current || result) return;
+      // Đang mở camera / chọn ảnh (trình duyệt điện thoại có thể tải lại trang) → KHÔNG tự nộp
+      if (Date.now() < pickingUntilRef.current) return;
+      // Có ảnh tự luận chưa nộp → không nộp non (sẽ mất ảnh); giữ bài để học sinh vào lại
+      if (Object.values(essayFilesRef.current).some((arr) => arr.length > 0)) return;
       submittedRef.current = true;
       const timeSpent = Math.round((Date.now() - startTimeRef.current) / 1000);
       const body = JSON.stringify({

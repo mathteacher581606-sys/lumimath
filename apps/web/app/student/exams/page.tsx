@@ -206,7 +206,7 @@ export default function StudentExams() {
             <ul className="xl-rules">
               <li>Đồng hồ bắt đầu chạy ngay khi em vào phòng thi.</li>
               <li>Bài được tự lưu mỗi 15 giây. Mất mạng thì vào lại để làm tiếp.</li>
-              <li>Không rời khỏi trang làm bài: rời quá 3 lần, bài sẽ tự nộp.</li>
+              <li>Không rời khỏi trang làm bài: được cảnh báo tối đa 5 lần, vi phạm lần thứ 6 bài sẽ tự nộp.</li>
               <li>Hết giờ, bài sẽ tự nộp.</li>
             </ul>
             <div className="st-actions">
